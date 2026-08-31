@@ -1,0 +1,111 @@
+"""lib.sps30_i2c driver tests: CRC math and frame decoding against vectors."""
+
+from struct import pack
+
+import pytest
+
+from lib.sps30_i2c import SPS30, SPS30Error
+
+
+class ScriptedI2CDevice:
+    """Plays back queued response frames; records written commands."""
+
+    def __init__(self):
+        self.responses = []
+        self.written = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def write(self, buffer, end=None):
+        self.written.append(bytes(buffer[: end if end is not None else len(buffer)]))
+
+    def readinto(self, buffer, end=None):
+        response = self.responses.pop(0)
+        length = end if end is not None else len(buffer)
+        assert len(response) == length, "test scripted the wrong response size"
+        buffer[:length] = response
+
+
+@pytest.fixture
+def sps30():
+    device = SPS30(object())  # conftest FakeI2CDevice absorbs the constructor
+    device._device = ScriptedIWrapper = ScriptedI2CDevice()
+    return device, ScriptedIWrapper
+
+
+def encode_words(raw: bytes) -> bytes:
+    """Sensirion wire format: every 2 data bytes followed by their CRC8."""
+    framed = bytearray()
+    for offset in range(0, len(raw), 2):
+        chunk = raw[offset : offset + 2]
+        framed.extend(chunk)
+        framed.append(SPS30._crc8(chunk))
+    return bytes(framed)
+
+
+def test_crc8_datasheet_vector():
+    # From the Sensirion SPS30 datasheet: CRC of {0xBE, 0xEF} is 0x92.
+    assert SPS30._crc8(bytes([0xBE, 0xEF])) == 0x92
+
+
+def test_decode_words_rejects_corrupt_crc(sps30):
+    device, _scripted = sps30
+    good = encode_words(pack(">H", 0x1234))
+    assert device._decode_words(memoryview(good)) == [0x1234]
+    corrupt = bytearray(good)
+    corrupt[2] ^= 0xFF
+    with pytest.raises(SPS30Error, match="CRC"):
+        device._decode_words(memoryview(bytes(corrupt)))
+
+
+def test_decode_words_rejects_bad_length(sps30):
+    device, _scripted = sps30
+    with pytest.raises(SPS30Error, match="size"):
+        device._decode_words(memoryview(b"\x00\x01"))
+
+
+def test_data_ready_parses_flag(sps30):
+    device, scripted = sps30
+    scripted.responses.append(encode_words(pack(">H", 1)))
+    assert device.data_ready is True
+    scripted.responses.append(encode_words(pack(">H", 0)))
+    assert device.data_ready is False
+
+
+def test_read_decodes_measurement_frame(sps30):
+    device, scripted = sps30
+    values = (1.5, 2.5, 3.5, 4.5, 10.0, 20.0, 30.0, 40.0, 50.0, 0.65)
+    raw = b"".join(pack(">f", value) for value in values)
+    scripted.responses.append(encode_words(raw))
+    result = device.read()
+    assert result["pm1"] == 1.5
+    assert result["pm25"] == 2.5
+    assert result["pm10"] == 4.5
+    assert result["tps"] == 0.65
+    # the written command must be READ_MEASURED_VALUES (0x0300)
+    assert scripted.written[-1] == bytes([0x03, 0x00])
+
+
+def test_read_rejects_corrupt_measurement(sps30):
+    device, scripted = sps30
+    raw = b"".join(pack(">f", 1.0) for _ in range(10))
+    frame = bytearray(encode_words(raw))
+    frame[5] ^= 0xFF  # corrupt one CRC byte
+    scripted.responses.append(bytes(frame))
+    with pytest.raises(SPS30Error):
+        device.read()
+
+
+def test_auto_cleaning_interval_roundtrip_encoding(sps30):
+    device, scripted = sps30
+    scripted.responses.append(encode_words(pack(">HH", 0x0009, 0x3A80)))  # 604800s
+    assert device.auto_cleaning_interval == 604800
+    device.auto_cleaning_interval = 604800
+    written = scripted.written[-1]
+    assert written[:2] == bytes([0x80, 0x04])
+    assert written[2:4] == pack(">H", 0x0009)
+    assert written[5:7] == pack(">H", 0x3A80)
