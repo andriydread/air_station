@@ -128,7 +128,10 @@ function switchTab(name) {
   });
   if (name === 'history') refreshHistory().catch((e) => toast(e.message, 'error'));
   if (name === 'diagnostics') refreshDiagnostics().catch((e) => toast(e.message, 'error'));
-  if (name === 'live') reloadPreview();
+  if (name === 'live') {
+    reloadPreview();
+    refreshSparklines();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -154,14 +157,11 @@ function setBadge(metric, age, maxAge) {
 function sensorHealthSummary(collector) {
   const sensors = collector.sensors || {};
   const entries = ['scd41', 'sht41', 'sps30'].map((key) => sensors[key]).filter(Boolean);
-  if (!entries.length) return { headline: '--', detail: '--', ok: false };
+  if (!entries.length) return { headline: '--', ok: false };
   const unhealthy = entries.filter((entry) => !entry.healthy);
-  if (!unhealthy.length) {
-    return { headline: 'All sensors healthy', detail: 'SCD41, SHT41 and SPS30 reporting normally.', ok: true };
-  }
+  if (!unhealthy.length) return { headline: 'All sensors healthy', ok: true };
   return {
     headline: `${unhealthy.length} sensor issue${unhealthy.length === 1 ? '' : 's'}`,
-    detail: unhealthy[0].last_error || 'See Diagnostics for details.',
     ok: false,
   };
 }
@@ -203,8 +203,6 @@ function renderSummary(summary) {
   document.getElementById('metric-aqi-label').textContent = aqi.category || '--';
   setBadge('aqi', ages.pm25, maxAge);
   document.getElementById('metric-co2-label').textContent = aqi.co2_category || '--';
-  document.getElementById('metric-status').textContent = health.headline;
-  document.getElementById('metric-status-detail').textContent = health.detail;
 
   document.getElementById('sample-age').textContent =
     metrics.timestamp ? `Last sample: ${formatTimestamp(metrics.timestamp)}` : 'No samples yet';
@@ -274,6 +272,47 @@ function renderWeather(weather) {
       </div>`;
     grid.appendChild(card);
   }
+}
+
+// --- Hero sparklines (last 24h, no axes — trends live in History) ----------
+
+let sparkRows = null;
+
+async function refreshSparklines() {
+  try {
+    const data = await fetchJson('/api/history?hours=24');
+    sparkRows = data.rows || [];
+  } catch (_error) {
+    return; // quiet: sparklines are decoration, the loop will retry
+  }
+  for (const key of ['temp', 'humid', 'co2', 'aqi']) {
+    renderSparkline(`spark-${key}`, sparkRows, key);
+  }
+}
+
+function renderSparkline(svgId, rows, key) {
+  const svg = document.getElementById(svgId);
+  if (!svg) return;
+  const points = rows.filter((row) => row[key] != null && row.timestamp_ts != null);
+  if (points.length < 2) {
+    svg.innerHTML = '';
+    return;
+  }
+  const width = 240;
+  const height = 48;
+  const pad = 2;
+  const xs = points.map((row) => row.timestamp_ts);
+  const ys = points.map((row) => row[key]);
+  const xMin = Math.min(...xs);
+  const xSpan = (Math.max(...xs) - xMin) || 1;
+  const yMin = Math.min(...ys);
+  const ySpan = (Math.max(...ys) - yMin) || 1;
+  const line = points.map((row) => {
+    const x = pad + ((row.timestamp_ts - xMin) / xSpan) * (width - 2 * pad);
+    const y = pad + (1 - ((row[key] - yMin) / ySpan)) * (height - 2 * pad);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  svg.innerHTML = `<polyline fill="none" stroke="currentColor" stroke-width="2" points="${line}"></polyline>`;
 }
 
 function reloadPreview() {
@@ -707,7 +746,10 @@ function installRefreshLoop() {
     if (activeTab === 'history' && range.mode === 'preset') {
       refreshHistory().catch(() => { /* toast on manual actions only */ });
     }
-    if (activeTab === 'live') reloadPreview();
+    if (activeTab === 'live') {
+      reloadPreview();
+      refreshSparklines();
+    }
     if (activeTab === 'diagnostics') refreshDiagnostics().catch(() => { /* quiet */ });
   }, 60000);
 }
@@ -718,6 +760,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   installActions();
   installRefreshLoop();
   reloadPreview();
+  refreshSparklines();
   try {
     await refreshSummary();
   } catch (error) {

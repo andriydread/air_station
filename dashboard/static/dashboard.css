@@ -153,16 +153,23 @@ button.button-danger {
 .tab { display: none; }
 .tab.active { display: block; }
 
-/* --- Panels & cards -------------------------------------------------------- */
+/* --- Panels & cards --------------------------------------------------------
+   One card language for the whole site: same surface, border, radius and
+   shadow everywhere; only padding and typography vary by role. */
 
-.panel {
+.panel, .metric-card, .chart-card, .control-card {
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 16px;
-  padding: 18px 20px;
-  margin-bottom: 18px;
   box-shadow: var(--shadow);
 }
+
+.panel {
+  padding: 18px 20px;
+  margin-bottom: 18px;
+}
+/* Inside a grid the grid gap owns the spacing, not the panel margin. */
+.live-panels .panel, .diag-grid .panel, .diag-side .panel { margin-bottom: 0; }
 
 .panel-head {
   display: flex;
@@ -172,23 +179,10 @@ button.button-danger {
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
-.panel-head h2 { margin: 0; font-size: 17px; }
+.panel-head h2 { margin: 0; font-size: 16px; }
 .panel-note { margin: 0 0 6px; color: var(--muted); font-size: 13px; }
 
-.metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 14px;
-  margin-bottom: 18px;
-}
-
-.metric-card {
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 14px 16px;
-  box-shadow: var(--shadow);
-}
+.metric-card { padding: 14px 16px; }
 .metric-card header {
   display: flex;
   justify-content: space-between;
@@ -198,7 +192,36 @@ button.button-danger {
 .metric-card h2 { margin: 0; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .metric-card p { margin: 8px 0 2px; font-size: 26px; font-weight: 700; }
 .metric-card small { color: var(--muted); }
-.metric-card-muted p { font-size: 18px; }
+
+/* Live: hero metrics large with a sparkline pinned to the card bottom,
+   PM row compact — hierarchy by size, not by count. */
+.hero-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+  margin-bottom: 18px;
+}
+.metric-hero { display: flex; flex-direction: column; }
+.metric-hero p { font-size: 34px; margin: 6px 0 2px; }
+.sparkline {
+  width: 100%;
+  height: 44px;
+  display: block;
+  margin-top: auto;
+  padding-top: 10px;
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+.pm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 18px;
+  margin-bottom: 18px;
+}
+.metric-compact { padding: 10px 14px; }
+.metric-compact h2 { font-size: 11px; }
+.metric-compact p { font-size: 18px; margin: 6px 0 0; }
 
 .badge {
   font-size: 11px;
@@ -285,13 +308,7 @@ button.button-danger {
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
   gap: 18px;
 }
-.chart-card {
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 14px 16px;
-  box-shadow: var(--shadow);
-}
+.chart-card { padding: 14px 16px; }
 .chart-card h3 { margin: 0 0 8px; font-size: 15px; }
 .chart-frame { position: relative; }
 .chart-frame svg { width: 100%; height: auto; display: block; }
@@ -378,13 +395,7 @@ button.button-danger {
   gap: 18px;
   align-items: start;
 }
-.control-card {
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 16px 18px;
-  box-shadow: var(--shadow);
-}
+.control-card { padding: 16px 18px; }
 .control-card h2 { margin: 0 0 8px; font-size: 16px; }
 
 .info-list p {
@@ -445,5 +456,5 @@ button.button-danger {
 }
 @media (max-width: 560px) {
   .page { padding: 14px 12px 40px; }
-  .metric-card p { font-size: 22px; }
+  .metric-hero p { font-size: 28px; }
 }

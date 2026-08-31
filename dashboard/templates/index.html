@@ -26,15 +26,35 @@
 
     <!-- ======================= LIVE ======================= -->
     <section id="tab-live" class="tab active">
-      <div class="metrics">
-        <article class="metric-card"><header><h2>Temperature</h2><span class="badge" id="badge-temp">--</span></header><p id="metric-temp">--</p></article>
-        <article class="metric-card"><header><h2>Humidity</h2><span class="badge" id="badge-humid">--</span></header><p id="metric-humid">--</p></article>
-        <article class="metric-card"><header><h2>CO2</h2><span class="badge" id="badge-co2">--</span></header><p id="metric-co2">--</p><small id="metric-co2-label">--</small></article>
-        <article class="metric-card"><header><h2>AQI</h2><span class="badge" id="badge-aqi">--</span></header><p id="metric-aqi">--</p><small id="metric-aqi-label">--</small></article>
-        <article class="metric-card"><header><h2>PM2.5</h2><span class="badge" id="badge-pm25">--</span></header><p id="metric-pm25">--</p></article>
-        <article class="metric-card"><header><h2>PM10</h2><span class="badge" id="badge-pm10">--</span></header><p id="metric-pm10">--</p></article>
-        <article class="metric-card"><header><h2>Particle size</h2><span class="badge" id="badge-tps">--</span></header><p id="metric-tps">--</p></article>
-        <article class="metric-card metric-card-muted"><header><h2>Station</h2></header><p id="metric-status">--</p><small id="metric-status-detail">--</small></article>
+      <div class="hero-grid">
+        <article class="metric-card metric-hero">
+          <header><h2>Temperature</h2><span class="badge" id="badge-temp" hidden></span></header>
+          <p id="metric-temp">--</p>
+          <svg id="spark-temp" class="sparkline" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </article>
+        <article class="metric-card metric-hero">
+          <header><h2>Humidity</h2><span class="badge" id="badge-humid" hidden></span></header>
+          <p id="metric-humid">--</p>
+          <svg id="spark-humid" class="sparkline" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </article>
+        <article class="metric-card metric-hero">
+          <header><h2>CO2</h2><span class="badge" id="badge-co2" hidden></span></header>
+          <p id="metric-co2">--</p>
+          <small id="metric-co2-label">--</small>
+          <svg id="spark-co2" class="sparkline" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </article>
+        <article class="metric-card metric-hero">
+          <header><h2>Air quality</h2><span class="badge" id="badge-aqi" hidden></span></header>
+          <p id="metric-aqi">--</p>
+          <small id="metric-aqi-label">--</small>
+          <svg id="spark-aqi" class="sparkline" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </article>
+      </div>
+
+      <div class="pm-grid">
+        <article class="metric-card metric-compact"><header><h2>PM2.5</h2><span class="badge" id="badge-pm25" hidden></span></header><p id="metric-pm25">--</p></article>
+        <article class="metric-card metric-compact"><header><h2>PM10</h2><span class="badge" id="badge-pm10" hidden></span></header><p id="metric-pm10">--</p></article>
+        <article class="metric-card metric-compact"><header><h2>Particle size</h2><span class="badge" id="badge-tps" hidden></span></header><p id="metric-tps">--</p></article>
       </div>
 
       <div class="live-panels">
@@ -168,7 +188,7 @@
             <button data-command="sps30_force_clean" type="button">Run fan clean</button>
           </div>
           <form id="sps30-auto-clean-form" class="stack-form">
-            <label for="auto-clean-value">Auto-clean interval</label>
+            <label for="auto-clean-value">Set new interval</label>
             <div class="input-combo">
               <input id="auto-clean-value" type="number" min="0" value="7">
               <select id="auto-clean-unit">
