@@ -79,3 +79,13 @@ def test_command_queueing_and_validation(client):
         json={"command": "scd41_force_calibration", "payload": {"target_co2": 420}},
     )
     assert missing_confirm.status_code == 400
+
+
+def test_delete_history_requires_server_side_confirm(client):
+    refused = client.delete("/api/history", json={})
+    assert refused.status_code == 400
+    assert client.get("/api/history?hours=1").get_json()["rows"], "data must survive"
+
+    accepted = client.delete("/api/history", json={"confirm": "delete"})
+    assert accepted.status_code == 200
+    assert client.get("/api/history?hours=1").get_json()["rows"] == []

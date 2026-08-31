@@ -458,7 +458,11 @@ async function deleteHistory() {
     return;
   }
 
-  const data = await fetchJson('/api/history', { method: 'DELETE' });
+  const data = await fetchJson('/api/history', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: 'delete' }),
+  });
   document.getElementById('command-status').textContent = data.status;
   await refreshAll();
 }

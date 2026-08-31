@@ -110,3 +110,21 @@ def test_concurrent_access_is_safe(database):
 
     assert errors == []
     assert len(database.query_history(hours=1, bucket_seconds=3600)) >= 1
+
+
+def test_delete_history_survives_vacuum_failure(monkeypatch, database):
+    """B7: a busy database must not turn a completed delete into an error."""
+    import sqlite3 as sqlite3_module
+
+    database.insert_measurement({"co2": 500})
+    original = database._write
+
+    def flaky_write(sql, params=()):
+        if sql.strip().upper().startswith("VACUUM"):
+            raise sqlite3_module.OperationalError("database is locked")
+        return original(sql, params)
+
+    monkeypatch.setattr(database, "_write", flaky_write)
+    assert database.delete_history() == 1
+    events = database.get_recent_events()
+    assert any(e["event_type"] == "vacuum_skipped" for e in events)

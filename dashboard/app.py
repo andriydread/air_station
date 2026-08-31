@@ -218,6 +218,11 @@ def create_app() -> Flask:
 
     @app.delete("/api/history")
     def api_delete_history() -> Any:
+        # A browser confirm() is not a guard: any device on the LAN can send
+        # this request blind. Require the intent to be spelled out server-side.
+        body = request.get_json(silent=True) or {}
+        if body.get("confirm") != "delete":
+            return jsonify({"error": 'history deletion requires {"confirm": "delete"}'}), 400
         deleted_rows = database.delete_history()
         LOGGER.warning("Deleted %s history rows via dashboard", deleted_rows)
         database.insert_event(
