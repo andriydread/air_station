@@ -62,8 +62,8 @@ Built for unattended operation; every layer heals itself:
   oneshot unit — the classic Zero 2 W hang cause.
 - **Watchdogs** — the collector heartbeats systemd (`Type=notify`,
   `WatchdogSec=90`): a wedged process is restarted, not just a crashed
-  one. `make install-watchdog` additionally arms the SoC hardware
-  watchdog so a hard kernel freeze reboots the Pi within 15s.
+  one. `make init` additionally arms the SoC hardware watchdog so a hard
+  kernel freeze reboots the Pi within 15s.
 - **Power visibility** — `vcgencmd get_throttled` is polled every minute;
   undervoltage/throttling flags become events and a status pill.
 - **SD-card care** — unchanged state is never rewritten, and the command
@@ -98,35 +98,28 @@ tests/             hardware-free test suite (mocked sensors; runs anywhere)
 
 ## Setup and daily use (Makefile)
 
-Two flows; the pull-based one on the Pi is the simplest:
-
-**On the Pi** (after a one-time `git clone` into `~/air_station`):
-
-```bash
-make pi-deploy    # reset to latest origin/main, deps, systemd units, restart, verify
-make pi-fresh     # same, but wipe the venv + caches first (data/ always survives)
-make pi-watchdog  # arm the SoC hardware watchdog (then: sudo reboot)
-make pi-restart / pi-status
-make pi-verify    # checklist: services, watchdog, wifi power save, sudoers
-```
-
-`pi-deploy` is safe to run repeatedly: it discards local file changes and
-stray old files (`git reset --hard` + `git clean -fd`), but `data/` and
-`.venv` are git-ignored and untouchable by it.
-
-**Remote** (rsync from a dev machine; Pi reachable as `pi@pizero.local`,
-override with `make <target> PI=pi@<addr>`):
+All day-to-day commands run **on the Pi** from `~/air_station`
+(one-time `git clone` first). The routine is: `git pull`, then
+`make deploy`.
 
 ```bash
-make install          # first-time: code, venv, systemd units, sudoers
-make install-watchdog # arm the hardware watchdog (reboot Pi after)
-make deploy           # sync code, install deps, restart both services
-make deploy-full      # deploy + refresh systemd units + sudoers
-make restart / stop / start / status
-make logs / logs-web  # tail collector / dashboard log on the Pi
-make pull-data        # copy database + logs from the Pi to ./from_pi/data
-make db               # sqlite3 shell on the Pi's live database
+make init           # first time: fresh venv, requirements, services, watchdog
+                    # (reboot once afterwards to arm the hardware watchdog)
+make deploy         # after a git pull: requirements + new/updated service
+                    # files, restart everything, quick health readout
+make restart        # restart the app services
+make delete-all     # remove services + venv + caches (asks before data)
+make delete-venv    # delete the virtualenv
+make delete-service # stop, disable and remove service files + sudoers
+make delete-data    # delete ALL stored data — requires confirmation
 ```
+
+`deploy` never touches `data/` (the database) — only `delete-data` can,
+and it asks first.
+
+The `agent-*` targets (`make help` lists them) belong to the coding agent
+on the dev server: tests, remote rsync deploy, log tailing, pulling the
+database for threshold tuning. They are not needed on the Pi.
 
 ## Development off the Pi
 
@@ -134,8 +127,8 @@ The collector needs real hardware, but everything else runs anywhere —
 the test suite fakes all of it (sensors, GPIO, SPI):
 
 ```bash
-make venv-dev            # local virtualenv with test dependencies
-make test                # full suite: 125+ tests, no Pi needed
+make agent-venv          # local virtualenv with test dependencies
+make agent-test          # full suite: 130+ tests, no Pi needed
 python -m dashboard.app  # dashboard against a local/pulled data/airmonitor.db
 ```
 
@@ -217,7 +210,6 @@ truthful and healthy:
   (sensor state changes, invalid readings, network drops, power flags,
   command results) and the flagged-samples panel say what the station
   itself thinks happened.
-- **After changing systemd files or sudoers**: `make pi-deploy` (or
-  `make deploy-full` remotely) — both always refresh units + sudoers.
-  The `Type=notify` watchdog unit requires the matching collector code —
-  always deploy both together.
+- **After changing systemd files or sudoers**: nothing special —
+  `make deploy` always refreshes units + sudoers along with the code, so
+  the `Type=notify` watchdog unit and its matching collector land together.
