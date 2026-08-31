@@ -28,6 +28,7 @@ _pi:  # refuse to run the Pi commands anywhere else
 		{ echo "This command runs ON the Pi (as user pi). Agent commands are the agent-* ones."; exit 1; }
 
 init: _pi ## Full clean install: fresh venv, requirements, services, watchdog
+	sudo apt-get install -y python3-venv python3-dev swig liblgpio-dev
 	rm -rf .venv
 	python3 -m venv .venv
 	sh systemd/enable-watchdog.sh
