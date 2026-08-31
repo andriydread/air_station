@@ -1,85 +1,313 @@
+'use strict';
+
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
+
 const metricFormats = {
-  co2: (value) => value == null ? '--' : `${Math.round(value)} ppm`,
-  temp: (value) => value == null ? '--' : `${value.toFixed(1)} C`,
-  humid: (value) => value == null ? '--' : `${value.toFixed(1)} %`,
-  pm25: (value) => value == null ? '--' : `${value.toFixed(2)} ug/m3`,
-  pm10: (value) => value == null ? '--' : `${value.toFixed(2)} ug/m3`,
-  tps: (value) => value == null ? '--' : `${value.toFixed(2)} um`,
+  co2: (v) => v == null ? '--' : `${Math.round(v)} ppm`,
+  temp: (v) => v == null ? '--' : `${v.toFixed(1)} °C`,
+  humid: (v) => v == null ? '--' : `${v.toFixed(1)} %`,
+  pm25: (v) => v == null ? '--' : `${v.toFixed(2)} µg/m³`,
+  pm10: (v) => v == null ? '--' : `${v.toFixed(2)} µg/m³`,
+  tps: (v) => v == null ? '--' : `${v.toFixed(2)} µm`,
 };
 
-const chartState = new Map();
+const statsMetrics = [
+  ['temp', 'Temperature, °C', 1],
+  ['humid', 'Humidity, %', 1],
+  ['co2', 'CO2, ppm', 0],
+  ['pm1', 'PM1, µg/m³', 2],
+  ['pm25', 'PM2.5, µg/m³', 2],
+  ['pm4', 'PM4, µg/m³', 2],
+  ['pm10', 'PM10, µg/m³', 2],
+  ['tps', 'Particle size, µm', 2],
+];
+
 const weatherIconMap = {
-  0: 'sun.png',
-  1: 'sun.png',
-  2: 'partly_cloudy.png',
-  3: 'cloud.png',
-  45: 'fog.png',
-  48: 'fog.png',
-  51: 'rain.png',
-  53: 'rain.png',
-  55: 'rain.png',
-  56: 'rain.png',
-  57: 'rain.png',
-  61: 'rain.png',
-  63: 'rain.png',
-  65: 'rain.png',
-  66: 'rain.png',
-  67: 'rain.png',
-  71: 'snow.png',
-  73: 'snow.png',
-  75: 'snow.png',
-  77: 'snow.png',
-  80: 'rain.png',
-  81: 'rain.png',
-  82: 'rain.png',
-  85: 'snow.png',
-  86: 'snow.png',
-  95: 'storm.png',
-  96: 'storm.png',
-  99: 'storm.png',
+  0: 'sun.png', 1: 'sun.png', 2: 'partly_cloudy.png', 3: 'cloud.png',
+  45: 'fog.png', 48: 'fog.png',
+  51: 'rain.png', 53: 'rain.png', 55: 'rain.png', 56: 'rain.png', 57: 'rain.png',
+  61: 'rain.png', 63: 'rain.png', 65: 'rain.png', 66: 'rain.png', 67: 'rain.png',
+  71: 'snow.png', 73: 'snow.png', 75: 'snow.png', 77: 'snow.png',
+  80: 'rain.png', 81: 'rain.png', 82: 'rain.png', 85: 'snow.png', 86: 'snow.png',
+  95: 'storm.png', 96: 'storm.png', 99: 'storm.png',
 };
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
+function formatTimestamp(value) {
+  if (!value) return '--';
+  const date = new Date(value);
+  const two = (n) => String(n).padStart(2, '0');
+  return `${two(date.getHours())}:${two(date.getMinutes())} ${two(date.getDate())}.${two(date.getMonth() + 1)}.${date.getFullYear()}`;
+}
+
+function formatAge(seconds) {
+  if (seconds == null) return 'no data';
+  if (seconds < 90) return `${seconds}s ago`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+  return `${Math.round(seconds / 86400)}d ago`;
+}
+
+function formatInterval(seconds) {
+  if (seconds == null) return '--';
+  if (seconds === 0) return 'disabled';
+  if (seconds % 86400 === 0) return `${seconds / 86400} day(s)`;
+  if (seconds % 3600 === 0) return `${seconds / 3600} hour(s)`;
+  if (seconds % 60 === 0) return `${seconds / 60} minute(s)`;
+  return `${seconds} second(s)`;
+}
+
+function prettyJson(value) {
+  return JSON.stringify(value || {}, null, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Toast: the ONE place errors and confirmations surface
+// ---------------------------------------------------------------------------
+
+let toastTimer = null;
+
+function toast(message, kind = 'info') {
+  const element = document.getElementById('toast');
+  element.textContent = message;
+  element.className = `toast toast-${kind}`;
+  element.hidden = false;
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => { element.hidden = true; }, 6000);
+}
+
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+
+async function fetchJson(url, options) {
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    throw new Error('Station unreachable');
+  }
+  let data = {};
+  try { data = await response.json(); } catch (_error) { data = {}; }
+  if (!response.ok) {
+    throw new Error(data.error || `Request failed (${response.status})`);
+  }
+  return data;
+}
+
+async function submitCommand(command, payload = {}) {
+  const data = await fetchJson('/api/commands', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command, payload }),
+  });
+  toast(`Command queued (#${data.id}). Result appears in Diagnostics.`, 'info');
+  window.setTimeout(refreshSummary, 3000);
+}
+
+// ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
+
+let activeTab = 'live';
+
+function switchTab(name) {
+  activeTab = name;
+  document.querySelectorAll('.tab-button').forEach((button) => {
+    button.classList.toggle('active', button.dataset.tab === name);
+  });
+  document.querySelectorAll('.tab').forEach((section) => {
+    section.classList.toggle('active', section.id === `tab-${name}`);
+  });
+  if (name === 'history') refreshHistory().catch((e) => toast(e.message, 'error'));
+  if (name === 'diagnostics') refreshDiagnostics().catch((e) => toast(e.message, 'error'));
+  if (name === 'live') reloadPreview();
+}
+
+// ---------------------------------------------------------------------------
+// Live tab
+// ---------------------------------------------------------------------------
+
+let lastSummary = null;
+
+function setBadge(metric, age, maxAge) {
+  const badge = document.getElementById(`badge-${metric}`);
+  if (!badge) return;
+  if (age == null) {
+    badge.textContent = 'no data';
+    badge.className = 'badge badge-stale';
+  } else if (age <= maxAge) {
+    badge.textContent = formatAge(age);
+    badge.className = 'badge badge-ok';
+  } else {
+    badge.textContent = `stale ${formatAge(age)}`;
+    badge.className = 'badge badge-stale';
+  }
+}
+
+function sensorHealthSummary(collector) {
+  const sensors = collector.sensors || {};
+  const entries = ['scd41', 'sht41', 'sps30'].map((key) => sensors[key]).filter(Boolean);
+  if (!entries.length) return { headline: '--', detail: '--', ok: false };
+  const unhealthy = entries.filter((entry) => !entry.healthy);
+  if (!unhealthy.length) {
+    return { headline: 'All sensors healthy', detail: 'SCD41, SHT41 and SPS30 reporting normally.', ok: true };
+  }
+  return {
+    headline: `${unhealthy.length} sensor issue${unhealthy.length === 1 ? '' : 's'}`,
+    detail: unhealthy[0].last_error || 'See Diagnostics for details.',
+    ok: false,
+  };
+}
+
+function setPill(id, text, ok) {
+  const pill = document.getElementById(id);
+  pill.textContent = text;
+  pill.className = `pill ${ok == null ? '' : ok ? 'pill-ok' : 'pill-bad'}`;
+}
+
+function renderSummary(summary) {
+  lastSummary = summary;
+  const live = summary.latest_measurements?.value || {};
+  const metrics = Object.keys(live).length ? live : (summary.latest_measurement || {});
+  const ages = live.ages || {};
+  const aqi = summary.aqi || {};
+  const collector = summary.collector_status?.value || {};
+  const maxAge = collector.measurement_max_age_seconds || 45;
+  const health = sensorHealthSummary(collector);
+  const network = collector.sensors?.network || {};
+  const power = collector.sensors?.power || {};
+  const calibration = summary.scd41_last_calibration?.value || {};
+
+  for (const metric of ['co2', 'temp', 'humid', 'pm25', 'pm10', 'tps']) {
+    document.getElementById(`metric-${metric}`).textContent = metricFormats[metric](metrics[metric]);
+    setBadge(metric, ages[metric], maxAge);
+  }
+  document.getElementById('metric-aqi').textContent = aqi.value == null ? '--' : String(aqi.value);
+  document.getElementById('metric-aqi-label').textContent = aqi.category || '--';
+  setBadge('aqi', ages.pm25, maxAge);
+  document.getElementById('metric-co2-label').textContent = aqi.co2_category || '--';
+  document.getElementById('metric-status').textContent = health.headline;
+  document.getElementById('metric-status-detail').textContent = health.detail;
+
+  document.getElementById('sample-age').textContent =
+    metrics.timestamp ? `Last sample: ${formatTimestamp(metrics.timestamp)}` : 'No samples yet';
+
+  setPill('pill-collector', `Collector: ${collector.running ? 'running' : 'stopped'}`, !!collector.running);
+  setPill('pill-sensors', health.ok ? 'Sensors: ok' : health.headline, health.ok);
+  setPill('pill-network', `Network: ${network.healthy ? 'online' : 'offline'}`, !!network.healthy);
+  if (power.available === false) {
+    setPill('pill-power', 'Power: n/a', null);
+  } else {
+    setPill('pill-power', `Power: ${power.healthy === false ? 'issue' : 'ok'}`, power.healthy !== false);
+  }
+
+  // Diagnostics-side details rendered from the same summary
+  document.getElementById('network-interface').textContent = network.interface || '--';
+  document.getElementById('network-status').textContent =
+    `healthy=${network.healthy ? 'yes' : 'no'} | operstate=${network.operstate || '--'} | carrier=${network.carrier || '--'}`;
+  document.getElementById('network-signal').textContent =
+    network.signal_level_dbm == null ? '--' : `${network.signal_level_dbm} dBm`;
+  document.getElementById('network-last-success').textContent = formatTimestamp(network.last_success_at);
+  document.getElementById('network-last-error').textContent = network.last_error || '--';
+  document.getElementById('power-undervoltage').textContent =
+    power.available === false ? 'n/a' :
+      power.undervoltage_now ? 'NOW' : power.undervoltage_since_boot ? 'since boot' : 'no';
+  document.getElementById('power-throttled').textContent =
+    power.available === false ? 'n/a' :
+      power.throttled_now ? 'NOW' : power.throttled_since_boot ? 'since boot' : 'no';
+
+  // Controls-side details
+  document.getElementById('auto-clean-current').textContent =
+    formatInterval(collector.sps30_auto_cleaning_interval_seconds);
+  document.getElementById('scd41-last-calibration').textContent =
+    formatTimestamp(calibration.calibrated_at || collector.sensors?.scd41?.last_calibration_at);
+  document.getElementById('scd41-recent-samples').textContent =
+    String(collector.scd41_recent_valid_samples ?? '--');
+  document.getElementById('database-path').textContent = collector.database_path || '--';
+  document.getElementById('collector-log-file').textContent = collector.log_file || '--';
+  document.getElementById('scd41-asc-enabled').checked = !!collector.scd41_asc_enabled;
+
+  const weather = summary.latest_weather?.value || {};
+  document.getElementById('weather-updated').textContent =
+    `Updated: ${formatTimestamp(summary.latest_weather?.updated_at)}`;
+  renderWeather(weather);
+  renderCommands(summary.recent_commands || []);
+}
+
+function renderWeather(weather) {
+  const grid = document.getElementById('forecast-grid');
+  grid.innerHTML = '';
+  const entries = [weather[1] || weather['1'], weather[2] || weather['2'], weather[3] || weather['3']].filter(Boolean);
+  if (!entries.length) {
+    grid.innerHTML = '<div class="empty-state">No forecast data yet.</div>';
+    return;
+  }
+  for (const block of entries) {
+    const [windowLabel, maxTemp, minTemp, precip, code] = block;
+    const icon = weatherIconMap[code] || 'sun.png';
+    const tempText = (maxTemp != null && minTemp != null) ? `${maxTemp} / ${minTemp} °C` : '-- / -- °C';
+    const card = document.createElement('article');
+    card.className = 'forecast-card';
+    card.innerHTML = `
+      <p class="forecast-window">${escapeHtml(windowLabel)}</p>
+      <div class="forecast-body">
+        <img class="forecast-icon" src="/assets/icons/${icon}" alt="">
+        <div>
+          <p class="forecast-stat">${escapeHtml(tempText)}</p>
+          <p class="forecast-stat">Rain: ${precip != null ? escapeHtml(String(precip)) : '--'}%</p>
+        </div>
+      </div>`;
+    grid.appendChild(card);
+  }
+}
+
+function reloadPreview() {
+  const image = document.getElementById('display-preview');
+  const note = document.getElementById('preview-note');
+  const probe = new Image();
+  probe.onload = () => {
+    image.src = probe.src;
+    image.hidden = false;
+    note.hidden = true;
+  };
+  probe.onerror = () => {
+    image.hidden = true;
+    note.hidden = false;
+  };
+  probe.src = `/api/display-preview.png?t=${Date.now()}`;
+}
+
+// ---------------------------------------------------------------------------
+// History tab
+// ---------------------------------------------------------------------------
+
+let range = { mode: 'preset', hours: 24 };
+let lastHistoryRows = null;
+
 const chartConfigs = {
   temp: {
     color: '#b85c38',
-    formatter: (row) => `${row.temp.toFixed(1)} C`,
+    formatter: (row) => `${row.temp.toFixed(1)} °C`,
     bounds: (values) => {
       const min = Math.min(...values);
       const max = Math.max(...values);
-      return {
-        min: min < 0 ? Math.floor(min - 1) : 0,
-        max: max > 40 ? Math.ceil(max + 1) : 40,
-      };
+      return { min: min < 0 ? Math.floor(min - 1) : 0, max: max > 40 ? Math.ceil(max + 1) : 40 };
     },
   },
-  humid: {
-    color: '#2b6f9e',
-    formatter: (row) => `${row.humid.toFixed(1)} %`,
-    bounds: () => ({ min: 0, max: 100 }),
-  },
-  co2: {
-    color: '#1f5c4a',
-    formatter: (row) => `${Math.round(row.co2)} ppm`,
-    bounds: (values) => dynamicFromZero(values, 100),
-  },
-  aqi: {
-    color: '#9e6f00',
-    formatter: (row) => `${Math.round(row.aqi)}`,
-    bounds: (values) => dynamicFromZero(values, 25),
-  },
-  pm25: {
-    color: '#5b4b8a',
-    formatter: (row) => `${row.pm25.toFixed(2)} ug/m3`,
-    bounds: (values) => dynamicFromZero(values, 5),
-  },
-  pm10: {
-    color: '#6f4a2a',
-    formatter: (row) => `${row.pm10.toFixed(2)} ug/m3`,
-    bounds: (values) => dynamicFromZero(values, 5),
-  },
+  humid: { color: '#2b6f9e', formatter: (row) => `${row.humid.toFixed(1)} %`, bounds: () => ({ min: 0, max: 100 }) },
+  co2: { color: '#1f5c4a', formatter: (row) => `${Math.round(row.co2)} ppm`, bounds: (v) => dynamicFromZero(v, 100) },
+  aqi: { color: '#9e6f00', formatter: (row) => `${Math.round(row.aqi)}`, bounds: (v) => dynamicFromZero(v, 25) },
+  pm25: { color: '#5b4b8a', formatter: (row) => `${row.pm25.toFixed(2)} µg/m³`, bounds: (v) => dynamicFromZero(v, 5) },
+  pm10: { color: '#6f4a2a', formatter: (row) => `${row.pm10.toFixed(2)} µg/m³`, bounds: (v) => dynamicFromZero(v, 5) },
 };
-let selectedHours = 24;
-let lastSummary = null;
-let lastHistoryRows = null;
 
 function dynamicFromZero(values, minSpan) {
   const rawMax = Math.max(...values, 0);
@@ -87,29 +315,45 @@ function dynamicFromZero(values, minSpan) {
   return { min: 0, max: Math.max(minSpan, paddedMax) };
 }
 
-function formatTimestamp(value) {
-  if (!value) {
-    return '--';
+function rangeQuery() {
+  if (range.mode === 'custom') return `from=${range.from}&to=${range.to}`;
+  return `hours=${range.hours}`;
+}
+
+async function refreshHistory() {
+  const data = await fetchJson(`/api/history?${rangeQuery()}`);
+  lastHistoryRows = data.rows || [];
+  renderAllCharts(lastHistoryRows);
+  renderStats(data.stats || {});
+  document.getElementById('export-csv').href = `/api/export.csv?${rangeQuery()}`;
+}
+
+function renderStats(stats) {
+  document.getElementById('stats-note').textContent =
+    stats.sample_count != null ? `${stats.sample_count} raw samples in range` : '--';
+  const body = document.querySelector('#stats-table tbody');
+  body.innerHTML = '';
+  for (const [key, label, digits] of statsMetrics) {
+    const entry = stats[key] || {};
+    const format = (v) => v == null ? '--' : Number(v).toFixed(digits);
+    const row = document.createElement('tr');
+    row.innerHTML = `<td>${escapeHtml(label)}</td><td>${format(entry.min)}</td><td>${format(entry.avg)}</td><td>${format(entry.max)}</td>`;
+    body.appendChild(row);
   }
-  const date = new Date(value);
-  const two = (n) => String(n).padStart(2, '0');
-  return `${two(date.getHours())}:${two(date.getMinutes())} ${two(date.getDate())}-${two(date.getMonth() + 1)}-${date.getFullYear()}`;
 }
 
-function formatAxisTimestampFromSeconds(seconds) {
-  const date = new Date(seconds * 1000);
-  const two = (n) => String(n).padStart(2, '0');
-  return `${two(date.getHours())}:${two(date.getMinutes())}`;
+function renderAllCharts(rows) {
+  renderLineChart('chart-temp', rows, 'temp', chartConfigs.temp);
+  renderLineChart('chart-humid', rows, 'humid', chartConfigs.humid);
+  renderLineChart('chart-co2', rows, 'co2', chartConfigs.co2);
+  renderLineChart('chart-aqi', rows, 'aqi', chartConfigs.aqi);
+  renderLineChart('chart-pm25', rows, 'pm25', chartConfigs.pm25);
+  renderLineChart('chart-pm10', rows, 'pm10', chartConfigs.pm10);
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
+// --- SVG line chart (hand-rolled, zero dependencies) -----------------------
+
+const chartState = new Map();
 
 function themeColors() {
   const styles = getComputedStyle(document.documentElement);
@@ -121,186 +365,19 @@ function themeColors() {
   };
 }
 
-function getLiveMetrics(summary) {
-  return summary.latest_measurements?.value || summary.latest_measurement || {};
-}
-
-function sensorHealthSummary(collector) {
-  const sensors = collector.sensors || {};
-  const entries = ['scd41', 'sht41', 'sps30'].map((key) => sensors[key]).filter(Boolean);
-  if (!entries.length) {
-    return { headline: '--', detail: '--', pill: 'Sensors: --' };
-  }
-
-  const unhealthy = entries.filter((entry) => !entry.healthy);
-  if (!unhealthy.length) {
-    return {
-      headline: 'Healthy',
-      detail: 'SCD41, SHT41, and SPS30 are reporting normally.',
-      pill: 'Sensors: healthy',
-    };
-  }
-
-  const primary = unhealthy[0].last_error || 'One or more sensors need attention.';
-  return {
-    headline: `${unhealthy.length} issue${unhealthy.length === 1 ? '' : 's'}`,
-    detail: primary,
-    pill: `Sensors: ${unhealthy.length} issue${unhealthy.length === 1 ? '' : 's'}`,
-  };
-}
-
-function formatInterval(seconds) {
-  if (seconds == null) {
-    return '--';
-  }
-  if (seconds === 0) {
-    return 'disabled';
-  }
-  if (seconds % 86400 === 0) {
-    return `${seconds / 86400} day(s)`;
-  }
-  if (seconds % 3600 === 0) {
-    return `${seconds / 3600} hour(s)`;
-  }
-  if (seconds % 60 === 0) {
-    return `${seconds / 60} minute(s)`;
-  }
-  return `${seconds} second(s)`;
-}
-
-function renderSummary(summary) {
-  lastSummary = summary;
-  const metrics = getLiveMetrics(summary);
-  const aqi = summary.aqi || {};  // computed by the backend (single AQI source)
-  const collector = summary.collector_status?.value || {};
-  const health = sensorHealthSummary(collector);
-  const calibration = summary.scd41_last_calibration?.value || {};
-  const network = collector.sensors?.network || {};
-
-  document.getElementById('metric-co2').textContent = metricFormats.co2(metrics.co2);
-  document.getElementById('metric-temp').textContent = metricFormats.temp(metrics.temp);
-  document.getElementById('metric-humid').textContent = metricFormats.humid(metrics.humid);
-  document.getElementById('metric-pm25').textContent = metricFormats.pm25(metrics.pm25);
-  document.getElementById('metric-pm10').textContent = metricFormats.pm10(metrics.pm10);
-  document.getElementById('metric-tps').textContent = metricFormats.tps(metrics.tps);
-  document.getElementById('metric-aqi').textContent = aqi.value == null ? '--' : String(aqi.value);
-  document.getElementById('metric-aqi-label').textContent = aqi.category || '--';
-  document.getElementById('metric-co2-label').textContent = aqi.co2_category || '--';
-  document.getElementById('metric-status').textContent = health.headline;
-  document.getElementById('metric-status-detail').textContent = health.detail;
-  document.getElementById('latest-sample-time').textContent = `Dashboard sample: ${formatTimestamp(metrics.timestamp)}`;
-
-  document.getElementById('collector-running').textContent = `Collector: ${collector.running ? 'running' : 'stopped'}`;
-  document.getElementById('collector-asc').textContent = `ASC: ${collector.scd41_asc_enabled ? 'enabled' : 'disabled'}`;
-  document.getElementById('collector-health').textContent = health.pill;
-  document.getElementById('scd41-asc-enabled').checked = !!collector.scd41_asc_enabled;
-  document.getElementById('database-path').textContent = collector.database_path || '--';
-  document.getElementById('collector-log-file').textContent = collector.log_file || '--';
-  document.getElementById('auto-clean-current').textContent = formatInterval(collector.sps30_auto_cleaning_interval_seconds);
-  document.getElementById('scd41-last-calibration').textContent = formatTimestamp(calibration.calibrated_at || collector.sensors?.scd41?.last_calibration_at);
-  document.getElementById('scd41-recent-samples').textContent = String(collector.scd41_recent_valid_samples ?? '--');
-
-  document.getElementById('network-interface').textContent = network.interface || '--';
-  document.getElementById('network-status').textContent = `healthy=${network.healthy ? 'yes' : 'no'} | operstate=${network.operstate || '--'} | carrier=${network.carrier || '--'}`;
-  document.getElementById('network-signal').textContent = network.signal_level_dbm == null ? '--' : `${network.signal_level_dbm} dBm`;
-  document.getElementById('network-last-success').textContent = formatTimestamp(network.last_success_at);
-  document.getElementById('network-last-error').textContent = network.last_error || '--';
-
-  const weather = summary.latest_weather?.value || {};
-  document.getElementById('weather-updated').textContent = `Updated: ${formatTimestamp(summary.latest_weather?.updated_at)}`;
-  renderWeather(weather);
-  renderCommands(summary.recent_commands || []);
-  renderEvents(summary.recent_events || []);
-}
-
-function renderWeather(weather) {
-  const grid = document.getElementById('forecast-grid');
-  grid.innerHTML = '';
-  const entries = [weather[1], weather[2], weather[3], weather['1'], weather['2'], weather['3']].filter(Boolean).slice(0, 3);
-  if (!entries.length) {
-    grid.innerHTML = '<div class="empty-state">No forecast data yet.</div>';
-    return;
-  }
-  for (const block of entries) {
-    const card = document.createElement('article');
-    card.className = 'forecast-card';
-    const [windowLabel, maxTemp, minTemp, precip, code] = block;
-    const icon = weatherIconMap[code] || 'sun.png';
-    const tempText = (maxTemp != null && minTemp != null) ? `${maxTemp} / ${minTemp} C` : '-- / -- C';
-    const rainText = precip != null ? `${precip}%` : '--%';
-    card.innerHTML = `
-      <p class="forecast-window">${escapeHtml(windowLabel)}</p>
-      <div class="forecast-body">
-        <img class="forecast-icon" src="/assets/icons/${icon}" alt="forecast icon">
-        <div class="forecast-stats">
-          <p class="forecast-stat">${escapeHtml(tempText)}</p>
-          <p class="forecast-stat">Rain: ${escapeHtml(rainText)}</p>
-        </div>
-      </div>
-    `;
-    grid.appendChild(card);
-  }
-}
-
-function prettyJson(value) {
-  return JSON.stringify(value || {}, null, 2);
-}
-
-function renderCommands(commands) {
-  const list = document.getElementById('command-list');
-  list.innerHTML = '';
-  if (!commands.length) {
-    list.innerHTML = '<div class="empty-state">No commands recorded yet.</div>';
-    return;
-  }
-  for (const command of commands) {
-    const item = document.createElement('article');
-    item.className = 'command-item';
-    item.innerHTML = `
-      <header>
-        <span>${escapeHtml(command.command)}</span>
-        <span class="command-status-${escapeHtml(command.status)}">${escapeHtml(command.status)}</span>
-      </header>
-      <p>Created: ${escapeHtml(formatTimestamp(command.created_at))}</p>
-      <p>Payload:</p>
-      <pre>${escapeHtml(prettyJson(command.payload))}</pre>
-      <p>Result:</p>
-      <pre>${escapeHtml(prettyJson(command.result))}</pre>
-    `;
-    list.appendChild(item);
-  }
-}
-
-function renderEvents(events) {
-  const list = document.getElementById('event-list');
-  list.innerHTML = '';
-  document.getElementById('events-status').textContent = events.length ? `Showing ${events.length} latest events.` : 'No events recorded yet.';
-  if (!events.length) {
-    list.innerHTML = '<div class="empty-state">No diagnostics recorded yet.</div>';
-    return;
-  }
-  for (const event of events) {
-    const item = document.createElement('article');
-    item.className = 'event-item';
-    item.innerHTML = `
-      <header>
-        <span>${escapeHtml(event.source)} / ${escapeHtml(event.event_type)}</span>
-        <span class="event-level event-level-${escapeHtml(event.level)}">${escapeHtml(event.level)}</span>
-      </header>
-      <p>${escapeHtml(event.message)}</p>
-      <p>${escapeHtml(formatTimestamp(event.created_at))}</p>
-      <pre>${escapeHtml(prettyJson(event.details))}</pre>
-    `;
-    list.appendChild(item);
-  }
-}
-
 function computeTicks(min, max, count) {
-  if (count <= 1) {
-    return [min];
-  }
+  if (count <= 1) return [min];
   const step = (max - min) / (count - 1);
   return Array.from({ length: count }, (_, index) => min + step * index);
+}
+
+function formatAxisTimestamp(seconds, spanSeconds) {
+  const date = new Date(seconds * 1000);
+  const two = (n) => String(n).padStart(2, '0');
+  if (spanSeconds > 48 * 3600) {
+    return `${two(date.getDate())}.${two(date.getMonth() + 1)}`;
+  }
+  return `${two(date.getHours())}:${two(date.getMinutes())}`;
 }
 
 function renderLineChart(svgId, rows, key, config) {
@@ -311,7 +388,7 @@ function renderLineChart(svgId, rows, key, config) {
   const colors = themeColors();
 
   if (!points.length) {
-    svg.innerHTML = `<text x="24" y="40" fill="${colors.chartLabel}" font-size="16">No data yet</text>`;
+    svg.innerHTML = `<text x="24" y="40" fill="${colors.chartLabel}" font-size="16">No data</text>`;
     tooltip.style.opacity = '0';
     chartState.delete(svgId);
     return;
@@ -326,31 +403,26 @@ function renderLineChart(svgId, rows, key, config) {
   const xMaxRaw = Math.max(...rowsWithTime.map((row) => row.timestamp_ts));
   const xMax = xMaxRaw === xMin ? xMin + 1 : xMaxRaw;
   const yRange = yBounds.max - yBounds.min || 1;
+  const span = xMax - xMin;
 
-  const coordinates = points.map((row) => {
-    const x = padding.left + ((row.timestamp_ts - xMin) / (xMax - xMin)) * (width - padding.left - padding.right);
-    const y = padding.top + (height - padding.top - padding.bottom) * (1 - ((row[key] - yBounds.min) / yRange));
-    return { x, y, row };
-  });
+  const coordinates = points.map((row) => ({
+    x: padding.left + ((row.timestamp_ts - xMin) / (xMax - xMin)) * (width - padding.left - padding.right),
+    y: padding.top + (height - padding.top - padding.bottom) * (1 - ((row[key] - yBounds.min) / yRange)),
+    row,
+  }));
 
   const polyline = coordinates.map((point) => `${point.x},${point.y}`).join(' ');
-  const yTicks = computeTicks(yBounds.min, yBounds.max, 5);
-  const xTicks = computeTicks(xMin, xMax, 5);
-
-  const horizontalGrid = yTicks.map((tick) => {
+  const horizontalGrid = computeTicks(yBounds.min, yBounds.max, 5).map((tick) => {
     const y = padding.top + (height - padding.top - padding.bottom) * (1 - ((tick - yBounds.min) / yRange));
     return `
       <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="${colors.chartGrid}" stroke-dasharray="4 4" />
-      <text x="8" y="${y + 4}" fill="${colors.chartLabel}" font-size="12">${tick.toFixed(1)}</text>
-    `;
+      <text x="8" y="${y + 4}" fill="${colors.chartLabel}" font-size="12">${tick.toFixed(1)}</text>`;
   }).join('');
-
-  const verticalTicks = xTicks.map((tick) => {
+  const verticalTicks = computeTicks(xMin, xMax, 5).map((tick) => {
     const x = padding.left + ((tick - xMin) / (xMax - xMin)) * (width - padding.left - padding.right);
     return `
       <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="${colors.chartGridSoft}" />
-      <text x="${x}" y="${height - 12}" text-anchor="middle" fill="${colors.chartLabel}" font-size="12">${formatAxisTimestampFromSeconds(tick)}</text>
-    `;
+      <text x="${x}" y="${height - 12}" text-anchor="middle" fill="${colors.chartLabel}" font-size="12">${formatAxisTimestamp(tick, span)}</text>`;
   }).join('');
 
   svg.innerHTML = `
@@ -359,8 +431,7 @@ function renderLineChart(svgId, rows, key, config) {
     ${verticalTicks}
     <line id="crosshair-${svgId}" x1="0" y1="${padding.top}" x2="0" y2="${height - padding.bottom}" stroke="${config.color}" stroke-width="1.5" stroke-dasharray="4 4" opacity="0"></line>
     <circle id="focus-${svgId}" cx="0" cy="0" r="5" fill="${config.color}" stroke="${colors.paper}" stroke-width="2" opacity="0"></circle>
-    <polyline fill="none" stroke="${config.color}" stroke-width="3" points="${polyline}"></polyline>
-  `;
+    <polyline fill="none" stroke="${config.color}" stroke-width="3" points="${polyline}"></polyline>`;
 
   chartState.set(svgId, { coordinates, formatValue: config.formatter, width, height });
 }
@@ -371,19 +442,13 @@ function installChartHover(svgId) {
 
   svg.addEventListener('mousemove', (event) => {
     const state = chartState.get(svgId);
-    if (!state || !state.coordinates.length) {
-      return;
-    }
+    if (!state || !state.coordinates.length) return;
     const rect = svg.getBoundingClientRect();
-    const scaleX = state.width / rect.width;
-    const cursorX = (event.clientX - rect.left) * scaleX;
+    const cursorX = (event.clientX - rect.left) * (state.width / rect.width);
     let nearest = state.coordinates[0];
     for (const point of state.coordinates) {
-      if (Math.abs(point.x - cursorX) < Math.abs(nearest.x - cursorX)) {
-        nearest = point;
-      }
+      if (Math.abs(point.x - cursorX) < Math.abs(nearest.x - cursorX)) nearest = point;
     }
-
     const crosshair = document.getElementById(`crosshair-${svgId}`);
     const focus = document.getElementById(`focus-${svgId}`);
     crosshair.setAttribute('x1', nearest.x);
@@ -392,7 +457,6 @@ function installChartHover(svgId) {
     focus.setAttribute('cx', nearest.x);
     focus.setAttribute('cy', nearest.y);
     focus.setAttribute('opacity', '1');
-
     tooltip.innerHTML = `<strong>${escapeHtml(state.formatValue(nearest.row))}</strong><br>${escapeHtml(formatTimestamp(nearest.row.timestamp))}`;
     tooltip.style.opacity = '1';
     tooltip.style.left = `${(nearest.x / state.width) * rect.width}px`;
@@ -408,175 +472,248 @@ function installChartHover(svgId) {
   });
 }
 
-async function fetchJson(url, options) {
-  const response = await fetch(url, options);
-  let data = {};
-  try {
-    data = await response.json();
-  } catch (_error) {
-    data = {};
-  }
-  if (!response.ok) {
-    throw new Error(data.error || 'Request failed');
-  }
-  return data;
+// ---------------------------------------------------------------------------
+// Diagnostics tab
+// ---------------------------------------------------------------------------
+
+async function refreshDiagnostics() {
+  const level = document.getElementById('event-level').value;
+  const source = document.getElementById('event-source').value;
+  const query = new URLSearchParams({ limit: 100 });
+  if (level) query.set('level', level);
+  if (source) query.set('source', source);
+  const [events, flags] = await Promise.all([
+    fetchJson(`/api/events?${query}`),
+    fetchJson('/api/flags?limit=30'),
+  ]);
+  renderEvents(events.events || []);
+  renderFlagged(flags.flagged || []);
 }
 
-async function fetchSummary() {
-  const data = await fetchJson('/api/summary');
-  renderSummary(data);
-}
-
-function renderAllCharts(rows) {
-  renderLineChart('chart-temp', rows, 'temp', chartConfigs.temp);
-  renderLineChart('chart-humid', rows, 'humid', chartConfigs.humid);
-  renderLineChart('chart-co2', rows, 'co2', chartConfigs.co2);
-  renderLineChart('chart-aqi', rows, 'aqi', chartConfigs.aqi);
-  renderLineChart('chart-pm25', rows, 'pm25', chartConfigs.pm25);
-  renderLineChart('chart-pm10', rows, 'pm10', chartConfigs.pm10);
-}
-
-async function fetchHistory() {
-  const data = await fetchJson(`/api/history?hours=${selectedHours}`);
-  lastHistoryRows = data.rows || [];  // rows carry backend-computed `aqi`
-  renderAllCharts(lastHistoryRows);
-}
-
-async function submitCommand(command, payload = {}) {
-  const data = await fetchJson('/api/commands', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ command, payload }),
-  });
-  document.getElementById('command-status').textContent = `Queued command #${data.id}`;
-  await refreshAll();
-}
-
-async function deleteHistory() {
-  const confirmed = window.confirm('Delete all stored history measurements? This cannot be undone.');
-  if (!confirmed) {
+function renderEvents(events) {
+  const list = document.getElementById('event-list');
+  list.innerHTML = '';
+  if (!events.length) {
+    list.innerHTML = '<div class="empty-state">No events match.</div>';
     return;
   }
+  for (const event of events) {
+    const item = document.createElement('article');
+    item.className = 'event-item';
+    const details = Object.keys(event.details || {}).length
+      ? `<pre>${escapeHtml(prettyJson(event.details))}</pre>` : '';
+    item.innerHTML = `
+      <header>
+        <span>${escapeHtml(event.source)} / ${escapeHtml(event.event_type)}</span>
+        <span class="event-level event-level-${escapeHtml(event.level)}">${escapeHtml(event.level)}</span>
+      </header>
+      <p>${escapeHtml(event.message)}</p>
+      <p class="event-time">${escapeHtml(formatTimestamp(event.created_at))}</p>
+      ${details}`;
+    list.appendChild(item);
+  }
+}
 
+function renderFlagged(flagged) {
+  const list = document.getElementById('flagged-list');
+  list.innerHTML = '';
+  if (!flagged.length) {
+    list.innerHTML = '<div class="empty-state">No flagged samples. Good.</div>';
+    return;
+  }
+  for (const item of flagged) {
+    const article = document.createElement('article');
+    article.className = 'event-item';
+    const parts = Object.entries(item.flags || {})
+      .map(([metric, info]) => `${metric}=${info.value} (${info.reason})`).join('; ');
+    article.innerHTML = `
+      <p>${escapeHtml(parts)}</p>
+      <p class="event-time">${escapeHtml(formatTimestamp(item.timestamp))}</p>`;
+    list.appendChild(article);
+  }
+}
+
+function renderCommands(commands) {
+  const list = document.getElementById('command-list');
+  list.innerHTML = '';
+  if (!commands.length) {
+    list.innerHTML = '<div class="empty-state">No commands yet.</div>';
+    return;
+  }
+  for (const command of commands.slice(0, 10)) {
+    const item = document.createElement('article');
+    item.className = 'command-item';
+    const result = command.result ? `<pre>${escapeHtml(prettyJson(command.result))}</pre>` : '';
+    item.innerHTML = `
+      <header>
+        <span>${escapeHtml(command.command)}</span>
+        <span class="command-status-${escapeHtml(command.status)}">${escapeHtml(command.status)}</span>
+      </header>
+      <p class="event-time">${escapeHtml(formatTimestamp(command.created_at))}</p>
+      ${result}`;
+    list.appendChild(item);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Controls tab actions
+// ---------------------------------------------------------------------------
+
+const systemConfirmations = {
+  system_restart_collector: 'Restart the collector service? Measurements pause for ~30 seconds.',
+  system_restart_web: 'Restart the dashboard service? The page will briefly disconnect.',
+  system_reboot: 'REBOOT the Pi? The whole station goes down for about a minute.',
+};
+
+async function deleteHistory() {
+  if (!window.confirm('Delete ALL stored measurement history? This cannot be undone.')) return;
   const data = await fetchJson('/api/history', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ confirm: 'delete' }),
   });
-  document.getElementById('command-status').textContent = data.status;
+  toast(data.status || 'History deleted.', 'info');
   await refreshAll();
 }
 
+// ---------------------------------------------------------------------------
+// Theme
+// ---------------------------------------------------------------------------
+
 function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  window.localStorage.setItem('airmonitor-theme', theme);
+  try { window.localStorage.setItem('airmonitor-theme', theme); } catch (_e) { /* private mode */ }
   document.getElementById('theme-toggle').textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
-  if (lastHistoryRows) {
-    renderAllCharts(lastHistoryRows);
-  }
+  if (lastHistoryRows) renderAllCharts(lastHistoryRows);
 }
 
 function initTheme() {
-  const preferred = window.localStorage.getItem('airmonitor-theme')
-    || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  setTheme(preferred);
+  let stored = null;
+  try { stored = window.localStorage.getItem('airmonitor-theme'); } catch (_e) { /* private mode */ }
+  setTheme(stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   document.getElementById('theme-toggle').addEventListener('click', () => {
-    const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    setTheme(nextTheme);
+    setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
   });
 }
 
+// ---------------------------------------------------------------------------
+// Wiring
+// ---------------------------------------------------------------------------
+
+async function refreshSummary() {
+  renderSummary(await fetchJson('/api/summary'));
+}
+
+async function refreshAll() {
+  await refreshSummary();
+  if (activeTab === 'history') await refreshHistory();
+  if (activeTab === 'diagnostics') await refreshDiagnostics();
+}
+
 function installActions() {
+  document.querySelectorAll('.tab-button').forEach((button) => {
+    button.addEventListener('click', () => switchTab(button.dataset.tab));
+  });
+
   document.querySelectorAll('[data-command]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      try {
-        await submitCommand(button.dataset.command);
-      } catch (error) {
-        document.getElementById('command-status').textContent = error.message;
-      }
+    button.addEventListener('click', () => {
+      submitCommand(button.dataset.command).catch((e) => toast(e.message, 'error'));
     });
   });
 
-  document.querySelectorAll('.range-switch button').forEach((button) => {
-    button.addEventListener('click', async () => {
-      selectedHours = Number(button.dataset.hours);
-      document.querySelectorAll('.range-switch button').forEach((item) => item.classList.remove('active'));
+  document.querySelectorAll('[data-system]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const command = button.dataset.system;
+      if (!window.confirm(systemConfirmations[command])) return;
+      submitCommand(command, { confirmed: true }).catch((e) => toast(e.message, 'error'));
+    });
+  });
+
+  document.querySelectorAll('#range-presets button').forEach((button) => {
+    button.addEventListener('click', () => {
+      range = { mode: 'preset', hours: Number(button.dataset.hours) };
+      document.querySelectorAll('#range-presets button').forEach((item) => item.classList.remove('active'));
       button.classList.add('active');
-      try {
-        await fetchHistory();
-      } catch (error) {
-        document.getElementById('command-status').textContent = error.message;
-      }
+      refreshHistory().catch((e) => toast(e.message, 'error'));
     });
   });
 
-  document.getElementById('sps30-auto-clean-form').addEventListener('submit', async (event) => {
+  document.getElementById('custom-range-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const fromValue = document.getElementById('range-from').value;
+    const toValue = document.getElementById('range-to').value;
+    if (!fromValue) { toast('Pick a start date first.', 'error'); return; }
+    const from = Math.floor(new Date(fromValue).getTime() / 1000);
+    const to = toValue ? Math.floor(new Date(toValue).getTime() / 1000) : Math.floor(Date.now() / 1000);
+    range = { mode: 'custom', from, to };
+    document.querySelectorAll('#range-presets button').forEach((item) => item.classList.remove('active'));
+    refreshHistory().catch((e) => toast(e.message, 'error'));
+  });
+
+  document.getElementById('preview-reload').addEventListener('click', reloadPreview);
+  document.getElementById('event-refresh').addEventListener('click', () => {
+    refreshDiagnostics().catch((e) => toast(e.message, 'error'));
+  });
+  document.getElementById('event-level').addEventListener('change', () => {
+    refreshDiagnostics().catch((e) => toast(e.message, 'error'));
+  });
+  document.getElementById('event-source').addEventListener('change', () => {
+    refreshDiagnostics().catch((e) => toast(e.message, 'error'));
+  });
+
+  document.getElementById('sps30-auto-clean-form').addEventListener('submit', (event) => {
     event.preventDefault();
     const value = Number(document.getElementById('auto-clean-value').value);
     const unit = document.getElementById('auto-clean-unit').value;
     const multipliers = { seconds: 1, minutes: 60, hours: 3600, days: 86400 };
-    const seconds = Math.round(value * multipliers[unit]);
-    try {
-      await submitCommand('sps30_set_auto_cleaning_interval', { seconds });
-    } catch (error) {
-      document.getElementById('command-status').textContent = error.message;
-    }
+    submitCommand('sps30_set_auto_cleaning_interval', { seconds: Math.round(value * multipliers[unit]) })
+      .catch((e) => toast(e.message, 'error'));
   });
 
-  document.getElementById('scd41-calibration-form').addEventListener('submit', async (event) => {
+  document.getElementById('scd41-calibration-form').addEventListener('submit', (event) => {
     event.preventDefault();
-    const target_co2 = Number(document.getElementById('target-co2').value);
-    const confirmed = document.getElementById('scd41-calibration-confirm').checked;
-    const persist = document.getElementById('scd41-calibration-persist').checked;
-    try {
-      await submitCommand('scd41_force_calibration', { target_co2, confirmed, persist });
-    } catch (error) {
-      document.getElementById('command-status').textContent = error.message;
-    }
+    submitCommand('scd41_force_calibration', {
+      target_co2: Number(document.getElementById('target-co2').value),
+      confirmed: document.getElementById('scd41-calibration-confirm').checked,
+      persist: document.getElementById('scd41-calibration-persist').checked,
+    }).catch((e) => toast(e.message, 'error'));
   });
 
-  document.getElementById('scd41-asc-form').addEventListener('submit', async (event) => {
+  document.getElementById('scd41-asc-form').addEventListener('submit', (event) => {
     event.preventDefault();
-    const enabled = document.getElementById('scd41-asc-enabled').checked;
-    const persist = document.getElementById('scd41-asc-persist').checked;
-    try {
-      await submitCommand('scd41_set_asc', { enabled, persist });
-    } catch (error) {
-      document.getElementById('command-status').textContent = error.message;
-    }
+    submitCommand('scd41_set_asc', {
+      enabled: document.getElementById('scd41-asc-enabled').checked,
+      persist: document.getElementById('scd41-asc-persist').checked,
+    }).catch((e) => toast(e.message, 'error'));
   });
 
-  document.getElementById('delete-history-button').addEventListener('click', async () => {
-    try {
-      await deleteHistory();
-    } catch (error) {
-      document.getElementById('command-status').textContent = error.message;
-    }
+  document.getElementById('delete-history-button').addEventListener('click', () => {
+    deleteHistory().catch((e) => toast(e.message, 'error'));
   });
-}
-
-async function refreshAll() {
-  await Promise.all([fetchSummary(), fetchHistory()]);
 }
 
 function installRefreshLoop() {
-  window.setInterval(async () => {
-    try {
-      await refreshAll();
-    } catch (error) {
-      document.getElementById('command-status').textContent = error.message;
-    }
+  window.setInterval(() => {
+    refreshSummary().catch(() => setPill('pill-collector', 'Collector: unreachable', false));
   }, 10000);
+  window.setInterval(() => {
+    if (activeTab === 'history' && range.mode === 'preset') {
+      refreshHistory().catch(() => { /* toast on manual actions only */ });
+    }
+    if (activeTab === 'live') reloadPreview();
+    if (activeTab === 'diagnostics') refreshDiagnostics().catch(() => { /* quiet */ });
+  }, 60000);
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
   initTheme();
   ['chart-temp', 'chart-humid', 'chart-co2', 'chart-aqi', 'chart-pm25', 'chart-pm10'].forEach(installChartHover);
   installActions();
-  try {
-    await refreshAll();
-  } catch (error) {
-    document.getElementById('command-status').textContent = error.message;
-  }
   installRefreshLoop();
+  reloadPreview();
+  try {
+    await refreshSummary();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
 });
