@@ -116,9 +116,8 @@ button.ghost-button {
   color: var(--ink);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 7px 13px;
+  padding: 8px 14px;
   text-decoration: none;
-  font-size: 14px;
   display: inline-block;
 }
 
@@ -206,6 +205,10 @@ button.button-danger {
   padding: 2px 8px;
   border-radius: 999px;
   white-space: nowrap;
+  display: inline-block;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .badge-stale { background: var(--bad-soft); color: var(--bad); }
 
@@ -268,7 +271,7 @@ button.button-danger {
   background: var(--input-bg);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 7px 10px;
+  padding: 8px 10px;
 }
 
 .table-scroll { overflow-x: auto; }
@@ -314,14 +317,15 @@ button.button-danger {
   gap: 18px;
   align-items: start;
 }
-.diag-side { display: flex; flex-direction: column; }
+.diag-side { display: flex; flex-direction: column; gap: 18px; }
+.diag-side .panel { margin-bottom: 0; }
 
 .filter-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .filter-row select {
   background: var(--input-bg);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 6px 10px;
+  padding: 8px 10px;
 }
 
 .event-list, .command-list {
@@ -402,7 +406,7 @@ button.button-danger {
   background: var(--input-bg);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 7px 10px;
+  padding: 8px 10px;
 }
 .input-combo { display: flex; gap: 8px; }
 .input-combo input { flex: 1; min-width: 0; }
@@ -410,7 +414,7 @@ button.button-danger {
   background: var(--input-bg);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 7px 10px;
+  padding: 8px 10px;
 }
 .checkbox { display: flex; align-items: center; gap: 8px; color: var(--ink) !important; }
 
