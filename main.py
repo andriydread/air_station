@@ -206,6 +206,7 @@ class AirMonitor:
         )
 
         self.weather: Dict[str, Any] = {}
+        self._calibration_reminder_sent = False
         self.last_display_snapshot: Optional[Dict[str, Any]] = None
         self._last_display_write = None  # (mode, snapshot minus timestamp)
         self.running = True
@@ -448,6 +449,39 @@ class AirMonitor:
     def process_commands(self) -> None:
         self.commands.process_pending()
 
+    def check_calibration_age(self) -> None:
+        """Remind (once per boot) when the SCD41 is overdue for calibration.
+
+        NDIR sensors drift; with ASC disabled a forced recalibration is the
+        only correction the SCD41 gets, and nothing else would ever say so.
+        """
+        days = self.config.scd41_calibration_reminder_days
+        if days <= 0 or self._calibration_reminder_sent or self.scd41 is None:
+            return
+        if self.scd41.asc_enabled:
+            return  # ASC corrects the baseline on its own
+        state = self.database.get_state("scd41_last_calibration")
+        last_ts = state["updated_at_ts"] if state else None
+        age_days = None if last_ts is None else int((time.time() - last_ts) / 86400)
+        if age_days is not None and age_days < days:
+            return
+        self._calibration_reminder_sent = True
+        if age_days is None:
+            message = (
+                "SCD41 has no forced calibration on record and ASC is off — "
+                "plan a forced calibration in fresh air (Controls tab)"
+            )
+        else:
+            message = (
+                f"SCD41 last forced calibration was {age_days} days ago "
+                f"(reminder threshold {days}d) — NDIR sensors drift; "
+                "recalibrate in fresh air (Controls tab)"
+            )
+        self.events.log(
+            logging.WARNING, "scd41", "calibration_due", message,
+            {"age_days": age_days, "threshold_days": days},
+        )
+
     def prune_database(self) -> None:
         deleted = self.database.prune(
             self.config.keep_measurements_days, self.config.keep_events_days
@@ -528,6 +562,7 @@ class AirMonitor:
             PeriodicTask("status", self.config.status_publish_interval, self.publish_status),
             PeriodicTask("power", 60, self.power.check),
             PeriodicTask("storage_prune", 24 * 3600, self.prune_database),
+            PeriodicTask("calibration_check", 24 * 3600, self.check_calibration_age),
             PeriodicTask("display", self.config.partial_update_interval, self._display_tick),
             PeriodicTask("display_watch", 30, self.display_worker.check_wedged),
         ]

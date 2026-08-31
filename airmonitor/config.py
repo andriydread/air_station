@@ -76,6 +76,11 @@ class Config:
     # 30 readings x 10s sample interval = 5 minutes of bad data.
     scd41_reinit_after_invalid: int = 30
 
+    # With ASC off (the default here — see README "Sensor care"), forced
+    # recalibration is the only drift correction the SCD41 gets. Warn once
+    # per boot when the last one is older than this. 0 disables the reminder.
+    scd41_calibration_reminder_days: int = 180
+
     # SCD41 forced-calibration safety limits
     calibration_min_runtime: int = 180       # sensor must run this long first
     calibration_window: int = 300            # recent samples considered "recent"
@@ -121,6 +126,9 @@ class Config:
             sht41_temp_offset=_env_float("AIRMONITOR_SHT41_TEMP_OFFSET", cls.sht41_temp_offset),
             min_valid_co2_ppm=_env_int("AIRMONITOR_MIN_VALID_CO2_PPM", cls.min_valid_co2_ppm),
             scd41_reinit_after_invalid=_env_int("AIRMONITOR_SCD41_REINIT_AFTER_INVALID", cls.scd41_reinit_after_invalid),
+            scd41_calibration_reminder_days=_env_int(
+                "AIRMONITOR_SCD41_CALIBRATION_REMINDER_DAYS", cls.scd41_calibration_reminder_days
+            ),
             calibration_min_runtime=_env_int("AIRMONITOR_SCD41_CALIBRATION_MIN_RUNTIME", cls.calibration_min_runtime),
             calibration_window=_env_int("AIRMONITOR_SCD41_CALIBRATION_WINDOW", cls.calibration_window),
             calibration_min_samples=_env_int("AIRMONITOR_SCD41_CALIBRATION_MIN_SAMPLES", cls.calibration_min_samples),

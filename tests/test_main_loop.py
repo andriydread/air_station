@@ -141,6 +141,65 @@ def test_flagged_stream_raises_stale_alarm(monkeypatch, tmp_path):
         monitor.database.close()
 
 
+# --- SCD41 calibration-due reminder ------------------------------------------
+
+
+def _calibration_events(monitor):
+    return [
+        e for e in monitor.database.get_recent_events(limit=50)
+        if e["event_type"] == "calibration_due"
+    ]
+
+
+def test_calibration_reminder_when_never_calibrated(tmp_path):
+    from airmonitor.config import Config
+
+    config = Config(database_path=str(tmp_path / "r.db"), log_file=str(tmp_path / "r.log"))
+    monitor = main_module.AirMonitor(config)
+    try:
+        monitor._init_i2c_and_sensors()  # ASC off by default
+        monitor.check_calibration_age()
+        assert len(_calibration_events(monitor)) == 1
+        monitor.check_calibration_age()  # once per boot, not per day
+        assert len(_calibration_events(monitor)) == 1
+    finally:
+        monitor.database.close()
+
+
+def test_calibration_reminder_stays_quiet_when_not_due(tmp_path):
+    from airmonitor.config import Config
+
+    base = dict(database_path=str(tmp_path / "q.db"), log_file=str(tmp_path / "q.log"))
+
+    # A recent forced calibration on record: nothing to say.
+    monitor = main_module.AirMonitor(Config(**base))
+    try:
+        monitor._init_i2c_and_sensors()
+        monitor.database.set_state("scd41_last_calibration", {"correction": 12})
+        monitor.check_calibration_age()
+        assert _calibration_events(monitor) == []
+    finally:
+        monitor.database.close()
+
+    # ASC enabled: the sensor corrects its own baseline.
+    monitor = main_module.AirMonitor(Config(**base, scd41_asc_enabled=True))
+    try:
+        monitor._init_i2c_and_sensors()
+        monitor.check_calibration_age()
+        assert _calibration_events(monitor) == []
+    finally:
+        monitor.database.close()
+
+    # Reminder disabled outright.
+    monitor = main_module.AirMonitor(Config(**base, scd41_calibration_reminder_days=0))
+    try:
+        monitor._init_i2c_and_sensors()
+        monitor.check_calibration_age()
+        assert _calibration_events(monitor) == []
+    finally:
+        monitor.database.close()
+
+
 # --- run() cleanup on a setup crash (B10) ------------------------------------
 
 
