@@ -138,18 +138,17 @@ function switchTab(name) {
 let lastSummary = null;
 
 function setBadge(metric, age, maxAge) {
+  // Quiet when healthy: a fresh metric shows no badge at all, so the one
+  // badge that does appear actually means something.
   const badge = document.getElementById(`badge-${metric}`);
   if (!badge) return;
-  if (age == null) {
-    badge.textContent = 'no data';
-    badge.className = 'badge badge-stale';
-  } else if (age <= maxAge) {
-    badge.textContent = formatAge(age);
-    badge.className = 'badge badge-ok';
-  } else {
-    badge.textContent = `stale ${formatAge(age)}`;
-    badge.className = 'badge badge-stale';
+  if (age != null && age <= maxAge) {
+    badge.hidden = true;
+    return;
   }
+  badge.textContent = age == null ? 'no data' : `stale ${formatAge(age)}`;
+  badge.className = 'badge badge-stale';
+  badge.hidden = false;
 }
 
 function sensorHealthSummary(collector) {
@@ -167,10 +166,20 @@ function sensorHealthSummary(collector) {
   };
 }
 
-function setPill(id, text, ok) {
-  const pill = document.getElementById(id);
-  pill.textContent = text;
-  pill.className = `pill ${ok == null ? '' : ok ? 'pill-ok' : 'pill-bad'}`;
+function renderStatusStrip(problems) {
+  // All healthy -> one muted line; otherwise only the things that are wrong.
+  const strip = document.getElementById('status-strip');
+  strip.innerHTML = '';
+  if (!problems.length) {
+    strip.innerHTML = '<span class="pill">All systems ok</span>';
+    return;
+  }
+  for (const text of problems) {
+    const pill = document.createElement('span');
+    pill.className = 'pill pill-bad';
+    pill.textContent = text;
+    strip.appendChild(pill);
+  }
 }
 
 function renderSummary(summary) {
@@ -200,14 +209,12 @@ function renderSummary(summary) {
   document.getElementById('sample-age').textContent =
     metrics.timestamp ? `Last sample: ${formatTimestamp(metrics.timestamp)}` : 'No samples yet';
 
-  setPill('pill-collector', `Collector: ${collector.running ? 'running' : 'stopped'}`, !!collector.running);
-  setPill('pill-sensors', health.ok ? 'Sensors: ok' : health.headline, health.ok);
-  setPill('pill-network', `Network: ${network.healthy ? 'online' : 'offline'}`, !!network.healthy);
-  if (power.available === false) {
-    setPill('pill-power', 'Power: n/a', null);
-  } else {
-    setPill('pill-power', `Power: ${power.healthy === false ? 'issue' : 'ok'}`, power.healthy !== false);
-  }
+  const problems = [];
+  if (!collector.running) problems.push('Collector stopped');
+  if (!health.ok && health.headline !== '--') problems.push(health.headline);
+  if (network.healthy === false) problems.push('Network offline');
+  if (power.available !== false && power.healthy === false) problems.push('Power issue');
+  renderStatusStrip(problems);
 
   // Diagnostics-side details rendered from the same summary
   document.getElementById('network-interface').textContent = network.interface || '--';
@@ -694,7 +701,7 @@ function installActions() {
 
 function installRefreshLoop() {
   window.setInterval(() => {
-    refreshSummary().catch(() => setPill('pill-collector', 'Collector: unreachable', false));
+    refreshSummary().catch(() => renderStatusStrip(['Station unreachable']));
   }, 10000);
   window.setInterval(() => {
     if (activeTab === 'history' && range.mode === 'preset') {

@@ -49,6 +49,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -95,7 +96,6 @@ button, input, select { font: inherit; color: inherit; }
   font-size: 13px;
   color: var(--muted);
 }
-.pill-ok { border-color: transparent; background: var(--ok-soft); color: var(--ok); }
 .pill-bad { border-color: transparent; background: var(--bad-soft); color: var(--bad); }
 
 button {
@@ -207,7 +207,6 @@ button.button-danger {
   border-radius: 999px;
   white-space: nowrap;
 }
-.badge-ok { background: var(--ok-soft); color: var(--ok); }
 .badge-stale { background: var(--bad-soft); color: var(--bad); }
 
 .live-panels {

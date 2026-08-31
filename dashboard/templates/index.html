@@ -13,12 +13,7 @@
         <h1>Air Station</h1>
         <p id="sample-age" class="brand-sub">no data yet</p>
       </div>
-      <div class="status-strip">
-        <span class="pill" id="pill-collector">Collector: --</span>
-        <span class="pill" id="pill-sensors">Sensors: --</span>
-        <span class="pill" id="pill-network">Network: --</span>
-        <span class="pill" id="pill-power">Power: --</span>
-      </div>
+      <div class="status-strip" id="status-strip"></div>
       <button id="theme-toggle" class="ghost-button" type="button">Dark mode</button>
     </header>
 
@@ -36,8 +31,8 @@
         <article class="metric-card"><header><h2>Humidity</h2><span class="badge" id="badge-humid">--</span></header><p id="metric-humid">--</p></article>
         <article class="metric-card"><header><h2>CO2</h2><span class="badge" id="badge-co2">--</span></header><p id="metric-co2">--</p><small id="metric-co2-label">--</small></article>
         <article class="metric-card"><header><h2>AQI</h2><span class="badge" id="badge-aqi">--</span></header><p id="metric-aqi">--</p><small id="metric-aqi-label">--</small></article>
-        <article class="metric-card"><header><h2>PM2.5</h2><span class="badge" id="badge-pm25">--</span></header><p id="metric-pm25">--</p><small>Smoke, soot, fine dust</small></article>
-        <article class="metric-card"><header><h2>PM10</h2><span class="badge" id="badge-pm10">--</span></header><p id="metric-pm10">--</p><small>Pollen, road dust</small></article>
+        <article class="metric-card"><header><h2>PM2.5</h2><span class="badge" id="badge-pm25">--</span></header><p id="metric-pm25">--</p></article>
+        <article class="metric-card"><header><h2>PM10</h2><span class="badge" id="badge-pm10">--</span></header><p id="metric-pm10">--</p></article>
         <article class="metric-card"><header><h2>Particle size</h2><span class="badge" id="badge-tps">--</span></header><p id="metric-tps">--</p></article>
         <article class="metric-card metric-card-muted"><header><h2>Station</h2></header><p id="metric-status">--</p><small id="metric-status-detail">--</small></article>
       </div>
