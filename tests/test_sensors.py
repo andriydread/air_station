@@ -223,6 +223,23 @@ def test_sps30_failure_streak_reinitializes(monkeypatch, events):
     assert wrapper.read() is not None
 
 
+def test_sps30_readings_blanked_during_fan_clean(monkeypatch, events):
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(sensors.time, "monotonic", lambda: clock["now"])
+    device = FakeSps30Device()
+    monkeypatch.setattr(sensors, "SPS30", lambda _i2c: device)
+    wrapper = sensors.Sps30(object(), Config(), events)
+    assert wrapper.read() is not None
+
+    wrapper.force_clean()
+    assert device.clean_calls == 1
+    assert wrapper.read() is None  # fan at full speed: not representative air
+    assert wrapper.health.state["healthy"] is True  # blanking is not a failure
+
+    clock["now"] += sensors.FAN_CLEAN_BLANK_SECONDS + 1
+    assert wrapper.read() is not None
+
+
 def test_sps30_manual_clean_rate_limited(monkeypatch, events):
     device = FakeSps30Device()
     monkeypatch.setattr(sensors, "SPS30", lambda _i2c: device)

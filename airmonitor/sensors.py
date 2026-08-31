@@ -34,6 +34,10 @@ def utc_now_iso() -> str:
 # Hard read errors in a row before a present-but-broken device is re-created.
 READ_FAILURE_REINIT_THRESHOLD = 30
 
+# The SPS30 fan cleaning runs ~10s at full speed; readings taken during it
+# are not representative air, so they are blanked (with margin).
+FAN_CLEAN_BLANK_SECONDS = 15.0
+
 
 class ReinitBackoff:
     """Paces re-initialization attempts: 30s doubling up to 5 minutes."""
@@ -400,6 +404,7 @@ class Sps30:
         self.device = None
         self.auto_cleaning_interval: Optional[int] = None
         self.last_manual_clean_at: Optional[float] = None
+        self._blank_until: Optional[float] = None
         self.failure_streak = 0
         self._backoff = ReinitBackoff()
         self._try_init()
@@ -432,6 +437,10 @@ class Sps30:
         """Return {"pm1": ..., "pm25": ..., "pm4": ..., "pm10": ..., "tps": ...}, or None."""
         if self.device is None:
             return None
+        if self._blank_until is not None:
+            if time.monotonic() < self._blank_until:
+                return None  # fan cleaning in progress: not representative air
+            self._blank_until = None
         try:
             if not self.device.data_ready:
                 return None
@@ -479,6 +488,7 @@ class Sps30:
             raise RuntimeError(f"Fan cleaning is rate-limited; wait another {remaining}s")
         self.device.force_clean()
         self.last_manual_clean_at = now
+        self._blank_until = now + FAN_CLEAN_BLANK_SECONDS
         self.health.state["last_manual_clean_at"] = utc_now_iso()
 
     def set_auto_cleaning_interval(self, seconds: int) -> None:
