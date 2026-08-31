@@ -46,7 +46,7 @@ def test_history_rows_carry_aqi(client):
 
 def test_history_hours_clamped(client):
     body = client.get("/api/history?hours=99999").get_json()
-    assert body["hours"] == 24 * 30
+    assert body["to_ts"] - body["from_ts"] == 24 * 30 * 3600
 
 
 def test_history_rejects_non_integer_hours(client):
@@ -89,3 +89,75 @@ def test_delete_history_requires_server_side_confirm(client):
     accepted = client.delete("/api/history", json={"confirm": "delete"})
     assert accepted.status_code == 200
     assert client.get("/api/history?hours=1").get_json()["rows"] == []
+
+
+# --- R5 API additions -------------------------------------------------------
+
+
+def test_history_custom_range_and_stats(client):
+    import time as time_module
+
+    now = int(time_module.time())
+    body = client.get(f"/api/history?from={now - 3600}&to={now}").get_json()
+    assert body["from_ts"] == now - 3600
+    assert body["rows"]
+    stats = body["stats"]
+    assert stats["sample_count"] == 1
+    assert stats["co2"] == {"min": 800, "avg": 800.0, "max": 800}
+    assert stats["temp"]["avg"] == 22.0
+
+
+def test_history_range_validation(client):
+    assert client.get("/api/history?from=100&to=50").status_code == 400
+    assert client.get("/api/history?from=0&to=999999999999").status_code == 400
+    assert client.get("/api/history?from=garbage").status_code == 400
+
+
+def test_history_accepts_iso_dates(client):
+    response = client.get("/api/history?from=2026-08-30&to=2026-08-31T23:59:59")
+    assert response.status_code == 200
+
+
+def test_csv_export(client):
+    body = client.get("/api/export.csv?hours=1")
+    assert body.status_code == 200
+    assert body.mimetype == "text/csv"
+    lines = body.get_data(as_text=True).strip().splitlines()
+    assert lines[0].startswith("timestamp,co2,temp")
+    assert len(lines) == 2  # header + the seeded measurement
+    assert ",800," in lines[1]
+
+
+def test_flags_endpoint(client):
+    body = client.get("/api/flags").get_json()
+    assert body == {"flagged": []}
+
+
+def test_display_preview_renders_png(client, monkeypatch, tmp_path):
+    # 404 before any snapshot exists
+    assert client.get("/api/display-preview.png").status_code == 404
+
+    import os
+
+    seed = AirMonitorDatabase(os.environ["AIRMONITOR_DATABASE_PATH"])
+    seed.set_state(
+        "latest_display_snapshot",
+        {"mode": "partial", "snapshot": {"co2": 700, "temp": 21.0, "humid": 50.0}},
+    )
+    seed.close()
+    response = client.get("/api/display-preview.png")
+    assert response.status_code == 200
+    assert response.mimetype == "image/png"
+    assert response.data[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_system_commands_require_confirmation(client):
+    refused = client.post(
+        "/api/commands", json={"command": "system_reboot", "payload": {}}
+    )
+    assert refused.status_code == 400
+    accepted = client.post(
+        "/api/commands",
+        json={"command": "system_restart_web", "payload": {"confirmed": True}},
+    )
+    assert accepted.status_code == 202

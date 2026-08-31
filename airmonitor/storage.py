@@ -183,19 +183,68 @@ class AirMonitorDatabase:
 
     def query_history(self, hours: int, bucket_seconds: int) -> List[Dict[str, Any]]:
         """Average measurements into time buckets for charting."""
-        cutoff = self._now() - max(hours, 1) * 3600
+        now = self._now()
+        return self.query_history_range(now - max(hours, 1) * 3600, now, bucket_seconds)
+
+    def query_history_range(
+        self, start_ts: int, end_ts: int, bucket_seconds: int
+    ) -> List[Dict[str, Any]]:
+        """Bucketed averages for an arbitrary [start, end] window."""
         averages = ", ".join(f"AVG({field}) AS {field}" for field in METRIC_FIELDS)
         rows = self._query(
             f"""
             SELECT (recorded_at / ?) * ? AS bucket_ts, {averages}
             FROM measurements
-            WHERE recorded_at >= ?
+            WHERE recorded_at >= ? AND recorded_at <= ?
             GROUP BY bucket_ts
             ORDER BY bucket_ts ASC
             """,
-            (bucket_seconds, bucket_seconds, cutoff),
+            (bucket_seconds, bucket_seconds, start_ts, end_ts),
         )
         return [self._measurement_to_dict(row, ts_column="bucket_ts") for row in rows]
+
+    def query_stats(self, start_ts: int, end_ts: int) -> Dict[str, Any]:
+        """Per-metric min/avg/max over raw samples in the window."""
+        selects = ["COUNT(*) AS sample_count"]
+        for field in METRIC_FIELDS:
+            selects.extend(
+                (
+                    f"MIN({field}) AS {field}_min",
+                    f"AVG({field}) AS {field}_avg",
+                    f"MAX({field}) AS {field}_max",
+                )
+            )
+        rows = self._query(
+            f"SELECT {', '.join(selects)} FROM measurements "
+            "WHERE recorded_at >= ? AND recorded_at <= ?",
+            (start_ts, end_ts),
+        )
+        row = rows[0]
+        stats: Dict[str, Any] = {"sample_count": row["sample_count"]}
+        for field in METRIC_FIELDS:
+            avg = row[f"{field}_avg"]
+            stats[field] = {
+                "min": row[f"{field}_min"],
+                "avg": round(avg, 2) if avg is not None else None,
+                "max": row[f"{field}_max"],
+            }
+        return stats
+
+    def export_rows(self, start_ts: int, end_ts: int) -> List[Dict[str, Any]]:
+        """Raw (uncleaned) samples for CSV export, oldest first, flags included."""
+        rows = self._query(
+            "SELECT * FROM measurements WHERE recorded_at >= ? AND recorded_at <= ? "
+            "ORDER BY recorded_at ASC, id ASC",
+            (start_ts, end_ts),
+        )
+        exported = []
+        for row in rows:
+            item: Dict[str, Any] = {"timestamp": _to_iso(row["recorded_at"])}
+            for field in METRIC_FIELDS:
+                item[field] = row[field]
+            item["flags"] = row["flags"] if "flags" in row.keys() else None
+            exported.append(item)
+        return exported
 
     def get_recent_flagged(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Samples the quality guards flagged, newest first (diagnostics)."""

@@ -6,13 +6,26 @@ is stored as the command result and shown on the dashboard.
 """
 
 import logging
+import os
+import shutil
+import subprocess
 import time
 import traceback
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List
 
 from airmonitor.sensors import utc_now_iso
 
 LOGGER = logging.getLogger("airmonitor")
+
+
+def _find_executable(name: str, fallbacks: List[str]) -> str:
+    found = shutil.which(name)
+    if found:
+        return found
+    for candidate in fallbacks:
+        if os.path.exists(candidate):
+            return candidate
+    raise RuntimeError(f"{name} not found on this system")
 
 
 def as_bool(value: Any, default: bool = False) -> bool:
@@ -50,7 +63,12 @@ class CommandProcessor:
             "sps30_set_auto_cleaning_interval": self._sps30_set_interval,
             "scd41_force_calibration": self._scd41_force_calibration,
             "scd41_set_asc": self._scd41_set_asc,
+            "system_restart_collector": self._system_restart_collector,
+            "system_restart_web": self._system_restart_web,
+            "system_reboot": self._system_reboot,
         }
+        # Injection point for tests; production spawns detached shells.
+        self.spawn = subprocess.Popen
 
     def process_pending(self) -> None:
         for command in self.app.database.claim_pending_commands():
@@ -143,3 +161,43 @@ class CommandProcessor:
         persist = as_bool(payload.get("persist"), False)
         applied = self._require_sensor(self.app.scd41, "SCD41").set_asc(enabled, persist)
         return {"message": "Updated SCD41 ASC setting", "enabled": applied, "persisted": persist}
+
+    # --- System actions (sudo grants in systemd/airmonitor-sudoers) --------
+
+    def _deferred_system_action(self, command: str, message: str) -> Dict[str, Any]:
+        """Run a privileged action a couple of seconds from now, detached.
+
+        The delay lets this command row complete and its result reach the
+        dashboard BEFORE the action kills this very process (collector
+        restart, reboot). The commands are fixed strings — nothing from the
+        payload is ever interpolated.
+        """
+        self.spawn(["sh", "-c", f"sleep 2 && {command}"])
+        return {"message": message}
+
+    def _system_restart_collector(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not as_bool(payload.get("confirmed"), False):
+            raise ValueError("system commands require explicit confirmation")
+        systemctl = _find_executable("systemctl", ["/usr/bin/systemctl", "/bin/systemctl"])
+        return self._deferred_system_action(
+            f"sudo -n {systemctl} restart airmonitor",
+            "Collector restart scheduled (2s)",
+        )
+
+    def _system_restart_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not as_bool(payload.get("confirmed"), False):
+            raise ValueError("system commands require explicit confirmation")
+        systemctl = _find_executable("systemctl", ["/usr/bin/systemctl", "/bin/systemctl"])
+        return self._deferred_system_action(
+            f"sudo -n {systemctl} restart airmonitor-web",
+            "Dashboard restart scheduled (2s)",
+        )
+
+    def _system_reboot(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not as_bool(payload.get("confirmed"), False):
+            raise ValueError("system commands require explicit confirmation")
+        reboot = _find_executable("reboot", ["/usr/sbin/reboot", "/sbin/reboot"])
+        return self._deferred_system_action(
+            f"sudo -n {reboot}",
+            "Reboot scheduled (2s)",
+        )

@@ -118,13 +118,19 @@ class LatestReadings:
         )
 
     def fresh_snapshot(self) -> Dict[str, Any]:
-        """Current values with anything older than max_age replaced by None."""
+        """Current values with anything older than max_age replaced by None.
+
+        Also carries per-metric ages (seconds since last accepted reading)
+        so the dashboard can show exactly how fresh every number is.
+        """
         now = time.monotonic()
         snapshot: Dict[str, Any] = {}
+        ages: Dict[str, Optional[int]] = {}
         newest_iso = None
         newest_monotonic = None
         for metric in METRICS:
             seen = self.seen_monotonic.get(metric)
+            ages[metric] = int(now - seen) if seen is not None else None
             if seen is None or now - seen > self.max_age:
                 snapshot[metric] = None
                 continue
@@ -133,6 +139,7 @@ class LatestReadings:
                 newest_monotonic = seen
                 newest_iso = self.seen_iso[metric]
         snapshot["timestamp"] = newest_iso
+        snapshot["ages"] = ages
         return snapshot
 
 

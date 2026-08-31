@@ -155,3 +155,32 @@ def test_scd41_set_asc(app, monkeypatch):
     assert row["status"] == "succeeded"
     assert row["result"]["enabled"] is True
     assert device.self_calibration_enabled is True
+
+
+def test_system_commands_spawn_deferred_actions(app, monkeypatch):
+    spawned = []
+    processor = CommandProcessor(app)
+    processor.spawn = lambda args: spawned.append(args)
+    monkeypatch.setattr(
+        "airmonitor.commands.shutil.which",
+        lambda name: f"/usr/bin/{name}" if name == "systemctl" else None,
+    )
+    monkeypatch.setattr("airmonitor.commands.os.path.exists", lambda p: True)
+
+    for name in ("system_restart_collector", "system_restart_web", "system_reboot"):
+        command_id = app.database.queue_command(name, {"confirmed": True})
+        processor.process_pending()
+        row = next(r for r in app.database.get_recent_commands() if r["id"] == command_id)
+        assert row["status"] == "succeeded", row["result"]
+
+    assert len(spawned) == 3
+    assert all(args[0] == "sh" and "sleep 2 && sudo -n" in args[2] for args in spawned)
+    assert "systemctl restart airmonitor" in spawned[0][2]
+    assert "systemctl restart airmonitor-web" in spawned[1][2]
+    assert "reboot" in spawned[2][2]
+
+
+def test_system_commands_refuse_without_confirmation(app):
+    row = run_command(app, "system_reboot", {})
+    assert row["status"] == "failed"
+    assert "confirmation" in row["result"]["error"]

@@ -1,15 +1,20 @@
+import csv
+import io
 import logging
 import os
+import time
 import traceback
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Tuple
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
 from airmonitor.config import Config
 from airmonitor.logging_utils import configure_logging
-from airmonitor.storage import AirMonitorDatabase
+from airmonitor.storage import METRIC_FIELDS, AirMonitorDatabase
 from utils.aqi import calculate_aqi, get_aqi_category, get_co2_category
+from utils.display import create_display_image
 
 
 LOGGER = logging.getLogger("airmonitor.dashboard")
@@ -31,7 +36,7 @@ def env_str(name: str, default: str) -> str:
     return value
 
 
-def choose_bucket_seconds(hours: int) -> int:
+def choose_bucket_seconds(hours: float) -> int:
     if hours <= 6:
         return 60
     if hours <= 24:
@@ -39,6 +44,40 @@ def choose_bucket_seconds(hours: int) -> int:
     if hours <= 72:
         return 900
     return 1800
+
+
+MAX_RANGE_SECONDS = 90 * 86400
+
+
+def parse_timestamp(value: str, field_name: str) -> int:
+    """Accept unix seconds or an ISO date/datetime (local time)."""
+    text = str(value).strip()
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return int(datetime.fromisoformat(text).timestamp())
+    except ValueError as exc:
+        raise ValueError(
+            f"{field_name} must be unix seconds or an ISO date/datetime"
+        ) from exc
+
+
+def resolve_range(args) -> Tuple[int, int]:
+    """Turn ?hours= / ?from=&to= query params into a [start, end] window."""
+    now = int(time.time())
+    if args.get("from") is not None:
+        start = parse_timestamp(args["from"], "from")
+        end = parse_timestamp(args["to"], "to") if args.get("to") is not None else now
+    else:
+        hours = max(1, min(parse_int(args.get("hours", 24), "hours"), 24 * 30))
+        start, end = now - hours * 3600, now
+    if end <= start:
+        raise ValueError("'to' must be after 'from'")
+    if end - start > MAX_RANGE_SECONDS:
+        raise ValueError("range must not exceed 90 days")
+    return start, end
 
 
 def parse_int(value: Any, field_name: str) -> int:
@@ -119,6 +158,12 @@ def validate_scd41_asc(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def validate_system(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not parse_bool(payload.get("confirmed"), "confirmed"):
+        raise ValueError("system commands require confirmed=true")
+    return {"confirmed": True}
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     # Same Config as the collector, so validation thresholds can't diverge.
@@ -129,10 +174,15 @@ def create_app() -> Flask:
     project_root = Path(__file__).resolve().parents[1]
     icons_dir = project_root / "assets" / "icons"
     command_validators: Dict[str, CommandValidator] = {
+        "display_full_refresh": validate_empty,
+        "display_partial_refresh": validate_empty,
         "sps30_force_clean": validate_empty,
         "sps30_set_auto_cleaning_interval": validate_sps30_interval,
         "scd41_force_calibration": validate_scd41_calibration,
         "scd41_set_asc": validate_scd41_asc,
+        "system_restart_collector": validate_system,
+        "system_restart_web": validate_system,
+        "system_reboot": validate_system,
     }
 
     @app.after_request
@@ -196,17 +246,62 @@ def create_app() -> Flask:
 
     @app.get("/api/history")
     def api_history() -> Any:
-        hours = max(1, min(parse_int(request.args.get("hours", 24), "hours"), 24 * 30))
-        bucket_seconds = choose_bucket_seconds(hours)
-        rows = database.query_history(hours, bucket_seconds)
+        start, end = resolve_range(request.args)
+        bucket_seconds = choose_bucket_seconds((end - start) / 3600)
+        rows = database.query_history_range(start, end, bucket_seconds)
         for row in rows:
             row["aqi"] = row_aqi(row)
         return jsonify(
             {
-                "hours": hours,
+                "from_ts": start,
+                "to_ts": end,
                 "bucket_seconds": bucket_seconds,
                 "rows": rows,
+                "stats": database.query_stats(start, end),
             }
+        )
+
+    @app.get("/api/export.csv")
+    def api_export_csv() -> Any:
+        start, end = resolve_range(request.args)
+        rows = database.export_rows(start, end)
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["timestamp", *METRIC_FIELDS, "flags"])
+        for row in rows:
+            writer.writerow(
+                [row["timestamp"], *[row[field] for field in METRIC_FIELDS], row["flags"] or ""]
+            )
+        filename = f"airmonitor_{start}_{end}.csv"
+        return Response(
+            buffer.getvalue(),
+            mimetype="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+
+    @app.get("/api/flags")
+    def api_flags() -> Any:
+        limit = max(1, min(parse_int(request.args.get("limit", 50), "limit"), 200))
+        return jsonify({"flagged": database.get_recent_flagged(limit=limit)})
+
+    @app.get("/api/display-preview.png")
+    def api_display_preview() -> Any:
+        """Render exactly what the e-paper shows, from the stored snapshot."""
+        state = database.get_state("latest_display_snapshot")
+        if state is None or not isinstance(state.get("value"), dict):
+            return jsonify({"error": "no display snapshot yet"}), 404
+        snapshot = state["value"].get("snapshot") or {}
+        if config.display_rotation in (90, 270):
+            width, height = 416, 240
+        else:
+            width, height = 240, 416
+        image = create_display_image(width, height, snapshot, config.font_path)
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return Response(
+            buffer.getvalue(),
+            mimetype="image/png",
+            headers={"Cache-Control": "no-store"},
         )
 
     @app.get("/api/events")
