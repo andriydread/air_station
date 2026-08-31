@@ -1,81 +1,125 @@
-# Air Monitor
+# Air Station
 
-Air quality station on a Raspberry Pi Zero 2 W.
+A self-contained air-quality monitor built on a Raspberry Pi Zero 2 W. It
+measures CO2, temperature, humidity, and particulate matter, shows the
+current state on a low-power e-paper display, and serves a web dashboard
+with live values, history charts, diagnostics, and sensor controls.
 
-| Hardware | Purpose |
-|---|---|
-| SCD41 (I2C) | CO2 |
-| SHT41 (I2C) | Temperature, humidity |
-| SPS30 (I2C) | Particulate matter (PM1/PM2.5/PM4/PM10) |
-| UC8253C 3.7" e-paper (SPI) | Local display (416x240) |
+## Hardware
 
-Two systemd services run on the Pi:
+| Part | Bus | Role |
+|---|---|---|
+| Sensirion SCD41 | I2C | CO2 (ppm) |
+| Sensirion SHT41 | I2C | Temperature, relative humidity |
+| Sensirion SPS30 | I2C (0x69) | Particulate matter: PM1 / PM2.5 / PM4 / PM10 + typical particle size |
+| WeAct 3.7" e-paper, UC8253C | SPI | Local display, 416×240 (240×416 panel rotated 90°) |
+| LX-2BUPS UPS + 1×18650 3.5Ah | — | Battery backup / brown-out protection |
 
-- **airmonitor** (`main.py`) — reads sensors every 10s, stores history in SQLite, refreshes the e-paper every 60s (full refresh every 5 min), fetches an Open-Meteo forecast, and auto-recovers a stuck SCD41.
-- **airmonitor-web** (`dashboard/`) — Flask dashboard at `http://<pi>:8080` with live values, charts, event log, and sensor commands (SPS30 fan clean, SCD41 calibration).
+Display wiring (BCM): RST=17, DC=25, BUSY=24, SPI0 CE0. Power rail is
+buffered with 2×470µF electrolytic + 2×103 ceramic capacitors; the UPS
+output carries another 470µF.
 
-Both share one SQLite database (`data/airmonitor.db`); the dashboard queues commands there and the collector executes them.
+## How it works
+
+Two systemd services share one SQLite database (WAL mode) at
+`data/airmonitor.db`:
+
+- **airmonitor** (`main.py`) — the collector. A loop of small periodic
+  tasks: read all sensors every 10s and store the sample; refresh the
+  e-paper every 60s (deep full refresh every 5 min to clear ghosting);
+  fetch an Open-Meteo forecast every 30 min; probe Wi-Fi/internet every
+  30s; prune old rows daily. Sensor failures never crash the loop — every
+  sensor has a health record, invalid readings are dropped and logged, and
+  a stuck SCD41 is automatically re-initialized (a real failure mode:
+  the sensor can silently start returning 0 ppm until restarted).
+- **airmonitor-web** (`dashboard/`) — Flask dashboard at
+  `http://<pi>:8080`. Live metric cards with AQI, history charts
+  (6h/24h/3d/7d), forecast, the persisted event log, and controls: SPS30
+  fan cleaning, SCD41 forced calibration (guarded by warm-up/stability
+  preconditions) and ASC toggle, history deletion. Actions are queued as
+  command rows in SQLite; the collector claims, executes, and stores the
+  result — so the web process never touches the hardware.
 
 ## Project layout
 
 ```
-main.py            entry point: builds the app and runs the collector loop
-airmonitor/        core collector package
+main.py            collector entry point: the periodic-task loop
+airmonitor/        core package
   config.py          all settings (env-overridable, sensible defaults)
   sensors.py         SCD41 / SHT41 / SPS30 wrappers + health tracking
-  commands.py        executes dashboard commands
-  network.py         Wi-Fi / internet probe
-  storage.py         SQLite: measurements, state, commands, events
-  logging_utils.py   logging + event-log helpers
-lib/               low-level drivers (SPS30 I2C, UC8253C e-paper)
-utils/             display rendering, weather fetch, AQI math
+  commands.py        executes dashboard-queued commands
+  network.py         Wi-Fi / internet probe (/sys, /proc, TCP check)
+  storage.py         SQLite: measurements, state, command queue, events
+  logging_utils.py   rotating-file logging + persisted event log
+lib/               low-level drivers (SPS30 I2C with CRC, UC8253C SPI)
+utils/             e-paper rendering, weather fetch, EPA AQI math,
+                   standalone SCD41 recalibration script
 assets/            icons and fonts for the e-paper UI
-dashboard/         Flask app + frontend
-systemd/           service unit files (airmonitor, airmonitor-web)
+dashboard/         Flask app + vanilla JS/CSS frontend
+systemd/           service units for both processes
+tests/             hardware-free test suite (mocked sensors; run anywhere)
 ```
 
-## Common tasks (Makefile)
+## Setup and daily use (Makefile)
 
-The Pi is reachable as `pi@pizero.local` by default (`make deploy PI=pi@<addr>` to override).
+The Pi is reachable as `pi@pizero.local` by default; override with
+`make <target> PI=pi@<addr>`.
 
 ```bash
-make install     # first-time setup on the Pi (venv, deps, systemd units)
-make deploy      # sync code, install deps, restart services
-make deploy-full # deploy + update systemd unit files
+make install     # first-time: rsync code, create venv, install systemd units
+make deploy      # sync code, install deps, restart both services
+make deploy-full # deploy + refresh systemd unit files
 make restart / stop / start / status
-make logs        # tail collector log on the Pi
-make logs-web    # tail dashboard log on the Pi
+make logs        # tail the collector log on the Pi
+make logs-web    # tail the dashboard log on the Pi
 make pull-data   # copy database + logs from the Pi to ./from_pi/data
+make db          # sqlite3 shell on the Pi's live database
 ```
 
-`data/` (database, logs) is protected by `.rsync-filter` and survives deploys.
+`data/` (database, logs) is protected by `.rsync-filter` and survives
+deploys and `--delete` syncs.
 
-## Local development
+## Development off the Pi
+
+The collector needs real hardware, but everything else runs anywhere:
 
 ```bash
-make venv                     # or: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-python main.py                # needs Pi hardware (I2C + SPI enabled)
-python -m dashboard.app       # works anywhere; reads data/airmonitor.db
+make venv                # local virtualenv + runtime deps
+python -m dashboard.app  # dashboard against a local/pulled data/airmonitor.db
+make test                # full test suite with mocked hardware (no Pi needed)
 ```
 
 ## Configuration
 
-Everything has a default in `config.py` and can be overridden with `AIRMONITOR_*` environment variables (set them in the systemd unit files). The important ones:
+Every setting has a default in `airmonitor/config.py` and an
+`AIRMONITOR_*` environment override (set them in the systemd units).
+The ones that matter most:
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `AIRMONITOR_SAMPLE_INTERVAL` | 10 | seconds between sensor reads |
 | `AIRMONITOR_PARTIAL_UPDATE_INTERVAL` | 60 | e-paper partial refresh |
-| `AIRMONITOR_FULL_UPDATE_INTERVAL` | 300 | e-paper full refresh |
+| `AIRMONITOR_FULL_UPDATE_INTERVAL` | 300 | e-paper full (anti-ghosting) refresh |
 | `AIRMONITOR_WEATHER_LAT` / `_LON` | Lviv | forecast location |
+| `AIRMONITOR_MIN_VALID_CO2_PPM` | 350 | CO2 readings below this are glitches |
 | `AIRMONITOR_SCD41_ASC_ENABLED` | false | SCD41 automatic self-calibration |
-| `AIRMONITOR_SCD41_REINIT_AFTER_INVALID` | 30 | bad readings in a row before sensor auto-restart |
-| `AIRMONITOR_KEEP_MEASUREMENTS_DAYS` | 90 | history retention (0 = keep forever) |
+| `AIRMONITOR_SCD41_REINIT_AFTER_INVALID` | 30 | bad readings in a row before auto-restart of the sensor |
+| `AIRMONITOR_KEEP_MEASUREMENTS_DAYS` | 90 | history retention (0 = forever) |
 | `AIRMONITOR_KEEP_EVENTS_DAYS` | 14 | event-log retention |
 | `AIRMONITOR_DATABASE_PATH` | `data/airmonitor.db` | SQLite location |
 
 ## Maintenance notes
 
-- **SCD41 stuck at 0 ppm**: the sensor can silently start returning 0 ppm until restarted (happened 2026-07-14..18). The collector now re-initializes it automatically after 30 consecutive invalid readings (~5 min).
-- **SCD41 recalibration**: use the dashboard command with the sensor in fresh outdoor air, or run `python utils/recalibrate_SCD41.py` on the Pi.
-- **SPS30 fan cleaning**: automatic weekly; can be forced from the dashboard (rate-limited to once per 30 min).
+- **SCD41 recalibration**: from the dashboard (sensor must be warmed up and
+  in stable reference air — the collector enforces runtime, sample-count,
+  and stability preconditions before it will run), or interactively with
+  `python utils/recalibrate_SCD41.py` on the Pi in fresh outdoor air.
+- **SCD41 stuck at 0 ppm**: auto-recovered since the July 2026 incident —
+  after 30 consecutive invalid readings (~5 min) the collector restarts the
+  sensor and logs the event.
+- **SPS30 fan cleaning**: automatic weekly by sensor default; can be forced
+  from the dashboard (rate-limited to once per 30 min).
+- **Diagnostics**: everything notable (sensor state changes, invalid
+  readings, network drops, command results) is persisted to the `events`
+  table and visible in the dashboard's Recent Events panel — check there
+  first when data looks wrong.

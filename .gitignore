@@ -1,5 +1,8 @@
 .venv/
 GEMINI.md
+CLAUDE.md
+dev/
+from_pi/
 sps30.txt
 
 *.log
