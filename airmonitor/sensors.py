@@ -30,6 +30,32 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# Hard read errors in a row before a present-but-broken device is re-created.
+READ_FAILURE_REINIT_THRESHOLD = 30
+
+
+class ReinitBackoff:
+    """Paces re-initialization attempts: 30s doubling up to 5 minutes."""
+
+    INITIAL_DELAY = 30.0
+    MAX_DELAY = 300.0
+
+    def __init__(self):
+        self.delay = self.INITIAL_DELAY
+        self.next_attempt = 0.0  # monotonic timestamp; 0 = due immediately
+
+    def due(self) -> bool:
+        return time.monotonic() >= self.next_attempt
+
+    def failed(self) -> None:
+        self.next_attempt = time.monotonic() + self.delay
+        self.delay = min(self.delay * 2, self.MAX_DELAY)
+
+    def reset(self) -> None:
+        self.delay = self.INITIAL_DELAY
+        self.next_attempt = 0.0
+
+
 class SensorHealth:
     """Tracks availability/health of one sensor and logs state changes."""
 
@@ -68,6 +94,7 @@ class Scd41:
     """SCD41 CO2 sensor (I2C)."""
 
     def __init__(self, i2c, config, events):
+        self.i2c = i2c
         self.config = config
         self.events = events
         self.health = SensorHealth("scd41", events)
@@ -77,14 +104,28 @@ class Scd41:
         self.measurement_started_at: Optional[float] = None
         # (monotonic time, ppm) pairs used by the calibration safety checks
         self.recent_valid_samples: deque = deque()
+        self._backoff = ReinitBackoff()
+        self._try_init()
+
+    def _try_init(self) -> bool:
         try:
-            self.device = adafruit_scd4x.SCD4X(i2c)
+            self.device = adafruit_scd4x.SCD4X(self.i2c)
             self._start_measurement()
             self.health.ok()
+            self._backoff.reset()
+            return True
         except Exception as exc:
             LOGGER.exception("Failed to initialize SCD41")
             self.device = None
             self.health.failed(str(exc), available=False)
+            self._backoff.failed()
+            return False
+
+    def ensure(self) -> None:
+        """Retry initialization (with backoff) if the device is missing."""
+        if self.device is None and self._backoff.due():
+            LOGGER.info("Attempting SCD41 initialization")
+            self._try_init()
 
     def _start_measurement(self) -> None:
         self.device.self_calibration_enabled = self.asc_enabled
@@ -244,16 +285,33 @@ class Sht41:
     VALID_HUMIDITY = (0.0, 100.0)
 
     def __init__(self, i2c, events):
+        self.i2c = i2c
         self.events = events
         self.health = SensorHealth("sht41", events)
         self.device = None
+        self.failure_streak = 0
+        self._backoff = ReinitBackoff()
+        self._try_init()
+
+    def _try_init(self) -> bool:
         try:
-            self.device = adafruit_sht4x.SHT4x(i2c)
+            self.device = adafruit_sht4x.SHT4x(self.i2c)
+            self.failure_streak = 0
             self.health.ok()
+            self._backoff.reset()
+            return True
         except Exception as exc:
             LOGGER.exception("Failed to initialize SHT41")
             self.device = None
             self.health.failed(str(exc), available=False)
+            self._backoff.failed()
+            return False
+
+    def ensure(self) -> None:
+        """Retry initialization (with backoff) if the device is missing."""
+        if self.device is None and self._backoff.due():
+            LOGGER.info("Attempting SHT41 initialization")
+            self._try_init()
 
     def read(self) -> Optional[Tuple[float, float]]:
         """Return (temperature C, relative humidity %), or None."""
@@ -266,13 +324,26 @@ class Sht41:
                 raise ValueError(f"Temperature out of range: {temp:.2f} C")
             if not (self.VALID_HUMIDITY[0] <= humid <= self.VALID_HUMIDITY[1]):
                 raise ValueError(f"Humidity out of range: {humid:.2f} %")
+            self.failure_streak = 0
             self.health.ok()
             return temp, humid
         except Exception as exc:
             LOGGER.exception("Failed to read SHT41")
             self.health.failed(str(exc))
             self.events.log(logging.ERROR, "sht41", "read_failed", f"Failed to read SHT41: {exc}")
+            self._register_read_failure()
             return None
+
+    def _register_read_failure(self) -> None:
+        """Re-create the device after a long streak of failed reads."""
+        self.failure_streak += 1
+        if self.failure_streak >= READ_FAILURE_REINIT_THRESHOLD:
+            self.events.log(
+                logging.WARNING, "sht41", "auto_reinit",
+                f"Re-initializing SHT41 after {self.failure_streak} failed reads in a row",
+            )
+            self.device = None
+            self._try_init()
 
 
 class Sps30:
@@ -281,22 +352,40 @@ class Sps30:
     FIELDS = ("pm1", "pm25", "pm4", "pm10", "tps")
 
     def __init__(self, i2c, config, events):
+        self.i2c = i2c
         self.config = config
         self.events = events
         self.health = SensorHealth("sps30", events)
         self.device = None
         self.auto_cleaning_interval: Optional[int] = None
         self.last_manual_clean_at: Optional[float] = None
+        self.failure_streak = 0
+        self._backoff = ReinitBackoff()
+        self._try_init()
+
+    def _try_init(self) -> bool:
         try:
-            self.device = SPS30(i2c)
-            self.device.wakeup()
-            self.device.start_measurement()
-            self.auto_cleaning_interval = self.device.auto_cleaning_interval
+            device = SPS30(self.i2c)
+            device.wakeup()
+            device.start_measurement()
+            self.device = device
+            self.auto_cleaning_interval = device.auto_cleaning_interval
+            self.failure_streak = 0
             self.health.ok()
+            self._backoff.reset()
+            return True
         except Exception as exc:
             LOGGER.exception("Failed to initialize SPS30")
             self.device = None
             self.health.failed(str(exc), available=False)
+            self._backoff.failed()
+            return False
+
+    def ensure(self) -> None:
+        """Retry initialization (with backoff) if the device is missing."""
+        if self.device is None and self._backoff.due():
+            LOGGER.info("Attempting SPS30 initialization")
+            self._try_init()
 
     def read(self) -> Optional[Dict[str, float]]:
         """Return {"pm1": ..., "pm25": ..., "pm4": ..., "pm10": ..., "tps": ...}, or None."""
@@ -312,13 +401,31 @@ class Sps30:
                 if value < 0:
                     raise ValueError(f"{field} must not be negative")
                 values[field] = value
+            self.failure_streak = 0
             self.health.ok()
             return values
         except Exception as exc:
             LOGGER.exception("Failed to read SPS30")
             self.health.failed(str(exc))
             self.events.log(logging.ERROR, "sps30", "read_failed", f"Failed to read SPS30: {exc}")
+            self._register_read_failure()
             return None
+
+    def _register_read_failure(self) -> None:
+        """Re-create the device after a long streak of failed reads.
+
+        The SCD41 has had this since the July 2026 stuck-sensor incident;
+        the SPS30 gets the same treatment for hard errors (CRC failures,
+        bus errors), which previously persisted until a service restart.
+        """
+        self.failure_streak += 1
+        if self.failure_streak >= READ_FAILURE_REINIT_THRESHOLD:
+            self.events.log(
+                logging.WARNING, "sps30", "auto_reinit",
+                f"Re-initializing SPS30 after {self.failure_streak} failed reads in a row",
+            )
+            self.device = None
+            self._try_init()
 
     def force_clean(self) -> None:
         """Start a manual fan cleaning (rate-limited)."""

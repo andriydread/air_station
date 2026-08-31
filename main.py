@@ -29,7 +29,14 @@ from airmonitor.commands import CommandProcessor
 from airmonitor.config import Config
 from airmonitor.logging_utils import EventLog, configure_logging
 from airmonitor.network import probe_network
-from airmonitor.sensors import Scd41, SensorHealth, Sht41, Sps30, utc_now_iso
+from airmonitor.sensors import (
+    ReinitBackoff,
+    Scd41,
+    SensorHealth,
+    Sht41,
+    Sps30,
+    utc_now_iso,
+)
 from airmonitor.storage import AirMonitorDatabase
 from lib.uc8253c import UC8253C_SPI
 from utils.display import create_display_image
@@ -163,6 +170,7 @@ class AirMonitor:
         self.display: Optional[UC8253C_SPI] = None
 
         self.i2c_health = SensorHealth("i2c", self.events)
+        self._i2c_backoff = ReinitBackoff()
         self.display_health = SensorHealth("display", self.events)
         self.weather_health = SensorHealth("weather", self.events)
         self.network_state: Dict[str, Any] = {"interface": config.wifi_interface}
@@ -177,19 +185,7 @@ class AirMonitor:
     # --- Setup and teardown -------------------------------------------------
 
     def setup(self) -> None:
-        LOGGER.info("Initializing I2C bus")
-        try:
-            self.i2c = busio.I2C(board.SCL, board.SDA)
-            self.i2c_health.ok()
-        except Exception as exc:
-            LOGGER.exception("Failed to initialize I2C bus")
-            self.i2c_health.failed(str(exc), available=False)
-
-        if self.i2c is not None:
-            LOGGER.info("Initializing sensors")
-            self.scd41 = Scd41(self.i2c, self.config, self.events)
-            self.sht41 = Sht41(self.i2c, self.events)
-            self.sps30 = Sps30(self.i2c, self.config, self.events)
+        self._init_i2c_and_sensors()
 
         LOGGER.info("Initializing UC8253C display")
         try:
@@ -230,10 +226,45 @@ class AirMonitor:
         self.publish_status()
         self.database.close()
 
+    # --- Hardware recovery ----------------------------------------------------
+
+    def _init_i2c_and_sensors(self) -> None:
+        LOGGER.info("Initializing I2C bus")
+        try:
+            self.i2c = busio.I2C(board.SCL, board.SDA)
+            self.i2c_health.ok()
+            self._i2c_backoff.reset()
+        except Exception as exc:
+            LOGGER.exception("Failed to initialize I2C bus")
+            self.i2c = None
+            self.i2c_health.failed(str(exc), available=False)
+            self._i2c_backoff.failed()
+            return
+
+        LOGGER.info("Initializing sensors")
+        self.scd41 = Scd41(self.i2c, self.config, self.events)
+        self.sht41 = Sht41(self.i2c, self.events)
+        self.sps30 = Sps30(self.i2c, self.config, self.events)
+
+    def ensure_hardware(self) -> None:
+        """Bring back anything that failed to initialize, with backoff.
+
+        Before this existed, one transient I2C glitch at boot left a sensor
+        (or the whole bus) dead until someone restarted the service.
+        """
+        if self.i2c is None:
+            if self._i2c_backoff.due():
+                self._init_i2c_and_sensors()
+            return
+        for sensor in (self.scd41, self.sht41, self.sps30):
+            if sensor is not None:
+                sensor.ensure()
+
     # --- Periodic tasks -----------------------------------------------------
 
     def collect_sample(self) -> None:
         """Read every sensor once; store whatever came back."""
+        self.ensure_hardware()
         sample: Dict[str, Optional[float]] = {}
 
         if self.scd41 is not None:
@@ -247,6 +278,9 @@ class AirMonitor:
             ambient = self.sht41.read()
             if ambient is not None:
                 sample["temp"], sample["humid"] = ambient
+            else:
+                self.readings.report_stale("temp", "sht41")
+                self.readings.report_stale("humid", "sht41")
 
         if self.sps30 is not None:
             particles = self.sps30.read()
