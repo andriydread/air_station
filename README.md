@@ -68,7 +68,7 @@ Built for unattended operation; every layer heals itself:
   undervoltage/throttling flags become events and a status pill.
 - **SD-card care** — unchanged state is never rewritten, and the command
   queue is polled without write transactions; the database lives through
-  deploys (`.rsync-filter` protects `data/`).
+  deploys (`data/` is git-ignored, so no deploy can touch it).
 
 ## Project layout
 
@@ -118,7 +118,7 @@ make delete-data    # delete ALL stored data — requires confirmation
 and it asks first.
 
 The `agent-*` targets (`make help` lists them) belong to the coding agent
-on the dev server: tests, remote rsync deploy, log tailing, pulling the
+on the dev server: tests, remote deploy over ssh, log tailing, pulling the
 database for threshold tuning. They are not needed on the Pi.
 
 ## Development off the Pi

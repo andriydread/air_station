@@ -91,9 +91,8 @@ agent-venv: ## Dev virtualenv with test dependencies (no Pi hardware libs)
 	python3 -m venv .venv
 	.venv/bin/pip install -r requirements-dev.txt
 
-agent-deploy: ## rsync code to the Pi, then run `make deploy` there
-	rsync -avz --delete --filter="merge .rsync-filter" ./ $(PI):$(APP_DIR)
-	$(SSH) "cd $(APP_DIR) && make deploy"
+agent-deploy: ## On the Pi over ssh: git pull + `make deploy` (push commits first!)
+	$(SSH) "cd $(APP_DIR) && git pull --ff-only && make deploy"
 
 agent-restart: ## Restart both services on the Pi
 	$(SSH) "cd $(APP_DIR) && make restart"
@@ -108,8 +107,8 @@ agent-logs-web: ## Tail the dashboard log on the Pi
 	$(SSH) "tail -n 100 -f $(APP_DIR)/data/logs/dashboard.log"
 
 agent-pull-data: ## Copy database + logs from the Pi into ./from_pi/data
-	mkdir -p from_pi/data
-	rsync -avz $(PI):$(APP_DIR)/data/ from_pi/data/
+	mkdir -p from_pi
+	scp -r $(PI):$(APP_DIR)/data from_pi/
 
 agent-ssh: ## Interactive shell on the Pi in the app directory
 	$(SSH) -t "cd $(APP_DIR) && exec \$$SHELL -l"
