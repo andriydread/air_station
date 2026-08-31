@@ -38,6 +38,7 @@ from airmonitor.sensors import (
     utc_now_iso,
 )
 from airmonitor.storage import AirMonitorDatabase
+from airmonitor.watchdog import SystemdNotifier
 from lib.uc8253c import UC8253C_SPI
 from utils.display import create_display_image
 from utils.weather import get_weather_forecast
@@ -183,6 +184,7 @@ class AirMonitor:
         self.running = True
         self.started_at = utc_now_iso()
         self.started_monotonic = time.monotonic()
+        self.notifier = SystemdNotifier()
 
     # --- Setup and teardown -------------------------------------------------
 
@@ -212,6 +214,7 @@ class AirMonitor:
         signal.signal(signal.SIGINT, stop)
 
     def shutdown(self) -> None:
+        self.notifier.stopping()
         self.events.log(logging.INFO, "collector", "shutdown", "Shutting down hardware")
         self.running = False
         self.publish_status()
@@ -227,6 +230,7 @@ class AirMonitor:
         self.http.close()
         self.publish_status()
         self.database.close()
+        self.notifier.close()
 
     # --- Hardware recovery ----------------------------------------------------
 
@@ -461,11 +465,18 @@ class AirMonitor:
         self._next_full_refresh = time.monotonic()
 
         self.events.log(logging.INFO, "collector", "started", "Air monitor started")
+        self.notifier.ready()
+        last_heartbeat = 0.0
         try:
             while self.running:
                 now = time.monotonic()
                 for task in tasks:
                     task.run_if_due(now, self.events)
+                # Watchdog heartbeat: the unit's WatchdogSec is 90s, so a
+                # ping every 10s survives the slowest full display refresh.
+                if now - last_heartbeat >= 10:
+                    self.notifier.heartbeat()
+                    last_heartbeat = now
                 time.sleep(0.2)
         finally:
             self.shutdown()

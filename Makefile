@@ -31,17 +31,22 @@ deploy: ## Sync code to the Pi and restart both services
 	@echo "Deployed and restarted."
 
 deploy-full: deploy ## Deploy + install updated systemd service files
-	$(SSH) "sudo cp $(APP_DIR)/systemd/airmonitor.service $(APP_DIR)/systemd/airmonitor-web.service /etc/systemd/system/ \
+	$(SSH) "sudo cp $(APP_DIR)/systemd/*.service /etc/systemd/system/ \
 		&& sudo systemctl daemon-reload \
+		&& sudo systemctl enable --now wifi-powersave-off.service \
 		&& sudo systemctl restart $(SERVICES)"
 
 install: ## First-time setup on the Pi (venv, deps, systemd units)
 	rsync -avz --delete --filter="merge .rsync-filter" ./ $(PI):$(APP_DIR)
 	$(SSH) "mkdir -p $(DATA_DIR)/logs"
 	$(SSH) "cd $(APP_DIR) && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
-	$(SSH) "sudo cp $(APP_DIR)/systemd/airmonitor.service $(APP_DIR)/systemd/airmonitor-web.service /etc/systemd/system/ \
+	$(SSH) "sudo cp $(APP_DIR)/systemd/*.service /etc/systemd/system/ \
 		&& sudo systemctl daemon-reload \
+		&& sudo systemctl enable --now wifi-powersave-off.service \
 		&& sudo systemctl enable --now $(SERVICES)"
+
+install-watchdog: ## Enable the hardware watchdog on the Pi (reboot required after)
+	$(SSH) "sh $(APP_DIR)/systemd/enable-watchdog.sh"
 
 reinstall: uninstall install ## Remove services, then run a clean install
 

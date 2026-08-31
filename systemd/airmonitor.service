@@ -3,6 +3,11 @@ Description=Air Quality Monitor Station
 After=network.target
 
 [Service]
+# Type=notify + WatchdogSec: the collector sends READY=1 after setup and a
+# WATCHDOG=1 heartbeat every 10s from the main loop (airmonitor/watchdog.py).
+# If the loop wedges for 90s, systemd restarts the service.
+Type=notify
+WatchdogSec=90
 ExecStart=/home/pi/air_station/.venv/bin/python3 /home/pi/air_station/main.py
 WorkingDirectory=/home/pi/air_station
 StandardOutput=journal

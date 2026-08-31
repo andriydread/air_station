@@ -1,0 +1,16 @@
+[Unit]
+Description=Disable Wi-Fi power management (brcmfmac hang mitigation)
+# The Pi Zero 2 W's brcmfmac driver is notorious for wedging the whole
+# Wi-Fi stack when power save is on - the classic "can't reach the Pi,
+# must power-cycle" failure. Power draw increase is negligible next to
+# the sensors and display.
+After=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'for tool in /usr/sbin/iw /sbin/iw iw; do command -v "$tool" >/dev/null 2>&1 && exec "$tool" dev wlan0 set power_save off; done; echo "iw not found" >&2; exit 1'
+
+[Install]
+WantedBy=multi-user.target
