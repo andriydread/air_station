@@ -3,16 +3,22 @@
 Reads the sensors on a schedule, stores history in SQLite, draws the
 e-paper display, and executes commands queued by the web dashboard.
 
-The flow is simple:
+The flow:
 
     main() -> AirMonitor.run() -> a loop of small periodic tasks
         collect_sample     every 10s   read sensors, store to SQLite
-        update_display     every 60s   partial e-paper refresh (full every 5 min)
-        fetch_weather      every 30min Open-Meteo forecast
+        update_display     every 60s   queue an e-paper refresh (full every 5 min)
         process_commands   every 2s    commands from the dashboard
-        check_network      every 30s   Wi-Fi / internet probe
         publish_status     every 30s   status documents for the dashboard
+        power check        every 60s   vcgencmd throttle/undervoltage flags
         prune_database     every 24h   delete old history rows
+
+Slow subsystems run on their own worker threads so they can never stall
+sampling (airmonitor/workers.py):
+
+    display worker     renders queued frames (a full refresh blocks ~15s)
+    weather worker     every 30min Open-Meteo forecast
+    network worker     every 30s   Wi-Fi probe + recovery ladder
 """
 
 import logging
@@ -41,6 +47,7 @@ from airmonitor.sensors import (
 from airmonitor.storage import AirMonitorDatabase
 from airmonitor.watchdog import SystemdNotifier
 from airmonitor.wifi_recovery import WifiRecovery
+from airmonitor.workers import DisplayWorker, PeriodicWorker
 from lib.uc8253c import UC8253C_SPI
 from utils.display import create_display_image
 from utils.weather import get_weather_forecast
@@ -177,6 +184,9 @@ class AirMonitor:
         self.i2c_health = SensorHealth("i2c", self.events)
         self._i2c_backoff = ReinitBackoff()
         self.display_health = SensorHealth("display", self.events)
+        self._display_backoff = ReinitBackoff()
+        self.display_worker = DisplayWorker(self._render, self.events)
+        self._workers: List[PeriodicWorker] = []
         self.weather_health = SensorHealth("weather", self.events)
         self.network_state: Dict[str, Any] = {"interface": config.wifi_interface}
         self.power = PowerMonitor(self.events)
@@ -197,17 +207,7 @@ class AirMonitor:
 
     def setup(self) -> None:
         self._init_i2c_and_sensors()
-
-        LOGGER.info("Initializing UC8253C display")
-        try:
-            self.display = UC8253C_SPI(rotation=self.config.display_rotation)
-            self.display.clear()
-            self.display_health.ok()
-        except Exception as exc:
-            LOGGER.exception("Failed to initialize display")
-            self.display = None
-            self.display_health.failed(str(exc), available=False)
-
+        self._ensure_display()
         self.check_network()
         self.publish_status()
         time.sleep(5)  # let the sensors produce their first measurement
@@ -225,6 +225,9 @@ class AirMonitor:
         self.events.log(logging.INFO, "collector", "shutdown", "Shutting down hardware")
         self.running = False
         self.publish_status()
+        for worker in self._workers:
+            worker.stop()
+        self.display_worker.stop()  # before display.close(): no render mid-close
         if self.scd41 is not None:
             self.scd41.stop()
         if self.sps30 is not None:
@@ -258,6 +261,30 @@ class AirMonitor:
         self.scd41 = Scd41(self.i2c, self.config, self.events)
         self.sht41 = Sht41(self.i2c, self.events)
         self.sps30 = Sps30(self.i2c, self.config, self.events)
+
+    def _ensure_display(self) -> None:
+        """(Re-)create the display with backoff.
+
+        Runs on the main thread during setup, then on the display worker
+        thread before each render — a display that failed at boot comes
+        back on its own instead of staying dead until a restart.
+        """
+        if self.display is not None:
+            return
+        if not self._display_backoff.due():
+            return
+        LOGGER.info("Initializing UC8253C display")
+        try:
+            display = UC8253C_SPI(rotation=self.config.display_rotation)
+            display.clear()
+            self.display = display
+            self.display_health.ok()
+            self._display_backoff.reset()
+        except Exception as exc:
+            LOGGER.exception("Failed to initialize display")
+            self.display = None
+            self.display_health.failed(str(exc), available=False)
+            self._display_backoff.failed()
 
     def ensure_hardware(self) -> None:
         """Bring back anything that failed to initialize, with backoff.
@@ -313,21 +340,23 @@ class AirMonitor:
         self.database.set_state("latest_measurements", self.readings.fresh_snapshot())
 
     def update_display(self, full_refresh: bool) -> None:
-        """Average the buffered samples and draw them on the e-paper."""
+        """Average the buffered samples and queue an e-paper redraw."""
         snapshot = self.buffer.take_averages()
         snapshot["timestamp"] = utc_now_iso()
         snapshot.update(self.weather)
         self.last_display_snapshot = snapshot
-        self._render(snapshot, full_refresh)
+        self.display_worker.submit(snapshot, full_refresh)
 
     def redraw_display(self, full_refresh: bool) -> None:
         """Redraw the last snapshot (used by dashboard refresh commands)."""
         if self.last_display_snapshot is None:
             self.update_display(full_refresh)
         else:
-            self._render(self.last_display_snapshot, full_refresh)
+            self.display_worker.submit(self.last_display_snapshot, full_refresh)
 
     def _render(self, snapshot: Dict[str, Any], full_refresh: bool) -> None:
+        """Actually draw a frame. Runs on the display worker thread."""
+        self._ensure_display()
         mode = "full" if full_refresh else "partial"
         # Skip the DB write when only the timestamp moved — with dead sensors
         # or a stable room this is most refreshes.
@@ -464,15 +493,27 @@ class AirMonitor:
 
         tasks = [
             PeriodicTask("collect_sample", self.config.sample_interval, self.collect_sample),
-            PeriodicTask("weather", self.config.weather_update_interval, self.fetch_weather),
             PeriodicTask("commands", self.config.command_poll_interval, self.process_commands),
-            PeriodicTask("network", self.config.network_check_interval, self.check_network),
             PeriodicTask("status", self.config.status_publish_interval, self.publish_status),
             PeriodicTask("power", 60, self.power.check),
             PeriodicTask("storage_prune", 24 * 3600, self.prune_database),
             PeriodicTask("display", self.config.partial_update_interval, self._display_tick),
+            PeriodicTask("display_watch", 30, self.display_worker.check_wedged),
         ]
         self._next_full_refresh = time.monotonic()
+
+        # Blocking subsystems run on their own threads; sampling never waits.
+        self._workers = [
+            PeriodicWorker(
+                "weather", self.config.weather_update_interval, self.fetch_weather, self.events
+            ),
+            PeriodicWorker(
+                "network", self.config.network_check_interval, self.check_network, self.events
+            ),
+        ]
+        self.display_worker.start()
+        for worker in self._workers:
+            worker.start()
 
         self.events.log(logging.INFO, "collector", "started", "Air monitor started")
         self.notifier.ready()
