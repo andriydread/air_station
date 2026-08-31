@@ -98,8 +98,24 @@ tests/             hardware-free test suite (mocked sensors; runs anywhere)
 
 ## Setup and daily use (Makefile)
 
-The Pi is reachable as `pi@pizero.local` by default; override with
-`make <target> PI=pi@<addr>`.
+Two flows; the pull-based one on the Pi is the simplest:
+
+**On the Pi** (after a one-time `git clone` into `~/air_station`):
+
+```bash
+make pi-deploy    # reset to latest origin/main, deps, systemd units, restart, verify
+make pi-fresh     # same, but wipe the venv + caches first (data/ always survives)
+make pi-watchdog  # arm the SoC hardware watchdog (then: sudo reboot)
+make pi-restart / pi-status
+make pi-verify    # checklist: services, watchdog, wifi power save, sudoers
+```
+
+`pi-deploy` is safe to run repeatedly: it discards local file changes and
+stray old files (`git reset --hard` + `git clean -fd`), but `data/` and
+`.venv` are git-ignored and untouchable by it.
+
+**Remote** (rsync from a dev machine; Pi reachable as `pi@pizero.local`,
+override with `make <target> PI=pi@<addr>`):
 
 ```bash
 make install          # first-time: code, venv, systemd units, sudoers
@@ -140,23 +156,68 @@ The ones that matter most:
 | `AIRMONITOR_MIN_VALID_CO2_PPM` | 350 | CO2 readings below this are glitches |
 | `AIRMONITOR_SCD41_ASC_ENABLED` | false | SCD41 automatic self-calibration |
 | `AIRMONITOR_SCD41_REINIT_AFTER_INVALID` | 30 | bad readings in a row before sensor auto-restart |
+| `AIRMONITOR_SCD41_CALIBRATION_REMINDER_DAYS` | 180 | warn when the last forced calibration is older (0 = off) |
 | `AIRMONITOR_WIFI_RECOVERY_AFTER_FAILURES` | 6 | failed probes per recovery action (0 = off) |
 | `AIRMONITOR_KEEP_MEASUREMENTS_DAYS` | 90 | history retention (0 = forever) |
 | `AIRMONITOR_KEEP_EVENTS_DAYS` | 14 | event-log retention |
 | `AIRMONITOR_DATABASE_PATH` | `data/airmonitor.db` | SQLite location |
 
+## Sensor care
+
+What the station does (and deliberately doesn't do) to keep the sensors
+truthful and healthy:
+
+- **Burn-in: not required.** None of these sensors are metal-oxide (MOX)
+  types; NDIR (SCD41), capacitive (SHT41), and optical (SPS30) elements
+  need no conditioning period. The SCD41's first sample arrives ~5s after
+  measurement start; the collector waits for the sensor's own data-ready
+  signal, and start-up glitches (e.g. 0 ppm) are filtered by
+  `AIRMONITOR_MIN_VALID_CO2_PPM` and the rate guard.
+- **SCD41 calibration — the important one.** ASC (automatic
+  self-calibration) is **off by default** on purpose: ASC assumes the
+  sensor sees fresh ~400 ppm air at least weekly, and in a continuously
+  occupied room it slowly drags the baseline wrong. The trade-off: with
+  ASC off, NDIR drift is corrected only by **forced recalibration (FRC)**
+  — do one after installation and then a few times a year, in fresh
+  outdoor air (target 420 ppm), via the Controls tab. The collector
+  refuses an unsafe FRC (minimum runtime, sample count, reading
+  stability, distance from target all enforced) and reminds you with a
+  `calibration_due` event when the last FRC is older than
+  `AIRMONITOR_SCD41_CALIBRATION_REMINDER_DAYS`. If the station ever moves
+  somewhere regularly ventilated, flipping ASC on from Controls is valid
+  — the reminder then silences itself.
+- **SCD41 environment compensation**: altitude is written to the sensor
+  before every measurement start (`AIRMONITOR_SCD41_ALTITUDE_M`) — CO2
+  math is measurably wrong without it.
+- **SHT41**: factory-calibrated, no user calibration exists. The real
+  enemy is self-heating from the Pi; measure against a reference
+  thermometer and set `AIRMONITOR_SHT41_TEMP_OFFSET` (negative) to
+  correct the mounting. Its readings are cross-checked against the
+  SCD41's internal sensors — sustained disagreement raises a
+  `sensor_disagreement` event, catching silent drift no single sensor
+  can self-report.
+- **SPS30 fan hygiene**: the sensor's built-in automatic fan cleaning
+  runs weekly (its power-on default; adjustable from Controls). A manual
+  clean is available too — rate-limited to once per 30 min, and readings
+  are blanked for 15s while the fan runs at full speed so cleaning junk
+  never enters the history. Sensirion's stated lifetime assumes the
+  weekly cleaning stays enabled; don't set the interval to 0 without a
+  reason.
+- **Safe shutdown**: on service stop the SCD41's periodic measurement is
+  stopped and the SPS30 is stopped *and put to sleep* (fan off) — power
+  cycles and reboots never catch the fan spinning or leave a sensor
+  mid-command.
+
 ## Maintenance notes
 
-- **SCD41 recalibration**: from the dashboard Controls tab (the sensor
-  must be warmed up and in stable reference air — the collector enforces
-  runtime, sample-count, and stability preconditions), or interactively
-  with `python utils/recalibrate_SCD41.py` on the Pi in fresh outdoor air.
-- **SPS30 fan cleaning**: automatic weekly by sensor default; can be
-  forced from the dashboard (rate-limited to once per 30 min).
+- **SCD41 recalibration**: from the dashboard Controls tab (preconditions
+  enforced, see Sensor care), or interactively with
+  `python utils/recalibrate_SCD41.py` on the Pi in fresh outdoor air.
 - **When data looks wrong**: check Diagnostics first — the event log
   (sensor state changes, invalid readings, network drops, power flags,
   command results) and the flagged-samples panel say what the station
   itself thinks happened.
-- **After changing systemd files or sudoers**: `make deploy-full`, not
-  plain `make deploy`. The `Type=notify` watchdog unit requires the
-  matching collector code — always deploy both together.
+- **After changing systemd files or sudoers**: `make pi-deploy` (or
+  `make deploy-full` remotely) — both always refresh units + sudoers.
+  The `Type=notify` watchdog unit requires the matching collector code —
+  always deploy both together.
