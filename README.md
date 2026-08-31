@@ -102,6 +102,22 @@ All day-to-day commands run **on the Pi** from `~/air_station`
 (one-time `git clone` first). The routine is: `git pull`, then
 `make deploy`.
 
+**First time / migrating from a pre-git install** (an `~/air_station`
+that wasn't cloned — e.g. the old rsync era — can't `git pull`; replace
+it, keeping the database):
+
+```bash
+sudo systemctl stop airmonitor airmonitor-web 2>/dev/null || true
+mv ~/air_station/data ~/air_station_data          # keep the database
+rm -rf ~/air_station
+git clone https://github.com/andriydread/air_station.git ~/air_station
+mv ~/air_station_data ~/air_station/data
+cd ~/air_station && make init
+sudo reboot                                       # arms the hardware watchdog
+```
+
+Skip the two `mv` lines to start with an empty database instead.
+
 ```bash
 make init           # first time: fresh venv, requirements, services, watchdog
                     # (reboot once afterwards to arm the hardware watchdog)
