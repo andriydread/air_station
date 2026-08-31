@@ -30,8 +30,10 @@ deploy: ## Sync code to the Pi and restart both services
 	$(SSH) "sudo systemctl restart $(SERVICES)"
 	@echo "Deployed and restarted."
 
-deploy-full: deploy ## Deploy + install updated systemd service files
+deploy-full: deploy ## Deploy + install updated systemd service files + sudoers
 	$(SSH) "sudo cp $(APP_DIR)/systemd/*.service /etc/systemd/system/ \
+		&& sudo install -m 440 $(APP_DIR)/systemd/airmonitor-sudoers /etc/sudoers.d/airmonitor \
+		&& sudo visudo -c -q \
 		&& sudo systemctl daemon-reload \
 		&& sudo systemctl enable --now wifi-powersave-off.service \
 		&& sudo systemctl restart $(SERVICES)"
@@ -41,6 +43,8 @@ install: ## First-time setup on the Pi (venv, deps, systemd units)
 	$(SSH) "mkdir -p $(DATA_DIR)/logs"
 	$(SSH) "cd $(APP_DIR) && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
 	$(SSH) "sudo cp $(APP_DIR)/systemd/*.service /etc/systemd/system/ \
+		&& sudo install -m 440 $(APP_DIR)/systemd/airmonitor-sudoers /etc/sudoers.d/airmonitor \
+		&& sudo visudo -c -q \
 		&& sudo systemctl daemon-reload \
 		&& sudo systemctl enable --now wifi-powersave-off.service \
 		&& sudo systemctl enable --now $(SERVICES)"

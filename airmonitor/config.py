@@ -58,6 +58,9 @@ class Config:
     connectivity_host: str = "1.1.1.1"
     connectivity_port: int = 53
     connectivity_timeout: int = 3
+    # Every Nth consecutive failed probe triggers a recovery action
+    # (bounce interface, then restart networking). 0 disables recovery.
+    wifi_recovery_after_failures: int = 6
 
     # SCD41 (CO2)
     scd41_asc_enabled: bool = False      # automatic self-calibration
@@ -103,6 +106,9 @@ class Config:
             connectivity_host=_env_str("AIRMONITOR_CONNECTIVITY_TARGET_HOST", cls.connectivity_host),
             connectivity_port=_env_int("AIRMONITOR_CONNECTIVITY_TARGET_PORT", cls.connectivity_port),
             connectivity_timeout=_env_int("AIRMONITOR_CONNECTIVITY_TIMEOUT", cls.connectivity_timeout),
+            wifi_recovery_after_failures=_env_int(
+                "AIRMONITOR_WIFI_RECOVERY_AFTER_FAILURES", cls.wifi_recovery_after_failures
+            ),
             scd41_asc_enabled=_env_bool("AIRMONITOR_SCD41_ASC_ENABLED", cls.scd41_asc_enabled),
             min_valid_co2_ppm=_env_int("AIRMONITOR_MIN_VALID_CO2_PPM", cls.min_valid_co2_ppm),
             scd41_reinit_after_invalid=_env_int("AIRMONITOR_SCD41_REINIT_AFTER_INVALID", cls.scd41_reinit_after_invalid),

@@ -29,6 +29,7 @@ from airmonitor.commands import CommandProcessor
 from airmonitor.config import Config
 from airmonitor.logging_utils import EventLog, configure_logging
 from airmonitor.network import probe_network
+from airmonitor.power import PowerMonitor
 from airmonitor.sensors import (
     ReinitBackoff,
     Scd41,
@@ -39,6 +40,7 @@ from airmonitor.sensors import (
 )
 from airmonitor.storage import AirMonitorDatabase
 from airmonitor.watchdog import SystemdNotifier
+from airmonitor.wifi_recovery import WifiRecovery
 from lib.uc8253c import UC8253C_SPI
 from utils.display import create_display_image
 from utils.weather import get_weather_forecast
@@ -177,6 +179,11 @@ class AirMonitor:
         self.display_health = SensorHealth("display", self.events)
         self.weather_health = SensorHealth("weather", self.events)
         self.network_state: Dict[str, Any] = {"interface": config.wifi_interface}
+        self.power = PowerMonitor(self.events)
+        self.wifi_recovery = WifiRecovery(
+            config.wifi_interface, self.events,
+            after_failures=config.wifi_recovery_after_failures,
+        )
 
         self.weather: Dict[str, Any] = {}
         self.last_display_snapshot: Optional[Dict[str, Any]] = None
@@ -384,6 +391,7 @@ class AirMonitor:
                 message += f"; error={status['error']}"
             self.events.log(level, "network", "connectivity_check", message, status)
             self.publish_status()
+        self.wifi_recovery.record_probe(status["healthy"])
 
     def process_commands(self) -> None:
         self.commands.process_pending()
@@ -439,6 +447,7 @@ class AirMonitor:
                 "display": self.display_health.state,
                 "weather": self.weather_health.state,
                 "network": self.network_state,
+                "power": self.power.state,
             },
         }
 
@@ -459,6 +468,7 @@ class AirMonitor:
             PeriodicTask("commands", self.config.command_poll_interval, self.process_commands),
             PeriodicTask("network", self.config.network_check_interval, self.check_network),
             PeriodicTask("status", self.config.status_publish_interval, self.publish_status),
+            PeriodicTask("power", 60, self.power.check),
             PeriodicTask("storage_prune", 24 * 3600, self.prune_database),
             PeriodicTask("display", self.config.partial_update_interval, self._display_tick),
         ]
