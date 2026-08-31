@@ -86,6 +86,48 @@ def test_scd41_read_exception_reports_failure(monkeypatch, events):
     assert "read_failed" in events.types("scd41")
 
 
+def test_scd41_failure_streak_reinitializes(monkeypatch, events):
+    device = FakeScd41Device()
+    device.raise_on_read = OSError("I2C timeout")
+    replacement = FakeScd41Device()
+    made = []
+
+    def factory(_i2c):
+        made.append(1)
+        return device if len(made) == 1 else replacement
+
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", factory)
+    monkeypatch.setattr(sensors, "READ_FAILURE_REINIT_THRESHOLD", 3)
+    wrapper = sensors.Scd41(object(), Config(), events)
+    for _ in range(3):
+        assert wrapper.read() is None
+    assert "auto_reinit" in events.types("scd41")
+    assert wrapper.device is replacement
+    assert replacement.start_calls == 1
+    assert wrapper.read() == 600.0
+
+
+def test_scd41_failure_streak_resets_on_any_working_transaction(monkeypatch, events):
+    device = FakeScd41Device()
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
+    monkeypatch.setattr(sensors, "READ_FAILURE_REINIT_THRESHOLD", 3)
+    wrapper = sensors.Scd41(object(), Config(), events)
+
+    device.raise_on_read = OSError("I2C timeout")
+    assert wrapper.read() is None
+    assert wrapper.read() is None
+    assert wrapper.failure_streak == 2
+
+    # An invalid-value read is still a working bus: the hard-error streak
+    # resets while the invalid streak takes over.
+    device.raise_on_read = None
+    device.default_co2 = 0.0
+    assert wrapper.read() is None
+    assert wrapper.failure_streak == 0
+    assert wrapper.invalid_streak == 1
+    assert wrapper.device is device  # never re-created
+
+
 def test_scd41_calibration_preconditions_refuse_cold_sensor(monkeypatch, events):
     monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: FakeScd41Device())
     wrapper = sensors.Scd41(object(), Config(), events)

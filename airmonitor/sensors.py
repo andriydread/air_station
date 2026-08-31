@@ -102,6 +102,7 @@ class Scd41:
         self.device = None
         self.asc_enabled = config.scd41_asc_enabled
         self.invalid_streak = 0
+        self.failure_streak = 0
         # The SCD41's own ambient readings, refreshed on every valid CO2
         # read; the cross-check compares them against the SHT41.
         self.last_temperature: Optional[float] = None
@@ -116,6 +117,7 @@ class Scd41:
         try:
             self.device = adafruit_scd4x.SCD4X(self.i2c)
             self._start_measurement()
+            self.failure_streak = 0
             self.health.ok()
             self._backoff.reset()
             return True
@@ -152,8 +154,12 @@ class Scd41:
             return None
         try:
             if not self.device.data_ready:
+                self.failure_streak = 0
                 return None
             co2 = float(self.device.CO2)
+            # The transaction itself worked, so the bus/device are alive —
+            # even when the value turns out to be implausible.
+            self.failure_streak = 0
             if co2 < self.config.min_valid_co2_ppm:
                 self._handle_invalid_reading(co2)
                 return None
@@ -173,7 +179,24 @@ class Scd41:
             LOGGER.exception("Failed to read SCD41")
             self.health.failed(str(exc))
             self.events.log(logging.ERROR, "scd41", "read_failed", f"Failed to read SCD41: {exc}")
+            self._register_read_failure()
             return None
+
+    def _register_read_failure(self) -> None:
+        """Re-create the device after a long streak of hard read errors.
+
+        Distinct from the invalid-value path (`invalid_streak`), which covers
+        a working bus returning implausible ppm: this one covers I2C-level
+        failures that otherwise persist until a service restart.
+        """
+        self.failure_streak += 1
+        if self.failure_streak >= READ_FAILURE_REINIT_THRESHOLD:
+            self.events.log(
+                logging.WARNING, "scd41", "auto_reinit",
+                f"Re-initializing SCD41 after {self.failure_streak} failed reads in a row",
+            )
+            self.device = None
+            self._try_init()
 
     def _handle_invalid_reading(self, co2: float) -> None:
         self.invalid_streak += 1
