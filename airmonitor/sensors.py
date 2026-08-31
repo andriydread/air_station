@@ -102,6 +102,10 @@ class Scd41:
         self.device = None
         self.asc_enabled = config.scd41_asc_enabled
         self.invalid_streak = 0
+        # The SCD41's own ambient readings, refreshed on every valid CO2
+        # read; the cross-check compares them against the SHT41.
+        self.last_temperature: Optional[float] = None
+        self.last_humidity: Optional[float] = None
         self.measurement_started_at: Optional[float] = None
         # (monotonic time, ppm) pairs used by the calibration safety checks
         self.recent_valid_samples: deque = deque()
@@ -129,6 +133,12 @@ class Scd41:
             self._try_init()
 
     def _start_measurement(self) -> None:
+        try:
+            self.device.altitude = self.config.scd41_altitude_m
+        except Exception:
+            # Altitude compensation is an accuracy improvement, never a
+            # reason to refuse to measure.
+            LOGGER.warning("Failed to set SCD41 altitude", exc_info=True)
         self.device.self_calibration_enabled = self.asc_enabled
         self.asc_enabled = bool(self.device.self_calibration_enabled)
         self.device.start_periodic_measurement()
@@ -151,6 +161,12 @@ class Scd41:
             now = time.monotonic()
             self.recent_valid_samples.append((now, co2))
             self._trim_recent_samples(now)
+            try:
+                self.last_temperature = float(self.device.temperature)
+                self.last_humidity = float(self.device.relative_humidity)
+            except Exception:
+                self.last_temperature = None
+                self.last_humidity = None
             self.health.ok()
             return co2
         except Exception as exc:
@@ -285,9 +301,10 @@ class Sht41:
     VALID_TEMPERATURE = VALID_TEMPERATURE
     VALID_HUMIDITY = VALID_HUMIDITY
 
-    def __init__(self, i2c, events):
+    def __init__(self, i2c, events, temp_offset: float = 0.0):
         self.i2c = i2c
         self.events = events
+        self.temp_offset = temp_offset
         self.health = SensorHealth("sht41", events)
         self.device = None
         self.failure_streak = 0
@@ -319,7 +336,7 @@ class Sht41:
         if self.device is None:
             return None
         try:
-            temp = float(self.device.temperature)
+            temp = float(self.device.temperature) + self.temp_offset
             humid = float(self.device.relative_humidity)
             if not (self.VALID_TEMPERATURE[0] <= temp <= self.VALID_TEMPERATURE[1]):
                 raise ValueError(f"Temperature out of range: {temp:.2f} C")

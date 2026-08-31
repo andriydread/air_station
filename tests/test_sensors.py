@@ -224,3 +224,33 @@ def test_collector_recovers_i2c_bus_after_failed_boot(monkeypatch, tmp_path):
         assert monitor.sps30 is not None
     finally:
         monitor.database.close()
+
+
+# --- R4 additions: altitude, ambient capture, temp offset -------------------
+
+
+def test_scd41_altitude_set_before_measurement(monkeypatch, events):
+    device = FakeScd41Device()
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
+    sensors.Scd41(object(), Config(scd41_altitude_m=500), events)
+    assert device.altitude == 500
+
+
+def test_scd41_captures_own_ambient_readings(monkeypatch, events):
+    device = FakeScd41Device()
+    device.temperature = 24.5
+    device.relative_humidity = 38.0
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
+    wrapper = sensors.Scd41(object(), Config(), events)
+    assert wrapper.last_temperature is None
+    wrapper.read()
+    assert wrapper.last_temperature == 24.5
+    assert wrapper.last_humidity == 38.0
+
+
+def test_sht41_temp_offset_applied(monkeypatch, events):
+    monkeypatch.setattr(
+        sensors.adafruit_sht4x, "SHT4x", lambda _i2c: FakeSht41Device(22.5, 45.0)
+    )
+    wrapper = sensors.Sht41(object(), events, temp_offset=-1.5)
+    assert wrapper.read() == (21.0, 45.0)

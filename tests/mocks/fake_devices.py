@@ -15,6 +15,9 @@ class FakeScd41Device:
         self.co2_values: List[float] = []  # popped per read; empty -> default_co2
         self.default_co2 = 600.0
         self.data_ready = True
+        self.temperature = 23.0
+        self.relative_humidity = 40.0
+        self.altitude = 0
         self.self_calibration_enabled = False
         self.raise_on_read: Optional[Exception] = None
         self.calibration_result = 12  # 0xFFFF simulates a rejected calibration

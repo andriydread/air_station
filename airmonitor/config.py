@@ -65,6 +65,13 @@ class Config:
     # SCD41 (CO2)
     scd41_asc_enabled: bool = False      # automatic self-calibration
     min_valid_co2_ppm: int = 350         # readings below this are sensor glitches
+    # Sensor altitude for pressure compensation; the SCD41's CO2 math is
+    # measurably off without it. Default: Lviv (~296 m).
+    scd41_altitude_m: int = 296
+
+    # SHT41 mounting correction: added to every reading. Set negative if the
+    # sensor sits close enough to the Pi to pick up its self-heating.
+    sht41_temp_offset: float = 0.0
     # After this many invalid readings in a row the sensor is re-initialized.
     # 30 readings x 10s sample interval = 5 minutes of bad data.
     scd41_reinit_after_invalid: int = 30
@@ -110,6 +117,8 @@ class Config:
                 "AIRMONITOR_WIFI_RECOVERY_AFTER_FAILURES", cls.wifi_recovery_after_failures
             ),
             scd41_asc_enabled=_env_bool("AIRMONITOR_SCD41_ASC_ENABLED", cls.scd41_asc_enabled),
+            scd41_altitude_m=_env_int("AIRMONITOR_SCD41_ALTITUDE_M", cls.scd41_altitude_m),
+            sht41_temp_offset=_env_float("AIRMONITOR_SHT41_TEMP_OFFSET", cls.sht41_temp_offset),
             min_valid_co2_ppm=_env_int("AIRMONITOR_MIN_VALID_CO2_PPM", cls.min_valid_co2_ppm),
             scd41_reinit_after_invalid=_env_int("AIRMONITOR_SCD41_REINIT_AFTER_INVALID", cls.scd41_reinit_after_invalid),
             calibration_min_runtime=_env_int("AIRMONITOR_SCD41_CALIBRATION_MIN_RUNTIME", cls.calibration_min_runtime),

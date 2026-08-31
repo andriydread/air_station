@@ -262,7 +262,7 @@ class AirMonitor:
 
         LOGGER.info("Initializing sensors")
         self.scd41 = Scd41(self.i2c, self.config, self.events)
-        self.sht41 = Sht41(self.i2c, self.events)
+        self.sht41 = Sht41(self.i2c, self.events, temp_offset=self.config.sht41_temp_offset)
         self.sps30 = Sps30(self.i2c, self.config, self.events)
 
     def _ensure_display(self) -> None:
@@ -321,6 +321,11 @@ class AirMonitor:
             ambient = self.sht41.read()
             if ambient is not None:
                 sample["temp"], sample["humid"] = ambient
+                if self.scd41 is not None:
+                    self.cross_check.compare(
+                        ambient[0], ambient[1],
+                        self.scd41.last_temperature, self.scd41.last_humidity,
+                    )
             else:
                 self.readings.report_stale("temp", "sht41")
                 self.readings.report_stale("humid", "sht41")
