@@ -112,14 +112,16 @@ make delete-all     # remove services + venv + caches (asks before data)
 make delete-venv    # delete the virtualenv
 make delete-service # stop, disable and remove service files + sudoers
 make delete-data    # delete ALL stored data — requires confirmation
+make push-data DEST=user@host   # upload database + logs to the dev server
 ```
 
 `deploy` never touches `data/` (the database) — only `delete-data` can,
 and it asks first.
 
 The `agent-*` targets (`make help` lists them) belong to the coding agent
-on the dev server: tests, remote deploy over ssh, log tailing, pulling the
-database for threshold tuning. They are not needed on the Pi.
+on the dev server: tests, dev venv, cleanup. The dev server cannot reach
+the Pi (home LAN), so real data travels the other way — `make push-data`
+from the Pi when readings need tuning.
 
 ## Development off the Pi
 

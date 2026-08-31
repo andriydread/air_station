@@ -3,22 +3,18 @@
 # Two sections:
 #   USER COMMANDS  — run on the Pi from ~/air_station. Workflow:
 #                    git pull, then `make deploy`. First time: `make init`.
-#   AGENT COMMANDS — `agent-*`: used by the coding agent on the dev server
-#                    (tests, remote deploy over ssh, fetching data).
+#   AGENT COMMANDS — `agent-*`: used by the coding agent on the dev server.
+#                    The dev server can NOT reach the Pi (it lives on the
+#                    operator's home LAN), so nothing here talks to it —
+#                    data travels Pi -> server via `make push-data`.
 
 SERVICES = airmonitor.service airmonitor-web.service
 UNIT_FILES = /etc/systemd/system/airmonitor.service \
              /etc/systemd/system/airmonitor-web.service \
              /etc/systemd/system/wifi-powersave-off.service
 
-# Remote access for agent commands
-PI      ?= pi@pizero.local
-APP_DIR ?= ~/air_station
-SSH      = ssh $(PI)
-
-.PHONY: help init deploy restart delete-all delete-venv delete-service delete-data _pi \
-        agent-test agent-venv agent-deploy agent-restart agent-status agent-logs \
-        agent-logs-web agent-pull-data agent-ssh agent-db agent-clean
+.PHONY: help init deploy restart push-data delete-all delete-venv delete-service delete-data _pi \
+        agent-test agent-venv agent-clean
 
 help: ## Show this help
 	@grep -E '^[a-z_-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -57,6 +53,11 @@ restart: _pi ## Restart the app services
 	sudo systemctl restart $(SERVICES)
 	@systemctl is-active $(SERVICES) || true
 
+push-data: _pi ## Upload database + logs to the dev server for tuning (DEST=user@host)
+	@[ -n "$(DEST)" ] || { echo "Usage: make push-data DEST=user@host"; exit 1; }
+	ssh $(DEST) "mkdir -p air_station/from_pi"
+	scp -r data $(DEST):air_station/from_pi/
+
 delete-all: _pi ## Delete services + venv + caches; then offers data deletion
 	@$(MAKE) --no-print-directory delete-service
 	@$(MAKE) --no-print-directory delete-venv
@@ -81,7 +82,7 @@ delete-data: _pi ## Delete ALL stored data — asks for confirmation (FORCE=1 sk
 	@echo "Data deleted. 'make restart' starts fresh (services must still be installed)."
 
 # ==============================================================================
-# AGENT COMMANDS (dev server)
+# AGENT COMMANDS (dev server; no Pi access from here)
 # ==============================================================================
 
 agent-test: ## Run the hardware-free test suite
@@ -91,32 +92,7 @@ agent-venv: ## Dev virtualenv with test dependencies (no Pi hardware libs)
 	python3 -m venv .venv
 	.venv/bin/pip install -r requirements-dev.txt
 
-agent-deploy: ## On the Pi over ssh: git pull + `make deploy` (push commits first!)
-	$(SSH) "cd $(APP_DIR) && git pull --ff-only && make deploy"
-
-agent-restart: ## Restart both services on the Pi
-	$(SSH) "cd $(APP_DIR) && make restart"
-
-agent-status: ## Service status on the Pi
-	$(SSH) "systemctl status $(SERVICES) --no-pager" || true
-
-agent-logs: ## Tail the collector log on the Pi
-	$(SSH) "tail -n 100 -f $(APP_DIR)/data/logs/collector.log"
-
-agent-logs-web: ## Tail the dashboard log on the Pi
-	$(SSH) "tail -n 100 -f $(APP_DIR)/data/logs/dashboard.log"
-
-agent-pull-data: ## Copy database + logs from the Pi into ./from_pi/data
-	mkdir -p from_pi
-	scp -r $(PI):$(APP_DIR)/data from_pi/
-
-agent-ssh: ## Interactive shell on the Pi in the app directory
-	$(SSH) -t "cd $(APP_DIR) && exec \$$SHELL -l"
-
-agent-db: ## sqlite3 shell on the Pi's live database
-	$(SSH) -t "sqlite3 $(APP_DIR)/data/airmonitor.db"
-
-agent-clean: ## Remove local venv, caches and pulled data (dev server)
+agent-clean: ## Remove local venv, caches and pushed data (dev server)
 	rm -rf .venv from_pi
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
 	find . -type f -name '*.pyc' -delete
