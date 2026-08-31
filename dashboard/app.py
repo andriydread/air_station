@@ -235,6 +235,9 @@ app = create_app()
 
 
 if __name__ == "__main__":
+    from waitress import serve
+
     host = env_str("AIRMONITOR_WEB_HOST", "0.0.0.0")
     port = env_int("AIRMONITOR_WEB_PORT", 8080)
-    app.run(host=host, port=port, debug=False)
+    LOGGER.info("Serving dashboard on %s:%s", host, port)
+    serve(app, host=host, port=port, threads=4)

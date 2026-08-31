@@ -10,4 +10,5 @@ adafruit-circuitpython-scd4x    # SCD41 CO2
 
 # Dashboard and weather
 Flask
+waitress
 requests
