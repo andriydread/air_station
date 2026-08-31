@@ -7,7 +7,11 @@ queues commands back.
 Tables (schema is unchanged from earlier versions, so an existing
 database keeps working):
 
-- measurements  one row per sensor sample (raw history for charts)
+- measurements  one row per sensor sample (raw history for charts);
+                the nullable `flags` column holds JSON for readings the
+                quality guards rejected (raw value + reason) — flagged
+                values are NOT in the metric columns, so averages and
+                charts stay clean while nothing is lost
 - state         small JSON documents keyed by name (latest snapshot,
                 collector status, latest weather, ...)
 - commands      command queue from the dashboard to the collector
@@ -37,7 +41,8 @@ CREATE TABLE IF NOT EXISTS measurements (
     pm25 REAL,
     pm4 REAL,
     pm10 REAL,
-    tps REAL
+    tps REAL,
+    flags TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_measurements_recorded_at
     ON measurements(recorded_at);
@@ -107,6 +112,7 @@ class AirMonitorDatabase:
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA busy_timeout=10000")
         self._connection.executescript(_SCHEMA)
+        self._migrate_schema()
         # Commands left "running" by a crashed collector will never finish.
         self._write(
             "UPDATE commands SET status='failed', "
@@ -114,6 +120,15 @@ class AirMonitorDatabase:
             "WHERE status='running'",
             (self._now(),),
         )
+
+    def _migrate_schema(self) -> None:
+        """Additive migrations so databases from older versions keep working."""
+        columns = {
+            row["name"]
+            for row in self._connection.execute("PRAGMA table_info(measurements)")
+        }
+        if "flags" not in columns:
+            self._connection.execute("ALTER TABLE measurements ADD COLUMN flags TEXT")
 
     def close(self) -> None:
         with self._lock:
@@ -139,7 +154,11 @@ class AirMonitorDatabase:
 
     # --- Measurements ------------------------------------------------------
 
-    def insert_measurement(self, values: Dict[str, Optional[float]]) -> None:
+    def insert_measurement(
+        self,
+        values: Dict[str, Optional[float]],
+        flags: Optional[Dict[str, Any]] = None,
+    ) -> None:
         cleaned = {
             field: clean_value(field, values.get(field), self._min_valid_co2_ppm)
             for field in METRIC_FIELDS
@@ -147,8 +166,13 @@ class AirMonitorDatabase:
         columns = ", ".join(METRIC_FIELDS)
         placeholders = ", ".join("?" for _ in METRIC_FIELDS)
         self._write(
-            f"INSERT INTO measurements (recorded_at, {columns}) VALUES (?, {placeholders})",
-            (self._now(), *[cleaned[field] for field in METRIC_FIELDS]),
+            f"INSERT INTO measurements (recorded_at, {columns}, flags) "
+            f"VALUES (?, {placeholders}, ?)",
+            (
+                self._now(),
+                *[cleaned[field] for field in METRIC_FIELDS],
+                json.dumps(flags) if flags else None,
+            ),
         )
 
     def get_latest_measurement(self) -> Optional[Dict[str, Any]]:
@@ -172,6 +196,22 @@ class AirMonitorDatabase:
             (bucket_seconds, bucket_seconds, cutoff),
         )
         return [self._measurement_to_dict(row, ts_column="bucket_ts") for row in rows]
+
+    def get_recent_flagged(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Samples the quality guards flagged, newest first (diagnostics)."""
+        rows = self._query(
+            "SELECT id, recorded_at, flags FROM measurements "
+            "WHERE flags IS NOT NULL ORDER BY recorded_at DESC, id DESC LIMIT ?",
+            (limit,),
+        )
+        return [
+            {
+                "id": row["id"],
+                "timestamp": _to_iso(row["recorded_at"]),
+                "flags": _from_json(row["flags"], {}),
+            }
+            for row in rows
+        ]
 
     def delete_history(self) -> int:
         deleted, _ = self._write("DELETE FROM measurements")
@@ -206,6 +246,8 @@ class AirMonitorDatabase:
         }
         for field in METRIC_FIELDS:
             result[field] = clean_value(field, row[field], self._min_valid_co2_ppm)
+        if "flags" in row.keys():
+            result["flags"] = _from_json(row["flags"])
         return result
 
     # --- State (small JSON documents) --------------------------------------

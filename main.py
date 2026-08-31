@@ -36,6 +36,7 @@ from airmonitor.config import Config
 from airmonitor.logging_utils import EventLog, configure_logging
 from airmonitor.network import probe_network
 from airmonitor.power import PowerMonitor
+from airmonitor.quality import CrossCheck, RateGuard
 from airmonitor.sensors import (
     ReinitBackoff,
     Scd41,
@@ -189,6 +190,8 @@ class AirMonitor:
         self._workers: List[PeriodicWorker] = []
         self.weather_health = SensorHealth("weather", self.events)
         self.network_state: Dict[str, Any] = {"interface": config.wifi_interface}
+        self.rate_guard = RateGuard(self.events)
+        self.cross_check = CrossCheck(self.events)
         self.power = PowerMonitor(self.events)
         self.wifi_recovery = WifiRecovery(
             config.wifi_interface, self.events,
@@ -329,12 +332,16 @@ class AirMonitor:
             else:
                 self.readings.report_stale("pm25", "sps30")
 
-        for metric, value in sample.items():
+        # The rate guard splits the sample: plausible values are recorded,
+        # implausible jumps are stored as flags (raw value + reason) so a
+        # sensor glitch can't poison averages while still being inspectable.
+        accepted, flags = self.rate_guard.filter(sample)
+        for metric, value in accepted.items():
             self.readings.record(metric, value)
             self.buffer.add(metric, value)
 
         if sample:
-            self.database.insert_measurement(sample)
+            self.database.insert_measurement(accepted, flags=flags)
         # Only the live values are refreshed per sample; the full status
         # document is published on its own slower cadence (status task).
         self.database.set_state("latest_measurements", self.readings.fresh_snapshot())
