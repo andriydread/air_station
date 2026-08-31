@@ -21,3 +21,11 @@ def test_config_defaults_validate():
     from airmonitor.config import Config
 
     Config().validate()
+
+
+def test_dashboard_import_is_side_effect_free():
+    """Importing dashboard.app must not configure logging or create the DB;
+    the app is only built by create_app() (tests) or the __main__ block."""
+    import dashboard.app as dashboard_app
+
+    assert not hasattr(dashboard_app, "app")

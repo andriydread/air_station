@@ -363,15 +363,17 @@ def create_app() -> Flask:
     return app
 
 
-LOG_FILE = env_str("AIRMONITOR_DASHBOARD_LOG_FILE", "data/logs/dashboard.log")
-LOGGER = configure_logging("airmonitor.dashboard", log_file=LOG_FILE)
-app = create_app()
-
-
+# No module-level app: importing this module must stay side-effect free
+# (no logging setup, no database file creation). The service entry point is
+# `python -m dashboard.app`; tests call create_app() themselves.
 if __name__ == "__main__":
     from waitress import serve
 
+    configure_logging(
+        "airmonitor.dashboard",
+        log_file=env_str("AIRMONITOR_DASHBOARD_LOG_FILE", "data/logs/dashboard.log"),
+    )
     host = env_str("AIRMONITOR_WEB_HOST", "0.0.0.0")
     port = env_int("AIRMONITOR_WEB_PORT", 8080)
     LOGGER.info("Serving dashboard on %s:%s", host, port)
-    serve(app, host=host, port=port, threads=4)
+    serve(create_app(), host=host, port=port, threads=4)
