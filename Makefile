@@ -7,7 +7,7 @@ DATA_DIR ?= $(APP_DIR)/data
 SSH       = ssh $(PI)
 SERVICES  = airmonitor.service airmonitor-web.service
 
-.PHONY: help deploy deploy-full install reinstall restart start stop status \
+.PHONY: help deploy deploy-full install reinstall restart start stop status test venv-dev \
         logs logs-web pull-data venv clean uninstall wipe wipe-data nuke ssh db
 
 help: ## Show this help
@@ -16,6 +16,13 @@ help: ## Show this help
 venv: ## Create a local virtualenv and install dependencies
 	python3 -m venv .venv
 	.venv/bin/pip install -r requirements.txt
+
+venv-dev: ## Local virtualenv with test dependencies only (no Pi hardware libs)
+	python3 -m venv .venv
+	.venv/bin/pip install -r requirements-dev.txt
+
+test: ## Run the hardware-free test suite
+	.venv/bin/python -m pytest tests/ -q
 
 deploy: ## Sync code to the Pi and restart both services
 	rsync -avz --delete --filter="merge .rsync-filter" ./ $(PI):$(APP_DIR)
