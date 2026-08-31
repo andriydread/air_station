@@ -39,6 +39,7 @@ class Config:
     weather_update_interval: int = 1800  # fetch forecast
     command_poll_interval: int = 2      # look for dashboard commands
     network_check_interval: int = 30    # Wi-Fi / internet probe
+    status_publish_interval: int = 30   # write collector status for the dashboard
 
     # Files and paths
     database_path: str = "data/airmonitor.db"
@@ -91,6 +92,7 @@ class Config:
             weather_update_interval=_env_int("AIRMONITOR_WEATHER_UPDATE_INTERVAL", cls.weather_update_interval),
             command_poll_interval=_env_int("AIRMONITOR_COMMAND_POLL_INTERVAL", cls.command_poll_interval),
             network_check_interval=_env_int("AIRMONITOR_CONNECTIVITY_CHECK_INTERVAL", cls.network_check_interval),
+            status_publish_interval=_env_int("AIRMONITOR_STATUS_PUBLISH_INTERVAL", cls.status_publish_interval),
             database_path=_env_str("AIRMONITOR_DATABASE_PATH", cls.database_path),
             log_file=_env_str("AIRMONITOR_LOG_FILE", cls.log_file),
             font_path=_env_str("AIRMONITOR_FONT_PATH", cls.font_path),
@@ -127,6 +129,7 @@ class Config:
             "AIRMONITOR_WEATHER_UPDATE_INTERVAL": self.weather_update_interval,
             "AIRMONITOR_COMMAND_POLL_INTERVAL": self.command_poll_interval,
             "AIRMONITOR_CONNECTIVITY_CHECK_INTERVAL": self.network_check_interval,
+            "AIRMONITOR_STATUS_PUBLISH_INTERVAL": self.status_publish_interval,
             "AIRMONITOR_CONNECTIVITY_TIMEOUT": self.connectivity_timeout,
             "AIRMONITOR_MEASUREMENT_MAX_AGE": self.measurement_max_age,
         }

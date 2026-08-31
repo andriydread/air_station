@@ -116,6 +116,9 @@ class AirMonitorDatabase:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        # Last serialized JSON written per state key; lets set_state skip
+        # writes when nothing changed (SD-card wear, see set_state).
+        self._state_cache: Dict[str, str] = {}
         self._connection = sqlite3.connect(
             self.path, timeout=10, isolation_level=None, check_same_thread=False
         )
@@ -216,13 +219,19 @@ class AirMonitorDatabase:
     # --- State (small JSON documents) --------------------------------------
 
     def set_state(self, key: str, value: Any) -> None:
+        # The collector republishes mostly-identical state documents all day;
+        # skipping unchanged writes saves thousands of SD-card transactions.
+        serialized = json.dumps(value)
+        if self._state_cache.get(key) == serialized:
+            return
         self._write(
             """
             INSERT INTO state(key, value, updated_at) VALUES (?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
             """,
-            (key, json.dumps(value), self._now()),
+            (key, serialized, self._now()),
         )
+        self._state_cache[key] = serialized
 
     def get_state(self, key: str) -> Optional[Dict[str, Any]]:
         rows = self._query(
@@ -250,6 +259,13 @@ class AirMonitorDatabase:
 
     def claim_pending_commands(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Atomically mark pending commands as running and return them."""
+        # The queue is almost always empty; a cheap read avoids opening a
+        # write transaction every poll (every 2s -> real SD-card wear).
+        pending = self._query(
+            "SELECT 1 FROM commands WHERE status='pending' LIMIT 1"
+        )
+        if not pending:
+            return []
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:

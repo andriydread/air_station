@@ -11,6 +11,7 @@ The flow is simple:
         fetch_weather      every 30min Open-Meteo forecast
         process_commands   every 2s    commands from the dashboard
         check_network      every 30s   Wi-Fi / internet probe
+        publish_status     every 30s   status documents for the dashboard
         prune_database     every 24h   delete old history rows
 """
 
@@ -168,6 +169,7 @@ class AirMonitor:
 
         self.weather: Dict[str, Any] = {}
         self.last_display_snapshot: Optional[Dict[str, Any]] = None
+        self._last_display_write = None  # (mode, snapshot minus timestamp)
         self.running = True
         self.started_at = utc_now_iso()
         self.started_monotonic = time.monotonic()
@@ -259,7 +261,9 @@ class AirMonitor:
 
         if sample:
             self.database.insert_measurement(sample)
-        self.publish_status()
+        # Only the live values are refreshed per sample; the full status
+        # document is published on its own slower cadence (status task).
+        self.database.set_state("latest_measurements", self.readings.fresh_snapshot())
 
     def update_display(self, full_refresh: bool) -> None:
         """Average the buffered samples and draw them on the e-paper."""
@@ -278,9 +282,14 @@ class AirMonitor:
 
     def _render(self, snapshot: Dict[str, Any], full_refresh: bool) -> None:
         mode = "full" if full_refresh else "partial"
-        self.database.set_state(
-            "latest_display_snapshot", {"mode": mode, "snapshot": snapshot}
-        )
+        # Skip the DB write when only the timestamp moved — with dead sensors
+        # or a stable room this is most refreshes.
+        comparable = (mode, {k: v for k, v in snapshot.items() if k != "timestamp"})
+        if comparable != self._last_display_write:
+            self.database.set_state(
+                "latest_display_snapshot", {"mode": mode, "snapshot": snapshot}
+            )
+            self._last_display_write = comparable
         if self.display is None:
             self.display_health.failed("Display unavailable; snapshot stored only", available=False)
             self.publish_status()
@@ -334,7 +343,7 @@ class AirMonitor:
             if status["error"]:
                 message += f"; error={status['error']}"
             self.events.log(level, "network", "connectivity_check", message, status)
-        self.publish_status()
+            self.publish_status()
 
     def process_commands(self) -> None:
         self.commands.process_pending()
@@ -361,7 +370,9 @@ class AirMonitor:
         return {
             "running": self.running,
             "started_at": self.started_at,
-            "uptime_seconds": int(time.monotonic() - self.started_monotonic),
+            # Minute granularity so an otherwise-unchanged status document
+            # deduplicates in set_state instead of rewriting every publish.
+            "uptime_seconds": int(time.monotonic() - self.started_monotonic) // 60 * 60,
             "database_path": self.config.database_path,
             "log_file": self.config.log_file,
             "sample_interval_seconds": self.config.sample_interval,
@@ -407,6 +418,7 @@ class AirMonitor:
             PeriodicTask("weather", self.config.weather_update_interval, self.fetch_weather),
             PeriodicTask("commands", self.config.command_poll_interval, self.process_commands),
             PeriodicTask("network", self.config.network_check_interval, self.check_network),
+            PeriodicTask("status", self.config.status_publish_interval, self.publish_status),
             PeriodicTask("storage_prune", 24 * 3600, self.prune_database),
             PeriodicTask("display", self.config.partial_update_interval, self._display_tick),
         ]
