@@ -9,6 +9,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from airmonitor.config import Config
 from airmonitor.logging_utils import configure_logging
 from airmonitor.storage import AirMonitorDatabase
+from utils.aqi import calculate_aqi, get_aqi_category, get_co2_category
 
 
 LOGGER = logging.getLogger("airmonitor.dashboard")
@@ -59,6 +60,32 @@ def parse_bool(value: Any, field_name: str) -> bool:
         if normalized in {"0", "false", "no", "off"}:
             return False
     raise ValueError(f"{field_name} must be a boolean")
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def compute_aqi_fields(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive AQI + category labels from a metrics dict (single AQI source, B6)."""
+    pm25, pm10, co2 = metrics.get("pm25"), metrics.get("pm10"), metrics.get("co2")
+    if _is_number(pm25) and _is_number(pm10):
+        value = calculate_aqi(pm25, pm10)
+        category = get_aqi_category(value)
+    else:
+        value = None
+        category = None
+    return {
+        "value": value,
+        "category": category,
+        "co2_category": get_co2_category(co2) if _is_number(co2) else None,
+    }
+
+
+def row_aqi(row: Dict[str, Any]) -> Any:
+    if _is_number(row.get("pm25")) and _is_number(row.get("pm10")):
+        return calculate_aqi(row["pm25"], row["pm10"])
+    return None
 
 
 def validate_empty(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -161,17 +188,24 @@ def create_app() -> Flask:
 
     @app.get("/api/summary")
     def api_summary() -> Any:
-        return jsonify(database.get_dashboard_summary())
+        summary = database.get_dashboard_summary()
+        live = summary.get("latest_measurements") or {}
+        metrics = live.get("value") or summary.get("latest_measurement") or {}
+        summary["aqi"] = compute_aqi_fields(metrics)
+        return jsonify(summary)
 
     @app.get("/api/history")
     def api_history() -> Any:
         hours = max(1, min(parse_int(request.args.get("hours", 24), "hours"), 24 * 30))
         bucket_seconds = choose_bucket_seconds(hours)
+        rows = database.query_history(hours, bucket_seconds)
+        for row in rows:
+            row["aqi"] = row_aqi(row)
         return jsonify(
             {
                 "hours": hours,
                 "bucket_seconds": bucket_seconds,
-                "rows": database.query_history(hours, bucket_seconds),
+                "rows": rows,
             }
         )
 

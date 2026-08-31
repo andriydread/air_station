@@ -121,58 +121,6 @@ function themeColors() {
   };
 }
 
-function calculateAqi(pm25, pm10) {
-  if (pm25 == null || pm10 == null) {
-    return null;
-  }
-
-  function linear(aqiHigh, aqiLow, concHigh, concLow, conc) {
-    return Math.round(((aqiHigh - aqiLow) / (concHigh - concLow)) * (conc - concLow) + aqiLow);
-  }
-
-  function aqiPm25(value) {
-    const c = Math.max(0, value);
-    if (c <= 12.0) return linear(50, 0, 12.0, 0, c);
-    if (c <= 35.4) return linear(100, 51, 35.4, 12.1, c);
-    if (c <= 55.4) return linear(150, 101, 55.4, 35.5, c);
-    if (c <= 150.4) return linear(200, 151, 150.4, 55.5, c);
-    if (c <= 250.4) return linear(300, 201, 250.4, 150.5, c);
-    if (c <= 350.4) return linear(400, 301, 350.4, 250.5, c);
-    if (c <= 500.4) return linear(500, 401, 500.4, 350.5, c);
-    return 500;
-  }
-
-  function aqiPm10(value) {
-    const c = Math.max(0, value);
-    if (c <= 54) return linear(50, 0, 54, 0, c);
-    if (c <= 154) return linear(100, 51, 154, 55, c);
-    if (c <= 254) return linear(150, 101, 254, 155, c);
-    if (c <= 354) return linear(200, 151, 354, 255, c);
-    if (c <= 424) return linear(300, 201, 424, 355, c);
-    if (c <= 504) return linear(400, 301, 504, 425, c);
-    if (c <= 604) return linear(500, 401, 604, 505, c);
-    return 500;
-  }
-
-  return Math.max(aqiPm25(pm25), aqiPm10(pm10));
-}
-
-function aqiCategory(value) {
-  if (value == null) return '--';
-  if (value <= 50) return 'Good';
-  if (value <= 100) return 'Moderate';
-  if (value <= 175) return 'Unhealthy';
-  if (value <= 300) return 'Very Unhealthy';
-  return 'Hazardous';
-}
-
-function co2Category(value) {
-  if (value == null) return '--';
-  if (value < 1000) return 'Good';
-  if (value < 1500) return 'Moderate';
-  return 'Unhealthy';
-}
-
 function getLiveMetrics(summary) {
   return summary.latest_measurements?.value || summary.latest_measurement || {};
 }
@@ -223,7 +171,7 @@ function formatInterval(seconds) {
 function renderSummary(summary) {
   lastSummary = summary;
   const metrics = getLiveMetrics(summary);
-  const aqi = calculateAqi(metrics.pm25, metrics.pm10);
+  const aqi = summary.aqi || {};  // computed by the backend (single AQI source)
   const collector = summary.collector_status?.value || {};
   const health = sensorHealthSummary(collector);
   const calibration = summary.scd41_last_calibration?.value || {};
@@ -235,9 +183,9 @@ function renderSummary(summary) {
   document.getElementById('metric-pm25').textContent = metricFormats.pm25(metrics.pm25);
   document.getElementById('metric-pm10').textContent = metricFormats.pm10(metrics.pm10);
   document.getElementById('metric-tps').textContent = metricFormats.tps(metrics.tps);
-  document.getElementById('metric-aqi').textContent = aqi == null ? '--' : String(aqi);
-  document.getElementById('metric-aqi-label').textContent = aqiCategory(aqi);
-  document.getElementById('metric-co2-label').textContent = co2Category(metrics.co2);
+  document.getElementById('metric-aqi').textContent = aqi.value == null ? '--' : String(aqi.value);
+  document.getElementById('metric-aqi-label').textContent = aqi.category || '--';
+  document.getElementById('metric-co2-label').textContent = aqi.co2_category || '--';
   document.getElementById('metric-status').textContent = health.headline;
   document.getElementById('metric-status-detail').textContent = health.detail;
   document.getElementById('latest-sample-time').textContent = `Dashboard sample: ${formatTimestamp(metrics.timestamp)}`;
@@ -479,16 +427,19 @@ async function fetchSummary() {
   renderSummary(data);
 }
 
+function renderAllCharts(rows) {
+  renderLineChart('chart-temp', rows, 'temp', chartConfigs.temp);
+  renderLineChart('chart-humid', rows, 'humid', chartConfigs.humid);
+  renderLineChart('chart-co2', rows, 'co2', chartConfigs.co2);
+  renderLineChart('chart-aqi', rows, 'aqi', chartConfigs.aqi);
+  renderLineChart('chart-pm25', rows, 'pm25', chartConfigs.pm25);
+  renderLineChart('chart-pm10', rows, 'pm10', chartConfigs.pm10);
+}
+
 async function fetchHistory() {
   const data = await fetchJson(`/api/history?hours=${selectedHours}`);
-  lastHistoryRows = data.rows || [];
-  const aqiRows = lastHistoryRows.map((row) => ({ ...row, aqi: calculateAqi(row.pm25, row.pm10) }));
-  renderLineChart('chart-temp', lastHistoryRows, 'temp', chartConfigs.temp);
-  renderLineChart('chart-humid', lastHistoryRows, 'humid', chartConfigs.humid);
-  renderLineChart('chart-co2', lastHistoryRows, 'co2', chartConfigs.co2);
-  renderLineChart('chart-aqi', aqiRows, 'aqi', chartConfigs.aqi);
-  renderLineChart('chart-pm25', lastHistoryRows, 'pm25', chartConfigs.pm25);
-  renderLineChart('chart-pm10', lastHistoryRows, 'pm10', chartConfigs.pm10);
+  lastHistoryRows = data.rows || [];  // rows carry backend-computed `aqi`
+  renderAllCharts(lastHistoryRows);
 }
 
 async function submitCommand(command, payload = {}) {
@@ -517,13 +468,7 @@ function setTheme(theme) {
   window.localStorage.setItem('airmonitor-theme', theme);
   document.getElementById('theme-toggle').textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
   if (lastHistoryRows) {
-    const aqiRows = lastHistoryRows.map((row) => ({ ...row, aqi: calculateAqi(row.pm25, row.pm10) }));
-    renderLineChart('chart-temp', lastHistoryRows, 'temp', chartConfigs.temp);
-    renderLineChart('chart-humid', lastHistoryRows, 'humid', chartConfigs.humid);
-    renderLineChart('chart-co2', lastHistoryRows, 'co2', chartConfigs.co2);
-    renderLineChart('chart-aqi', aqiRows, 'aqi', chartConfigs.aqi);
-    renderLineChart('chart-pm25', lastHistoryRows, 'pm25', chartConfigs.pm25);
-    renderLineChart('chart-pm10', lastHistoryRows, 'pm10', chartConfigs.pm10);
+    renderAllCharts(lastHistoryRows);
   }
 }
 
