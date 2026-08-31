@@ -141,6 +141,32 @@ def test_flagged_stream_raises_stale_alarm(monkeypatch, tmp_path):
         monitor.database.close()
 
 
+# --- run() cleanup on a setup crash (B10) ------------------------------------
+
+
+def test_setup_crash_still_runs_shutdown(monkeypatch, tmp_path):
+    import sqlite3
+
+    import pytest
+
+    from airmonitor.config import Config
+
+    config = Config(
+        database_path=str(tmp_path / "c.db"), log_file=str(tmp_path / "c.log")
+    )
+    monitor = main_module.AirMonitor(config)
+
+    def exploding_setup():
+        raise RuntimeError("first-boot disaster")
+
+    monkeypatch.setattr(monitor, "setup", exploding_setup)
+    with pytest.raises(RuntimeError, match="first-boot disaster"):
+        monitor.run()
+    assert monitor.running is False
+    with pytest.raises(sqlite3.ProgrammingError):  # connection really closed
+        monitor.database._query("SELECT 1")
+
+
 # --- SampleBuffer -----------------------------------------------------------
 
 

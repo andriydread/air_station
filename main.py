@@ -511,6 +511,14 @@ class AirMonitor:
 
     def run(self) -> None:
         self.config.validate()
+        try:
+            self._run()
+        finally:
+            # A crash anywhere — setup included — still stops the sensors
+            # and closes the database. shutdown() tolerates half-built state.
+            self.shutdown()
+
+    def _run(self) -> None:
         self.install_signal_handlers()
         self.setup()
 
@@ -541,19 +549,16 @@ class AirMonitor:
         self.events.log(logging.INFO, "collector", "started", "Air monitor started")
         self.notifier.ready()
         last_heartbeat = 0.0
-        try:
-            while self.running:
-                now = time.monotonic()
-                for task in tasks:
-                    task.run_if_due(now, self.events)
-                # Watchdog heartbeat: the unit's WatchdogSec is 90s, so a
-                # ping every 10s survives the slowest full display refresh.
-                if now - last_heartbeat >= 10:
-                    self.notifier.heartbeat()
-                    last_heartbeat = now
-                time.sleep(0.2)
-        finally:
-            self.shutdown()
+        while self.running:
+            now = time.monotonic()
+            for task in tasks:
+                task.run_if_due(now, self.events)
+            # Watchdog heartbeat: the unit's WatchdogSec is 90s, so a
+            # ping every 10s survives the slowest full display refresh.
+            if now - last_heartbeat >= 10:
+                self.notifier.heartbeat()
+                last_heartbeat = now
+            time.sleep(0.2)
 
     def _display_tick(self) -> None:
         """Partial refresh normally; a full refresh every full_update_interval."""
