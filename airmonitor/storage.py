@@ -22,12 +22,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-METRIC_FIELDS = ("co2", "temp", "humid", "pm1", "pm25", "pm4", "pm10", "tps")
+from airmonitor.validation import DEFAULT_MIN_VALID_CO2_PPM, clean_value
 
-# Values outside these ranges are stored as NULL instead of garbage.
-MIN_VALID_CO2_PPM = 350
-VALID_TEMPERATURE = (-40.0, 85.0)
-VALID_HUMIDITY = (0.0, 100.0)
+METRIC_FIELDS = ("co2", "temp", "humid", "pm1", "pm25", "pm4", "pm10", "tps")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS measurements (
@@ -77,23 +74,6 @@ CREATE INDEX IF NOT EXISTS idx_events_created_at
 """
 
 
-def _clean_value(field: str, value: Any) -> Optional[float]:
-    """Round a raw reading and drop it (return None) when it is implausible."""
-    if value is None:
-        return None
-    number = float(value)
-    if field == "co2":
-        number = int(round(number))
-        return number if number >= MIN_VALID_CO2_PPM else None
-    number = round(number, 2)
-    if field == "temp":
-        return number if VALID_TEMPERATURE[0] <= number <= VALID_TEMPERATURE[1] else None
-    if field == "humid":
-        return number if VALID_HUMIDITY[0] <= number <= VALID_HUMIDITY[1] else None
-    # particulate matter fields: must not be negative
-    return number if number >= 0 else None
-
-
 def _to_iso(timestamp: Optional[int]) -> Optional[str]:
     if timestamp is None:
         return None
@@ -112,9 +92,10 @@ def _from_json(text: Optional[str], fallback: Any = None) -> Any:
 class AirMonitorDatabase:
     """One instance = one open connection, safe to share between threads."""
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, min_valid_co2_ppm: int = DEFAULT_MIN_VALID_CO2_PPM):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._min_valid_co2_ppm = min_valid_co2_ppm
         self._lock = threading.Lock()
         # Last serialized JSON written per state key; lets set_state skip
         # writes when nothing changed (SD-card wear, see set_state).
@@ -159,7 +140,10 @@ class AirMonitorDatabase:
     # --- Measurements ------------------------------------------------------
 
     def insert_measurement(self, values: Dict[str, Optional[float]]) -> None:
-        cleaned = {field: _clean_value(field, values.get(field)) for field in METRIC_FIELDS}
+        cleaned = {
+            field: clean_value(field, values.get(field), self._min_valid_co2_ppm)
+            for field in METRIC_FIELDS
+        }
         columns = ", ".join(METRIC_FIELDS)
         placeholders = ", ".join("?" for _ in METRIC_FIELDS)
         self._write(
@@ -213,7 +197,7 @@ class AirMonitorDatabase:
             "timestamp_ts": row[ts_column],
         }
         for field in METRIC_FIELDS:
-            result[field] = _clean_value(field, row[field])
+            result[field] = clean_value(field, row[field], self._min_valid_co2_ppm)
         return result
 
     # --- State (small JSON documents) --------------------------------------

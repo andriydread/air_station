@@ -155,7 +155,9 @@ class SampleBuffer:
 class AirMonitor:
     def __init__(self, config: Config):
         self.config = config
-        self.database = AirMonitorDatabase(config.database_path)
+        self.database = AirMonitorDatabase(
+            config.database_path, min_valid_co2_ppm=config.min_valid_co2_ppm
+        )
         self.events = EventLog(LOGGER, self.database)
         self.readings = LatestReadings(config.measurement_max_age, self.events)
         self.buffer = SampleBuffer()

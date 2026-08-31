@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional, Tuple
 import adafruit_scd4x
 import adafruit_sht4x
 
+from airmonitor.validation import VALID_HUMIDITY, VALID_TEMPERATURE
 from lib.sps30_i2c import SPS30
 
 LOGGER = logging.getLogger("airmonitor")
@@ -281,8 +282,8 @@ class Scd41:
 class Sht41:
     """SHT41 temperature and humidity sensor (I2C)."""
 
-    VALID_TEMPERATURE = (-40.0, 85.0)
-    VALID_HUMIDITY = (0.0, 100.0)
+    VALID_TEMPERATURE = VALID_TEMPERATURE
+    VALID_HUMIDITY = VALID_HUMIDITY
 
     def __init__(self, i2c, events):
         self.i2c = i2c

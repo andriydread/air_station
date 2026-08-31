@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
+from airmonitor.config import Config
 from airmonitor.logging_utils import configure_logging
 from airmonitor.storage import AirMonitorDatabase
 
@@ -93,7 +94,11 @@ def validate_scd41_asc(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def create_app() -> Flask:
     app = Flask(__name__)
-    database = AirMonitorDatabase(env_str("AIRMONITOR_DATABASE_PATH", "data/airmonitor.db"))
+    # Same Config as the collector, so validation thresholds can't diverge.
+    config = Config.from_env()
+    database = AirMonitorDatabase(
+        config.database_path, min_valid_co2_ppm=config.min_valid_co2_ppm
+    )
     project_root = Path(__file__).resolve().parents[1]
     icons_dir = project_root / "assets" / "icons"
     command_validators: Dict[str, CommandValidator] = {
