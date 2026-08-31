@@ -110,6 +110,9 @@ async function submitCommand(command, payload = {}) {
   });
   toast(`Command queued (#${data.id}). Result appears in Diagnostics.`, 'info');
   window.setTimeout(refreshSummary, 3000);
+  // A display command's visible effect is the panel redraw; refresh the
+  // preview once the collector has had time to render.
+  if (command.startsWith('display_')) window.setTimeout(reloadPreview, 8000);
 }
 
 // ---------------------------------------------------------------------------
@@ -370,13 +373,18 @@ async function refreshHistory() {
   const data = await fetchJson(`/api/history?${rangeQuery()}`);
   lastHistoryRows = data.rows || [];
   renderAllCharts(lastHistoryRows);
-  renderStats(data.stats || {});
+  renderStats(data.stats || {}, data.from_ts, data.to_ts);
   document.getElementById('export-csv').href = `/api/export.csv?${rangeQuery()}`;
 }
 
-function renderStats(stats) {
+function renderStats(stats, fromTs, toTs) {
+  // Show the resolved window so it is obvious the stats follow the range
+  // (with young data every range holds the same samples).
+  const window_ = (fromTs && toTs)
+    ? ` · ${formatTimestamp(fromTs * 1000)} → ${formatTimestamp(toTs * 1000)}`
+    : '';
   document.getElementById('stats-note').textContent =
-    stats.sample_count != null ? `${stats.sample_count} raw samples in range` : '--';
+    stats.sample_count != null ? `${stats.sample_count} raw samples${window_}` : '--';
   const body = document.querySelector('#stats-table tbody');
   body.innerHTML = '';
   for (const [key, label, digits] of statsMetrics) {
@@ -643,6 +651,24 @@ function initTheme() {
 }
 
 // ---------------------------------------------------------------------------
+// Header clock (mirrors the e-paper's own header)
+// ---------------------------------------------------------------------------
+
+function startClock() {
+  const timeEl = document.getElementById('clock-time');
+  const dateEl = document.getElementById('clock-date');
+  const tick = () => {
+    const now = new Date();
+    const two = (n) => String(n).padStart(2, '0');
+    timeEl.textContent = `${two(now.getHours())}:${two(now.getMinutes())}`;
+    const weekday = now.toLocaleDateString(undefined, { weekday: 'long' });
+    dateEl.textContent = `${weekday} · ${two(now.getDate())}.${two(now.getMonth() + 1)}.${now.getFullYear()}`;
+  };
+  tick();
+  window.setInterval(tick, 10000);
+}
+
+// ---------------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------------
 
@@ -756,6 +782,7 @@ function installRefreshLoop() {
 
 window.addEventListener('DOMContentLoaded', async () => {
   initTheme();
+  startClock();
   ['chart-temp', 'chart-humid', 'chart-co2', 'chart-aqi', 'chart-pm25', 'chart-pm10'].forEach(installChartHover);
   installActions();
   installRefreshLoop();

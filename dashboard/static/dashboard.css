@@ -98,6 +98,10 @@ button, input, select { font: inherit; color: inherit; }
 }
 .pill-bad { border-color: transparent; background: var(--bad-soft); color: var(--bad); }
 
+.clock { text-align: right; line-height: 1.25; }
+.clock-time { display: block; font-size: 24px; font-weight: 700; letter-spacing: 0.02em; }
+.clock-date { color: var(--muted); font-size: 12px; }
+
 button {
   cursor: pointer;
   border: 1px solid var(--line);
@@ -239,6 +243,9 @@ button.button-danger {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px;
+  /* Cards wrap their content instead of stretching to the tallest sibling
+     (the forecast panel used to inherit the preview's height and look empty). */
+  align-items: start;
 }
 
 /* --- Forecast --------------------------------------------------------------- */
@@ -251,14 +258,14 @@ button.button-danger {
 .forecast-card {
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   background: var(--paper-strong);
 }
 .forecast-window { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
-.forecast-body { display: flex; align-items: center; gap: 10px; }
-.forecast-icon { width: 44px; height: 44px; }
+.forecast-body { display: flex; align-items: center; gap: 12px; }
+.forecast-icon { width: 52px; height: 52px; }
 :root[data-theme="dark"] .forecast-icon { filter: invert(1) hue-rotate(180deg); }
-.forecast-stat { margin: 2px 0; font-size: 14px; }
+.forecast-stat { margin: 2px 0; font-size: 15px; }
 
 /* --- E-paper preview -------------------------------------------------------- */
 
@@ -389,13 +396,17 @@ button.button-danger {
 
 /* --- Controls --------------------------------------------------------------- */
 
+/* Multi-column flow instead of a grid: unequal cards pack top-to-bottom
+   without the ragged holes auto-fit rows left behind. */
 .controls-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 18px;
-  align-items: start;
+  columns: 2 340px;
+  column-gap: 18px;
 }
-.control-card { padding: 16px 18px; }
+.control-card {
+  padding: 16px 18px;
+  break-inside: avoid;
+  margin-bottom: 18px;
+}
 .control-card h2 { margin: 0 0 8px; font-size: 16px; }
 
 .info-list p {
