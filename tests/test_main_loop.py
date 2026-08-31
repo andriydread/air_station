@@ -101,6 +101,46 @@ def test_stale_never_reported_for_metric_never_seen():
     assert events.entries == []
 
 
+# --- collect_sample + quality guards (B9) ------------------------------------
+
+
+def test_flagged_stream_raises_stale_alarm(monkeypatch, tmp_path):
+    """A sensor whose readings keep getting flagged feeds nothing into the
+    history — that must raise measurement_stale like a silent sensor does."""
+    from airmonitor.config import Config
+
+    clock = {"now": 1000.0}
+    # main, quality and sensors share the one time module; patch it once.
+    monkeypatch.setattr(main_module.time, "monotonic", lambda: clock["now"])
+    config = Config(
+        database_path=str(tmp_path / "s.db"),
+        log_file=str(tmp_path / "s.log"),
+        measurement_max_age=45,
+    )
+    monitor = main_module.AirMonitor(config)
+    try:
+        monitor._init_i2c_and_sensors()  # conftest fakes: all sensors healthy
+        monitor.collect_sample()  # baseline sample, everything accepted
+
+        for i in range(5):
+            clock["now"] += 10
+            # Alternate wildly so the rate guard flags every co2 sample.
+            monitor.scd41.device.CO2 = 60000.0 if i % 2 == 0 else 600.0
+            monitor.collect_sample()
+
+        stale = [
+            e for e in monitor.database.get_recent_events(limit=200)
+            if e["event_type"] == "measurement_stale"
+        ]
+        assert len(stale) == 1
+        assert stale[0]["source"] == "quality"
+        assert stale[0]["details"]["metric"] == "co2"  # temp/humid kept flowing
+        flagged = monitor.database.get_recent_flagged()
+        assert flagged and "co2" in flagged[0]["flags"]
+    finally:
+        monitor.database.close()
+
+
 # --- SampleBuffer -----------------------------------------------------------
 
 

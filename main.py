@@ -351,6 +351,10 @@ class AirMonitor:
         for metric, value in accepted.items():
             self.readings.record(metric, value)
             self.buffer.add(metric, value)
+        # A sensor that keeps returning implausible values feeds nothing into
+        # the history — that deserves the same stale alarm as a silent one.
+        for metric in flags:
+            self.readings.report_stale(metric, "quality")
 
         if sample:
             self.database.insert_measurement(accepted, flags=flags)
