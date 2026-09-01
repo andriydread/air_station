@@ -204,6 +204,25 @@ def create_app() -> Flask:
         "system_reboot": validate_system,
     }
 
+    # DNS-rebinding hardening: a malicious page can re-resolve its own
+    # hostname to the Pi's LAN IP and become same-origin with :8080. With
+    # AIRMONITOR_ALLOWED_HOSTS set, requests carrying a foreign Host header
+    # are refused before any route runs. Empty (default) = check disabled.
+    allowed_hosts = {
+        host.strip().lower()
+        for host in config.allowed_hosts.split(",")
+        if host.strip()
+    }
+
+    @app.before_request
+    def check_host_header():
+        if not allowed_hosts:
+            return None
+        host = (request.host or "").rsplit(":", 1)[0].lower()
+        if host not in allowed_hosts:
+            return jsonify({"error": "unrecognized host"}), 421
+        return None
+
     @app.after_request
     def add_response_headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"

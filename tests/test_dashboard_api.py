@@ -259,3 +259,23 @@ def test_display_preview_etag_roundtrip(client):
         "/api/display-preview.png", headers={"If-None-Match": etag}
     )
     assert revalidated.status_code == 304  # unchanged snapshot: no re-render
+
+
+def test_host_allowlist_blocks_foreign_hosts(monkeypatch, tmp_path):
+    monkeypatch.setenv("AIRMONITOR_DATABASE_PATH", str(tmp_path / "hosts.db"))
+    monkeypatch.setenv("AIRMONITOR_ALLOWED_HOSTS", "airstation.local, 192.168.1.50")
+
+    from dashboard.app import create_app
+
+    with create_app().test_client() as guarded:
+        ok = guarded.get("/api/health", headers={"Host": "airstation.local:8080"})
+        assert ok.status_code == 200
+        by_ip = guarded.get("/api/health", headers={"Host": "192.168.1.50"})
+        assert by_ip.status_code == 200
+        rebound = guarded.get("/api/health", headers={"Host": "evil.example.com"})
+        assert rebound.status_code == 421
+
+
+def test_host_allowlist_disabled_by_default(client):
+    response = client.get("/api/health", headers={"Host": "anything.example.com"})
+    assert response.status_code == 200

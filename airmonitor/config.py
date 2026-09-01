@@ -108,6 +108,11 @@ class Config:
     # A measurement older than this is shown as missing/stale
     measurement_max_age: int = 45
 
+    # Dashboard: comma-separated hostnames/IPs the web server will answer to
+    # (DNS-rebinding hardening). Empty = accept any Host header (default, so
+    # nothing breaks until the operator opts in).
+    allowed_hosts: str = ""
+
     @classmethod
     def from_env(cls) -> "Config":
         return cls(
@@ -157,6 +162,7 @@ class Config:
             keep_measurements_days=_env_int("AIRMONITOR_KEEP_MEASUREMENTS_DAYS", cls.keep_measurements_days),
             keep_events_days=_env_int("AIRMONITOR_KEEP_EVENTS_DAYS", cls.keep_events_days),
             measurement_max_age=_env_int("AIRMONITOR_MEASUREMENT_MAX_AGE", cls.measurement_max_age),
+            allowed_hosts=_env_str("AIRMONITOR_ALLOWED_HOSTS", cls.allowed_hosts),
         )
 
     def validate(self) -> None:

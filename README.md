@@ -171,6 +171,8 @@ The ones that matter most:
 | `AIRMONITOR_WIFI_RECOVERY_AFTER_FAILURES` | 6 | failed probes per recovery action (0 = off) |
 | `AIRMONITOR_KEEP_MEASUREMENTS_DAYS` | 90 | history retention (0 = forever) |
 | `AIRMONITOR_KEEP_EVENTS_DAYS` | 14 | event-log retention |
+| `AIRMONITOR_MIN_FREE_DISK_MB` | 200 | low-disk warning threshold (0 = off) |
+| `AIRMONITOR_ALLOWED_HOSTS` | *(empty)* | dashboard answers only these hostnames/IPs, comma-separated (DNS-rebinding guard; empty = any) |
 | `AIRMONITOR_DATABASE_PATH` | `data/airmonitor.db` | SQLite location |
 
 ## Sensor care
