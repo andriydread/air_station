@@ -69,6 +69,13 @@ Built for unattended operation; every layer heals itself:
 - **SD-card care** — unchanged state is never rewritten, and the command
   queue is polled without write transactions; the database lives through
   deploys (`data/` is git-ignored, so no deploy can touch it).
+- **Database self-defense** — the nightly maintenance task runs a SQLite
+  integrity check (corruption becomes an error event and an unhealthy
+  storage state instead of silent data loss) and writes a rotating online
+  backup next to the live file (`airmonitor.db.bak` + one previous
+  generation), skipped automatically when disk headroom is tight. Free
+  disk space is watched continuously and warned about below
+  `AIRMONITOR_MIN_FREE_DISK_MB`.
 
 ## Project layout
 
