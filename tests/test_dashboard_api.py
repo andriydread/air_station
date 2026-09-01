@@ -185,7 +185,7 @@ def test_history_custom_range_and_stats(client):
     assert body["rows"]
     stats = body["stats"]
     assert stats["sample_count"] == 1
-    assert stats["co2"] == {"min": 800, "avg": 800.0, "max": 800}
+    assert stats["co2"] == {"min": 800, "avg": 800.0, "max": 800, "count": 1}
     assert stats["temp"]["avg"] == 22.0
 
 

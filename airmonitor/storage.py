@@ -58,7 +58,14 @@ CREATE TABLE IF NOT EXISTS measurements_hourly (
     pm25_min REAL, pm25_avg REAL, pm25_max REAL,
     pm4_min REAL, pm4_avg REAL, pm4_max REAL,
     pm10_min REAL, pm10_avg REAL, pm10_max REAL,
-    tps_min REAL, tps_avg REAL, tps_max REAL
+    tps_min REAL, tps_avg REAL, tps_max REAL,
+    -- Per-field non-NULL counts: sample_count counts rows, but a metric can
+    -- be NULL for part of an hour (flagged/sensor down); stats weighted by
+    -- sample_count alone would bias averages low. NULL here (rows rolled
+    -- before this column existed) means "assume sample_count".
+    co2_count INTEGER, temp_count INTEGER, humid_count INTEGER,
+    pm1_count INTEGER, pm25_count INTEGER, pm4_count INTEGER,
+    pm10_count INTEGER, tps_count INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS state (
@@ -157,6 +164,15 @@ class AirMonitorDatabase:
             "CREATE INDEX IF NOT EXISTS idx_measurements_flagged "
             "ON measurements(recorded_at DESC) WHERE flags IS NOT NULL"
         )
+        hourly_columns = {
+            row["name"]
+            for row in self._connection.execute("PRAGMA table_info(measurements_hourly)")
+        }
+        for field in METRIC_FIELDS:
+            if f"{field}_count" not in hourly_columns:
+                self._connection.execute(
+                    f"ALTER TABLE measurements_hourly ADD COLUMN {field}_count INTEGER"
+                )
 
     def close(self) -> None:
         with self._lock:
@@ -280,10 +296,12 @@ class AirMonitorDatabase:
         if lower >= upper:
             return 0
         columns = ", ".join(
-            f"{field}_{stat}" for field in METRIC_FIELDS for stat in ("min", "avg", "max")
+            f"{field}_{stat}"
+            for field in METRIC_FIELDS for stat in ("min", "avg", "max", "count")
         )
         aggregates = ", ".join(
-            f"MIN({field}), AVG({field}), MAX({field})" for field in METRIC_FIELDS
+            f"MIN({field}), AVG({field}), MAX({field}), COUNT({field})"
+            for field in METRIC_FIELDS
         )
         rolled, _ = self._write(
             f"""
@@ -305,13 +323,15 @@ class AirMonitorDatabase:
             # Counts as progress (return 1) so drain loops keep going.
             columns = ", ".join(
                 f"{field}_{stat}"
-                for field in METRIC_FIELDS for stat in ("min", "avg", "max")
+                for field in METRIC_FIELDS for stat in ("min", "avg", "max", "count")
             )
-            placeholders = ", ".join("NULL" for _ in range(len(METRIC_FIELDS) * 3))
+            values = ", ".join(
+                "NULL, NULL, NULL, 0" for _ in METRIC_FIELDS
+            )
             self._write(
                 f"INSERT OR REPLACE INTO measurements_hourly "
                 f"(hour_ts, sample_count, flagged_count, {columns}) "
-                f"VALUES (?, 0, 0, {placeholders})",
+                f"VALUES (?, 0, 0, {values})",
                 (upper - 3600,),
             )
             return 1
@@ -351,17 +371,25 @@ class AirMonitorDatabase:
         return rows
 
     def query_stats_hourly(self, start_ts: int, end_ts: int) -> Dict[str, Any]:
-        """Stats from the rollups plus the raw tail; avg weighted by sample counts."""
+        """Stats from the rollups plus the raw tail.
+
+        Averages are weighted by per-field non-NULL counts (COALESCEd to
+        sample_count for rows rolled before those columns existed), so a
+        metric that was flagged/offline part of the window is not biased low.
+        """
         last = self._last_rolled_hour()
         boundary = (last + 3600) if last is not None else start_ts
         parts: List[Dict[str, Any]] = []
         if last is not None and start_ts <= last:
             selects = ["SUM(sample_count) AS sample_count"]
             for field in METRIC_FIELDS:
+                weight = f"COALESCE({field}_count, sample_count)"
                 selects.extend(
                     (
                         f"MIN({field}_min) AS {field}_min",
-                        f"SUM({field}_avg * sample_count) AS {field}_weighted",
+                        f"SUM({field}_avg * {weight}) AS {field}_weighted",
+                        f"SUM(CASE WHEN {field}_avg IS NOT NULL THEN {weight} ELSE 0 END)"
+                        f" AS {field}_n",
                         f"MAX({field}_max) AS {field}_max",
                     )
                 )
@@ -374,13 +402,12 @@ class AirMonitorDatabase:
                 stats: Dict[str, Any] = {"sample_count": row["sample_count"]}
                 for field in METRIC_FIELDS:
                     weighted = row[f"{field}_weighted"]
+                    n = row[f"{field}_n"] or 0
                     stats[field] = {
                         "min": row[f"{field}_min"],
-                        "avg": (
-                            round(weighted / row["sample_count"], 2)
-                            if weighted is not None else None
-                        ),
+                        "avg": round(weighted / n, 2) if weighted is not None and n else None,
                         "max": row[f"{field}_max"],
+                        "count": n,
                     }
                 parts.append(stats)
         if boundary <= end_ts:
@@ -395,11 +422,13 @@ class AirMonitorDatabase:
             "sample_count": parts[0]["sample_count"] + parts[1]["sample_count"]
         }
         for field in METRIC_FIELDS:
-            entries = [(part[field], part["sample_count"]) for part in parts]
-            mins = [entry["min"] for entry, _ in entries if entry["min"] is not None]
-            maxes = [entry["max"] for entry, _ in entries if entry["max"] is not None]
+            entries = [part[field] for part in parts]
+            mins = [entry["min"] for entry in entries if entry["min"] is not None]
+            maxes = [entry["max"] for entry in entries if entry["max"] is not None]
             weights = [
-                (entry["avg"], count) for entry, count in entries if entry["avg"] is not None
+                (entry["avg"], entry["count"])
+                for entry in entries
+                if entry["avg"] is not None and entry["count"]
             ]
             total = sum(count for _, count in weights)
             merged[field] = {
@@ -409,11 +438,12 @@ class AirMonitorDatabase:
                     if total else None
                 ),
                 "max": max(maxes) if maxes else None,
+                "count": total,
             }
         return merged
 
     def query_stats(self, start_ts: int, end_ts: int) -> Dict[str, Any]:
-        """Per-metric min/avg/max over raw samples in the window."""
+        """Per-metric min/avg/max (+ non-NULL count) over raw samples."""
         selects = ["COUNT(*) AS sample_count"]
         for field in METRIC_FIELDS:
             selects.extend(
@@ -421,6 +451,7 @@ class AirMonitorDatabase:
                     f"MIN({field}) AS {field}_min",
                     f"AVG({field}) AS {field}_avg",
                     f"MAX({field}) AS {field}_max",
+                    f"COUNT({field}) AS {field}_count",
                 )
             )
         rows = self._query(
@@ -436,6 +467,7 @@ class AirMonitorDatabase:
                 "min": row[f"{field}_min"],
                 "avg": round(avg, 2) if avg is not None else None,
                 "max": row[f"{field}_max"],
+                "count": row[f"{field}_count"],
             }
         return stats
 

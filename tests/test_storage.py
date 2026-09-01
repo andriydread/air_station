@@ -313,3 +313,33 @@ def test_corrupt_state_json_degrades_to_fallback(database):
         )
     state = database.get_state("latest_weather")
     assert state["value"] is None  # not an exception
+
+
+def test_hourly_stats_not_biased_by_null_gaps(database):
+    """A metric that was flagged/offline half the window must keep its true
+    average — weighting by whole-row counts used to halve it."""
+    current_hour = (database._now() // 3600) * 3600
+    old = current_hour - 95 * 86400
+    hour_a = (old // 3600) * 3600
+    hour_b = hour_a + 3600
+    # Hour A: two real co2 samples of 600. Hour B: two rows with co2 NULL.
+    _insert_raw(database, hour_a + 10, 600)
+    _insert_raw(database, hour_a + 20, 600)
+    _insert_raw(database, hour_b + 10, None, flagged=True)
+    _insert_raw(database, hour_b + 20, None, flagged=True)
+    while database.rollup_hourly():
+        pass
+
+    stats = database.query_stats_hourly(hour_a, hour_b + 3600)
+    assert stats["sample_count"] == 4
+    assert stats["co2"]["avg"] == 600.0  # not 300
+    assert stats["co2"]["count"] == 2
+
+    # Rows rolled before the count columns existed (count NULL) fall back to
+    # sample_count — the old approximation, never a crash.
+    with database._lock:
+        database._connection.execute(
+            "UPDATE measurements_hourly SET co2_count = NULL WHERE hour_ts = ?", (hour_a,)
+        )
+    stats = database.query_stats_hourly(hour_a, hour_b + 3600)
+    assert stats["co2"]["avg"] == 600.0
