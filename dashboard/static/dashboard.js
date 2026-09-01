@@ -62,6 +62,13 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+function formatRelative(value) {
+  // "3m ago" for humans; callers put the absolute form in a title attribute.
+  if (!value) return '--';
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
+  return formatAge(seconds);
+}
+
 function formatInterval(seconds) {
   if (seconds == null) return '--';
   if (seconds === 0) return 'disabled';
@@ -208,6 +215,45 @@ function applyBandClass(elementId, category) {
   element.classList.add(category === 'Moderate' ? 'value-warn' : 'value-bad');
 }
 
+const subsystemLabels = [
+  ['scd41', 'SCD41 · CO2'],
+  ['sht41', 'SHT41 · temp/RH'],
+  ['sps30', 'SPS30 · particulates'],
+  ['i2c', 'I2C bus'],
+  ['display', 'E-paper'],
+  ['weather', 'Weather fetch'],
+  ['network', 'Wi-Fi'],
+  ['power', 'Power'],
+  ['storage', 'Storage'],
+];
+
+function renderSensorHealthList(sensors) {
+  const list = document.getElementById('sensor-health-list');
+  if (!list) return;
+  list.innerHTML = '';
+  for (const [key, label] of subsystemLabels) {
+    const entry = sensors[key];
+    if (!entry) continue;
+    const row = document.createElement('p');
+    let detail;
+    let bad = false;
+    if (entry.healthy === true) {
+      const since = entry.last_event_at
+        ? ` · quiet ${formatRelative(entry.last_event_at)}` : '';
+      detail = `ok${since}`;
+    } else if (entry.healthy === false) {
+      bad = true;
+      detail = entry.last_error || 'unhealthy';
+    } else {
+      detail = '—'; // never checked yet (e.g. power before the first poll)
+    }
+    row.innerHTML =
+      `<span>${escapeHtml(label)}</span>` +
+      `<strong${bad ? ' class="health-bad"' : ''}>${escapeHtml(detail)}</strong>`;
+    list.appendChild(row);
+  }
+}
+
 function sensorHealthSummary(collector) {
   const sensors = collector.sensors || {};
   const entries = ['scd41', 'sht41', 'sps30'].map((key) => sensors[key]).filter(Boolean);
@@ -295,6 +341,7 @@ function renderSummary(summary) {
   renderStatusStrip(problems);
 
   // Diagnostics-side details rendered from the same summary
+  renderSensorHealthList(collector.sensors || {});
   document.getElementById('network-interface').textContent = network.interface || '--';
   document.getElementById('network-status').textContent =
     `healthy=${network.healthy ? 'yes' : 'no'} | operstate=${network.operstate || '--'} | carrier=${network.carrier || '--'}`;

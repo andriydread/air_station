@@ -488,6 +488,7 @@ button.button-danger {
 }
 .info-list span { color: var(--muted); }
 .info-list strong { overflow-wrap: anywhere; text-align: right; }
+.info-list .health-bad { color: var(--bad); }
 
 .button-row { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
 .stack-buttons { flex-direction: column; align-items: stretch; }
