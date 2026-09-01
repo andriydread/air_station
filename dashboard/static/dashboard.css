@@ -289,13 +289,20 @@ button.button-danger {
 
 /* --- E-paper preview -------------------------------------------------------- */
 
+/* Framed like the physical object it mirrors: a dark device bezel with the
+   paper floating inside — in dark mode the image dims slightly so it reads
+   as unlit e-ink, not a backlit LCD. */
 .preview-frame {
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 8px solid #262b2e;
+  border-radius: 12px;
   overflow: hidden;
   background: #ffffff;
+  padding: 6px;
 }
 .preview-frame img { display: block; width: 100%; image-rendering: pixelated; }
+:root[data-theme="dark"] .preview-frame { border-color: #14191c; }
+:root[data-theme="dark"] .preview-frame img { filter: brightness(0.88) contrast(1.02); }
+:root[data-theme="dark"] .preview-frame { background: #e8e6df; }
 
 /* --- History --------------------------------------------------------------- */
 
