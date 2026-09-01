@@ -6,6 +6,28 @@ import requests
 
 LOGGER = logging.getLogger("airmonitor.weather")
 
+# WMO weather codes are NOT ordered by severity (85 "slight snow showers"
+# outranks 82 "violent rain showers" numerically). Rank them so a block's
+# icon shows its worst weather, with the raw code as tiebreaker.
+_WMO_SEVERITY_RANKS = (
+    ({0, 1}, 0),                                    # clear
+    ({2}, 1),                                       # partly cloudy
+    ({3}, 2),                                       # overcast
+    ({45, 48}, 3),                                  # fog
+    ({51, 53, 55, 56, 57}, 4),                      # drizzle
+    ({61, 63, 80}, 5),                              # light/moderate rain
+    ({65, 66, 67, 81, 82}, 6),                      # heavy/freezing rain
+    ({71, 73, 75, 77, 85, 86}, 7),                  # snow
+    ({95, 96, 99}, 8),                              # thunderstorms
+)
+
+
+def _wmo_severity(code: int):
+    for codes, rank in _WMO_SEVERITY_RANKS:
+        if code in codes:
+            return (rank, code)
+    return (2, code)  # unknown codes: treat like plain clouds
+
 
 def get_weather_forecast(
     lat: float, lon: float, session: Optional[requests.Session] = None
@@ -56,7 +78,7 @@ def get_weather_forecast(
                 round(max(temp_slice), 1) if temp_slice else None,
                 round(min(temp_slice), 1) if temp_slice else None,
                 max(precip_slice) if precip_slice else None,
-                max(wmo_slice) if wmo_slice else None,
+                max(wmo_slice, key=_wmo_severity) if wmo_slice else None,
             ]
 
         return weather_dict

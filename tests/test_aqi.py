@@ -4,16 +4,17 @@ from utils.aqi import calculate_aqi, get_aqi_category, get_co2_category
 
 
 def test_breakpoint_edges_pm25():
+    # 2024 EPA revision: "Good" ends at 9.0 ug/m3.
     assert calculate_aqi(0.0, 0.0) == 0
-    assert calculate_aqi(12.0, 0.0) == 50
+    assert calculate_aqi(9.0, 0.0) == 50
     assert calculate_aqi(35.4, 0.0) == 100
-    assert calculate_aqi(500.4, 0.0) == 500
+    assert calculate_aqi(325.4, 0.0) == 500
     assert calculate_aqi(9999.0, 0.0) == 500
 
 
 def test_worst_pollutant_wins():
-    # pm10 at 154 -> AQI 100; pm25 at 12 -> AQI 50
-    assert calculate_aqi(12.0, 154.0) == 100
+    # pm10 at 154 -> AQI 100; pm25 at 9 -> AQI 50
+    assert calculate_aqi(9.0, 154.0) == 100
     assert calculate_aqi(35.4, 54.0) == 100
 
 
@@ -38,8 +39,8 @@ def test_epa_truncation_at_breakpoint_gaps():
     # Values in the gap between brackets truncate DOWN per EPA, and must not
     # jump to the higher bracket (35.45 -> 100 "Moderate", not 101).
     assert calculate_aqi(35.45, 0) == 100
-    assert calculate_aqi(12.05, 0) == 50
+    assert calculate_aqi(9.05, 0) == 50
     assert calculate_aqi(0, 54.9) == 50
     # Exact boundaries unchanged.
-    assert calculate_aqi(12.0, 0) == 50
+    assert calculate_aqi(9.0, 0) == 50
     assert calculate_aqi(0, 54) == 50

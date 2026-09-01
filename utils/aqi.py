@@ -18,21 +18,20 @@ def calculate_aqi(pm25: float, pm10: float) -> int:
         )
 
     def aqi_pm25(c):
-        # Breakpoints mapped directly from US EPA standard tables
-        if c <= 12.0:
-            return _linear(50, 0, 12.0, 0, c)
+        # US EPA breakpoints, May 2024 revision ("Good" tightened to 9.0,
+        # upper brackets re-cut, the 400-tier folded into 301-500).
+        if c <= 9.0:
+            return _linear(50, 0, 9.0, 0, c)
         if c <= 35.4:
-            return _linear(100, 51, 35.4, 12.1, c)
+            return _linear(100, 51, 35.4, 9.1, c)
         if c <= 55.4:
             return _linear(150, 101, 55.4, 35.5, c)
-        if c <= 150.4:
-            return _linear(200, 151, 150.4, 55.5, c)
-        if c <= 250.4:
-            return _linear(300, 201, 250.4, 150.5, c)
-        if c <= 350.4:
-            return _linear(400, 301, 350.4, 250.5, c)
-        if c <= 500.4:
-            return _linear(500, 401, 500.4, 350.5, c)
+        if c <= 125.4:
+            return _linear(200, 151, 125.4, 55.5, c)
+        if c <= 225.4:
+            return _linear(300, 201, 225.4, 125.5, c)
+        if c <= 325.4:
+            return _linear(500, 301, 325.4, 225.5, c)
         return 500
 
     def aqi_pm10(c):

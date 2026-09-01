@@ -16,7 +16,7 @@ def client(monkeypatch, tmp_path):
     app.config["TESTING"] = True
 
     seed = AirMonitorDatabase(db_path)
-    seed.insert_measurement({"co2": 800, "temp": 22.0, "humid": 50.0, "pm25": 12.0, "pm10": 54.0})
+    seed.insert_measurement({"co2": 800, "temp": 22.0, "humid": 50.0, "pm25": 9.0, "pm10": 54.0})
     seed.set_state("collector_status", {"running": True})
     seed.close()
 
@@ -113,7 +113,7 @@ def test_summary_includes_database_stats(client):
 
 def test_summary_includes_backend_aqi(client):
     body = client.get("/api/summary").get_json()
-    # pm25=12, pm10=54 both sit exactly on the AQI-50 breakpoint
+    # pm25=9 (2024 table), pm10=54 both sit exactly on the AQI-50 breakpoint
     assert body["aqi"]["value"] == 50
     assert body["aqi"]["category"] == "Good"
     assert body["aqi"]["co2_category"] == "Good"

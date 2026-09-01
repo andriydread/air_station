@@ -86,3 +86,16 @@ def test_short_arrays_are_tolerated():
     }}))
     forecast = get_weather_forecast(50.0, 24.0, session)
     assert forecast[2] == ["13:00-17:00", None, None, None, None]
+
+
+def test_block_icon_prefers_worst_weather_not_highest_code():
+    """WMO codes aren't ordered by severity — plain numeric max picked snow
+    (71) over heavy rain (65) and fog (48) over drizzle-free storm hours."""
+    from utils.weather import _wmo_severity
+
+    assert _wmo_severity(95) > _wmo_severity(86)   # thunderstorm beats snow
+    assert _wmo_severity(82) > _wmo_severity(45)   # violent rain beats fog
+    assert _wmo_severity(61) > _wmo_severity(3)    # any rain beats clouds
+    assert max([3, 45, 61], key=_wmo_severity) == 61
+    assert max([65, 71], key=_wmo_severity) == 71  # snow still tops rain
+    assert max([95, 45, 2], key=_wmo_severity) == 95
