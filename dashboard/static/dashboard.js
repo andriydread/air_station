@@ -389,6 +389,7 @@ function renderSummary(summary) {
     formatInterval(collector.sps30_auto_cleaning_interval_seconds);
   document.getElementById('scd41-last-calibration').textContent =
     formatTimestamp(calibration.calibrated_at || collector.sensors?.scd41?.last_calibration_at);
+  renderCommandNotes(summary.recent_commands || []);
   lastCalibrationReadiness = collector.scd41_calibration || null;
   renderCalibrationChecklist();
   document.getElementById('database-path').textContent = collector.database_path || '--';
@@ -937,12 +938,29 @@ function renderCommands(commands) {
     item.innerHTML = `
       <header>
         <span>${escapeHtml(command.command)}</span>
-        <span class="command-status-${escapeHtml(command.status)}">${escapeHtml(command.status)}</span>
+        <span class="command-status-${escapeHtml(command.status)}">${escapeHtml(command.status)}${commandTiming(command)}</span>
       </header>
-      <p class="event-time">${escapeHtml(formatTimestamp(command.created_at))}</p>
+      <p class="event-time" title="${escapeHtml(formatTimestamp(command.created_at))}">${escapeHtml(formatRelative(command.created_at))}</p>
       ${result}`;
     list.appendChild(item);
   }
+}
+
+function commandTiming(command) {
+  // Whether the Pi actually heard the button: completed rows say how fast,
+  // an old pending row says the collector isn't picking commands up.
+  const created = new Date(command.created_at).getTime();
+  if (command.status === 'pending') {
+    const waiting = (Date.now() - created) / 1000;
+    return waiting > 15
+      ? ' <span class="health-bad">· not picked up — collector may be down</span>'
+      : ' · waiting for the Pi…';
+  }
+  if (command.status === 'succeeded' || command.status === 'failed') {
+    const took = Math.max(0, Math.round((new Date(command.updated_at).getTime() - created) / 1000));
+    return ` · ${took}s`;
+  }
+  return '';
 }
 
 // ---------------------------------------------------------------------------
@@ -952,15 +970,48 @@ function renderCommands(commands) {
 // backend enforces, so the button unlocks exactly when a command would pass.
 
 let lastCalibrationReadiness = null;
+// Command names with a fresh pending/running row: their buttons are held
+// disabled and footnoted "running…" until the collector reports back.
+const pendingCommandNames = new Set();
+
+function renderCommandNotes(commands) {
+  pendingCommandNames.clear();
+  for (const command of commands) {
+    if (command.status !== 'pending' && command.status !== 'running') continue;
+    const age = (Date.now() - new Date(command.created_at).getTime()) / 1000;
+    if (age <= 60) pendingCommandNames.add(command.command);
+  }
+  document.querySelectorAll('[data-command-note]').forEach((note) => {
+    const name = note.dataset.commandNote;
+    const button =
+      document.querySelector(`[data-command="${name}"], [data-system="${name}"]`);
+    if (pendingCommandNames.has(name)) {
+      note.textContent = 'running…';
+      note.className = 'command-note';
+      if (button) button.disabled = true;
+      return;
+    }
+    if (button) button.disabled = false;
+    const latest = commands.find((command) => command.command === name);
+    if (!latest) {
+      note.textContent = '';
+      return;
+    }
+    note.textContent = `Last run: ${formatRelative(latest.updated_at)} · ${latest.status}`;
+    note.className = latest.status === 'failed' ? 'command-note health-bad' : 'command-note';
+    note.title = formatTimestamp(latest.updated_at);
+  });
+}
 
 function renderCalibrationChecklist() {
   const box = document.getElementById('scd41-checklist');
   const submit = document.getElementById('scd41-calibration-submit');
   const cal = lastCalibrationReadiness;
+  const calibrationPending = pendingCommandNames.has('scd41_force_calibration');
   if (!cal || !cal.limits) {
     // Collector too old (or down) to publish readiness: don't block the form.
     box.innerHTML = '';
-    submit.disabled = false;
+    submit.disabled = calibrationPending;
     return;
   }
   const limits = cal.limits;
@@ -995,7 +1046,7 @@ function renderCalibrationChecklist() {
   box.innerHTML = checks.map((check) =>
     `<p class="cal-check ${check.ok ? 'cal-ok' : 'cal-wait'}">${check.ok ? '✓' : '•'} ${escapeHtml(check.text)}</p>`
   ).join('');
-  submit.disabled = !checks.every((check) => check.ok);
+  submit.disabled = !checks.every((check) => check.ok) || calibrationPending;
 }
 
 // ---------------------------------------------------------------------------

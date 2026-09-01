@@ -226,6 +226,7 @@
             <label class="checkbox"><input id="scd41-calibration-drift" type="checkbox"> Sensor has drifted badly — skip distance-to-target check</label>
             <label class="checkbox"><input id="scd41-calibration-persist" type="checkbox" checked> Persist in sensor</label>
             <button type="submit" id="scd41-calibration-submit">Run forced calibration</button>
+            <small class="command-note" data-command-note="scd41_force_calibration"></small>
           </form>
           <form id="scd41-asc-form" class="stack-form">
             <label class="checkbox"><input id="scd41-asc-enabled" type="checkbox"> Automatic self-calibration (ASC)</label>
@@ -242,6 +243,7 @@
           <div class="button-row">
             <button data-command="sps30_force_clean" type="button">Run fan clean</button>
           </div>
+          <small class="command-note" data-command-note="sps30_force_clean"></small>
           <form id="sps30-auto-clean-form" class="stack-form">
             <label for="auto-clean-value">Set new interval</label>
             <div class="input-combo">
@@ -265,6 +267,7 @@
             <button data-system="system_restart_web" type="button">Restart dashboard</button>
             <button data-system="system_reboot" class="button-danger" type="button">Reboot Pi</button>
           </div>
+          <small class="command-note" data-command-note="system_restart_collector"></small>
         </section>
 
         <section class="control-card">
