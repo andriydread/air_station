@@ -13,7 +13,7 @@ UNIT_FILES = /etc/systemd/system/airmonitor.service \
              /etc/systemd/system/airmonitor-web.service \
              /etc/systemd/system/wifi-powersave-off.service
 
-.PHONY: help init deploy restart push-data delete-all delete-venv delete-service delete-data _pi \
+.PHONY: help init deploy restart recovery push-data delete-all delete-venv delete-service delete-data _pi \
         agent-test agent-venv agent-clean
 
 help: ## Show this help
@@ -53,6 +53,19 @@ deploy: _pi ## Install requirements + service files (new or updated), (re)start 
 restart: _pi ## Restart the app services
 	sudo systemctl restart $(SERVICES)
 	@systemctl is-active $(SERVICES) || true
+
+recovery: _pi ## Restore the database from last night's backup (asks; FORCE=1 skips)
+	@[ -f data/airmonitor.db.bak ] || { echo "No backup found (data/airmonitor.db.bak)."; exit 1; }
+	@[ "$(FORCE)" = "1" ] || { printf "Replace the current database with last night's backup? The current file is kept as airmonitor.db.broken. [y/N] "; \
+		read a; [ "$$a" = "y" ] || { echo "Kept."; exit 1; }; }
+	sudo systemctl stop $(SERVICES)
+	-mv data/airmonitor.db data/airmonitor.db.broken
+	rm -f data/airmonitor.db-wal data/airmonitor.db-shm
+	cp data/airmonitor.db.bak data/airmonitor.db
+	sudo systemctl start $(SERVICES)
+	@systemctl is-active $(SERVICES) || true
+	@echo "Database restored from backup (at most one day old)."
+	@echo "The previous file is data/airmonitor.db.broken — delete it once things look right."
 
 push-data: _pi ## Upload database + logs to the dev server for tuning (DEST=user@host)
 	@[ -n "$(DEST)" ] || { echo "Usage: make push-data DEST=user@host"; exit 1; }

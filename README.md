@@ -75,7 +75,9 @@ Built for unattended operation; every layer heals itself:
   backup next to the live file (`airmonitor.db.bak` + one previous
   generation), skipped automatically when disk headroom is tight. Free
   disk space is watched continuously and warned about below
-  `AIRMONITOR_MIN_FREE_DISK_MB`.
+  `AIRMONITOR_MIN_FREE_DISK_MB`. If the database ever does go bad, one
+  command on the Pi restores it: `make recovery` (stops the services,
+  swaps in the backup, keeps the broken file for inspection, restarts).
 
 ## Project layout
 
