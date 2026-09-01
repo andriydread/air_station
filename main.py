@@ -205,6 +205,10 @@ class AirMonitor:
             after_failures=config.wifi_recovery_after_failures,
         )
 
+        self._network_fail_streak = 0
+        self._network_unhealthy_since: Optional[float] = None
+        self._network_outage_reported = False
+
         self.weather: Dict[str, Any] = {}
         self._calibration_reminder_sent = False
         self.last_display_snapshot: Optional[Dict[str, Any]] = None
@@ -423,6 +427,13 @@ class AirMonitor:
         self.publish_status()
 
     def check_network(self) -> None:
+        """Probe connectivity; report only outages that last.
+
+        The live state (dashboard Diagnostics) updates on every probe, but a
+        warning event fires only after ``network_event_after_failures``
+        consecutive failed probes — a 30s blip that heals itself stays out of
+        the event log. One INFO with the outage duration marks recovery.
+        """
         status = probe_network(self.config)
         previous = self.network_state
         self.network_state = {
@@ -433,17 +444,37 @@ class AirMonitor:
                 status["checked_at"] if status["healthy"] else previous.get("last_success_at")
             ),
         }
-        watched = ("available", "healthy", "operstate", "carrier", "error")
-        if any(previous.get(key) != status.get(key) for key in watched):
-            level = logging.INFO if status["healthy"] else logging.WARNING
-            message = (
-                f"Wi-Fi check: available={status['available']} healthy={status['healthy']} "
-                f"operstate={status['operstate']} carrier={status['carrier']}"
-            )
-            if status["error"]:
-                message += f"; error={status['error']}"
-            self.events.log(level, "network", "connectivity_check", message, status)
-            self.publish_status()
+        if status["healthy"]:
+            if self._network_outage_reported:
+                outage = int(time.monotonic() - self._network_unhealthy_since)
+                self.events.log(
+                    logging.INFO, "network", "connectivity_check",
+                    f"Wi-Fi recovered after {outage}s", status,
+                )
+                self.publish_status()
+            self._network_fail_streak = 0
+            self._network_unhealthy_since = None
+            self._network_outage_reported = False
+        else:
+            if self._network_unhealthy_since is None:
+                self._network_unhealthy_since = time.monotonic()
+            self._network_fail_streak += 1
+            threshold = self.config.network_event_after_failures
+            if (
+                threshold > 0
+                and self._network_fail_streak >= threshold
+                and not self._network_outage_reported
+            ):
+                self._network_outage_reported = True
+                message = (
+                    f"Wi-Fi unhealthy for {self._network_fail_streak} probes: "
+                    f"available={status['available']} operstate={status['operstate']} "
+                    f"carrier={status['carrier']}"
+                )
+                if status["error"]:
+                    message += f"; error={status['error']}"
+                self.events.log(logging.WARNING, "network", "connectivity_check", message, status)
+                self.publish_status()
         self.wifi_recovery.record_probe(status["healthy"])
 
     def process_commands(self) -> None:

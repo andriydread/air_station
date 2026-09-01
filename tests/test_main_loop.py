@@ -141,6 +141,73 @@ def test_flagged_stream_raises_stale_alarm(monkeypatch, tmp_path):
         monitor.database.close()
 
 
+# --- Network event debounce ---------------------------------------------------
+
+
+def _fake_probe(healthy):
+    return {
+        "checked_at": "2026-09-01T00:00:00+00:00",
+        "interface": "wlan0",
+        "available": True,
+        "operstate": "up" if healthy else "down",
+        "carrier": "1" if healthy else None,
+        "signal_level_dbm": -60,
+        "target_host": "1.1.1.1",
+        "target_port": 53,
+        "healthy": healthy,
+        "latency_ms": 5.0 if healthy else None,
+        "error": None if healthy else "OSError: unreachable",
+    }
+
+
+def test_network_blip_stays_out_of_events_but_outage_is_reported(monkeypatch, tmp_path):
+    from airmonitor.config import Config
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(main_module.time, "monotonic", lambda: clock["now"])
+    config = Config(
+        database_path=str(tmp_path / "n.db"),
+        log_file=str(tmp_path / "n.log"),
+        network_event_after_failures=3,
+        wifi_recovery_after_failures=0,
+    )
+    monitor = main_module.AirMonitor(config)
+
+    def connectivity_events():
+        return [
+            e for e in monitor.database.get_recent_events(limit=100)
+            if e["event_type"] == "connectivity_check"
+        ]
+
+    try:
+        # One failed probe healed by the next: no event at all.
+        monkeypatch.setattr(main_module, "probe_network", lambda _c: _fake_probe(False))
+        monitor.check_network()
+        monkeypatch.setattr(main_module, "probe_network", lambda _c: _fake_probe(True))
+        monitor.check_network()
+        assert connectivity_events() == []
+        # The live state still tracked the blip in real time.
+        assert monitor.network_state["healthy"] is True
+
+        # A lasting outage: exactly one warning at the threshold...
+        monkeypatch.setattr(main_module, "probe_network", lambda _c: _fake_probe(False))
+        for _ in range(5):
+            clock["now"] += 30
+            monitor.check_network()
+        events = connectivity_events()
+        assert len(events) == 1
+        assert "unhealthy for 3 probes" in events[0]["message"]
+
+        # ...and exactly one recovery notice with the outage duration.
+        monkeypatch.setattr(main_module, "probe_network", lambda _c: _fake_probe(True))
+        monitor.check_network()
+        events = connectivity_events()
+        assert len(events) == 2
+        assert any("recovered after" in e["message"] for e in events)
+    finally:
+        monitor.database.close()
+
+
 # --- SCD41 calibration-due reminder ------------------------------------------
 
 

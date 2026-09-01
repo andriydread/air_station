@@ -61,6 +61,10 @@ class Config:
     # Every Nth consecutive failed probe triggers a recovery action
     # (bounce interface, then restart networking). 0 disables recovery.
     wifi_recovery_after_failures: int = 6
+    # A Wi-Fi outage becomes a warning event only after this many failed
+    # probes in a row; shorter blips self-heal silently (the live state on
+    # the dashboard is real-time regardless). 0 disables outage events.
+    network_event_after_failures: int = 3
 
     # SCD41 (CO2)
     scd41_asc_enabled: bool = False      # automatic self-calibration
@@ -120,6 +124,9 @@ class Config:
             connectivity_timeout=_env_int("AIRMONITOR_CONNECTIVITY_TIMEOUT", cls.connectivity_timeout),
             wifi_recovery_after_failures=_env_int(
                 "AIRMONITOR_WIFI_RECOVERY_AFTER_FAILURES", cls.wifi_recovery_after_failures
+            ),
+            network_event_after_failures=_env_int(
+                "AIRMONITOR_NETWORK_EVENT_AFTER_FAILURES", cls.network_event_after_failures
             ),
             scd41_asc_enabled=_env_bool("AIRMONITOR_SCD41_ASC_ENABLED", cls.scd41_asc_enabled),
             scd41_altitude_m=_env_int("AIRMONITOR_SCD41_ALTITUDE_M", cls.scd41_altitude_m),
