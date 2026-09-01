@@ -463,3 +463,39 @@ def test_sample_buffer_window_resets_after_take():
     buffer.add("co2", 500.0)
     assert buffer.take_averages()["co2"] == 500
     assert buffer.take_averages()["co2"] is None
+
+
+# --- Display tick cadence -------------------------------------------------------
+
+
+def test_display_tick_full_refresh_cadence(monkeypatch, tmp_path):
+    from airmonitor.config import Config
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(main_module.time, "monotonic", lambda: clock["now"])
+    config = Config(
+        database_path=str(tmp_path / "t.db"), log_file=str(tmp_path / "t.log"),
+        partial_update_interval=60, full_update_interval=300,
+    )
+    monitor = main_module.AirMonitor(config)
+    submitted = []
+    monitor.display_worker.submit = lambda _snap, full: submitted.append(full)
+    try:
+        monitor._next_full_refresh = clock["now"]
+        for _ in range(10):
+            monitor._display_tick()
+            clock["now"] += 60
+        # one full refresh per 300s window, partial otherwise
+        assert submitted.count(True) == 2
+        assert submitted[0] is True
+
+        # After a long stall, exactly ONE catch-up full refresh, not N.
+        submitted.clear()
+        clock["now"] += 100 * 300
+        monitor._display_tick()
+        assert submitted == [True]
+        clock["now"] += 60
+        monitor._display_tick()
+        assert submitted == [True, False]
+    finally:
+        monitor.database.close()

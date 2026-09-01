@@ -55,19 +55,27 @@ class DisplayWorker:
                     pass
 
     def check_wedged(self) -> bool:
-        """Called from the main loop; reports a stuck render once per incident."""
+        """Called from the main loop; reports a stuck render once per incident.
+
+        The whole check runs under the lock: setting `_wedge_reported` after
+        releasing it could land AFTER the worker's completion-reset and stick
+        forever, silencing every future wedge.
+        """
         with self._lock:
             started = self._render_started_at
-        if started is None:
-            return False
-        stuck_for = time.monotonic() - started
-        if stuck_for > self.wedge_timeout and not self._wedge_reported:
+            if started is None:
+                return False
+            stuck_for = time.monotonic() - started
+            if stuck_for <= self.wedge_timeout:
+                return self._wedge_reported
+            if self._wedge_reported:
+                return True
             self._wedge_reported = True
-            self.events.log(
-                logging.ERROR, "display", "worker_wedged",
-                f"Display render stuck for {int(stuck_for)}s; sampling continues unaffected",
-            )
-        return self._wedge_reported
+        self.events.log(
+            logging.ERROR, "display", "worker_wedged",
+            f"Display render stuck for {int(stuck_for)}s; sampling continues unaffected",
+        )
+        return True
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
@@ -84,12 +92,18 @@ class DisplayWorker:
             finally:
                 with self._lock:
                     self._render_started_at = None
-                    if self._wedge_reported:
-                        self._wedge_reported = False
+                    recovered = self._wedge_reported
+                    self._wedge_reported = False
+                if recovered:
+                    # Outside the lock, and guarded: a raising event sink
+                    # must not kill the render thread.
+                    try:
                         self.events.log(
                             logging.INFO, "display", "worker_recovered",
                             "Display render completed after being stuck",
                         )
+                    except Exception:
+                        LOGGER.exception("Failed to log display recovery")
 
     def stop(self, timeout: float = 20.0) -> None:
         self._stop_event.set()

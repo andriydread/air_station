@@ -38,3 +38,28 @@ def test_send_failure_is_swallowed(tmp_path):
     notifier = SystemdNotifier(address=str(tmp_path / "nobody-listens.sock"))
     notifier.heartbeat()  # ECONNREFUSED/ENOENT must not propagate
     notifier.close()
+
+
+def test_abstract_socket_address_is_translated():
+    from airmonitor.watchdog import SystemdNotifier
+
+    notifier = SystemdNotifier(address="@test-notify")
+    try:
+        assert notifier.enabled
+        assert notifier._address == "\0test-notify"
+        notifier.heartbeat()  # no receiver: must not raise
+    finally:
+        notifier.close()
+
+
+def test_socket_creation_failure_disables_quietly(monkeypatch):
+    import airmonitor.watchdog as watchdog_module
+    from airmonitor.watchdog import SystemdNotifier
+
+    def boom(*_a, **_k):
+        raise OSError("no unix sockets here")
+
+    monkeypatch.setattr(watchdog_module.socket, "socket", boom)
+    notifier = SystemdNotifier(address="/run/systemd/notify")
+    assert notifier.enabled is False
+    notifier.ready()  # every call is a no-op, never a crash

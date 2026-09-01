@@ -127,3 +127,44 @@ def test_no_tools_available_logs_and_moves_on():
     recovery.record_probe(False)
     assert runner.commands == []
     assert "recovery_failed" in events.types()
+
+
+def test_partial_bounce_failure_is_retried_next_escalation():
+    """off succeeds, on fails -> the radio is down; the NEXT escalation must
+    re-issue the full bounce or the blip becomes a permanent outage."""
+    from airmonitor.wifi_recovery import WifiRecovery
+
+    class Events:
+        def __init__(self):
+            self.entries = []
+
+        def log(self, _lvl, _src, event_type, message, *args):
+            self.entries.append((event_type, message))
+
+    commands = []
+
+    def runner(command):
+        commands.append(command)
+        ok = "off" not in command  # every "on" succeeds, "off" too — flip below
+        class R:
+            returncode = 0 if "on" not in command else 1
+            stdout = ""
+            stderr = "radio stuck"
+        return R()
+
+    events = Events()
+    recovery = WifiRecovery(
+        "wlan0", events, after_failures=2, runner=runner, which=lambda name: f"/usr/bin/{name}"
+    )
+    for _ in range(2):
+        recovery.record_probe(False)
+    assert any(e == "recovery_failed" for e, _ in events.entries)
+    first_round = list(commands)
+    assert any("off" in " ".join(c) for c in first_round)
+
+    commands.clear()
+    for _ in range(2):
+        recovery.record_probe(False)
+    # Second escalation runs the bounce again from the start (off then on).
+    joined = [" ".join(c) for c in commands]
+    assert any("off" in c for c in joined)

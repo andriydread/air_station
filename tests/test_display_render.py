@@ -75,6 +75,17 @@ def test_status_glyphs_appear_only_for_problems(monkeypatch):
     assert list(all_ok.getdata()) == list(no_status.getdata())
     assert list(all_bad.getdata()) != list(all_ok.getdata())
 
+    # Each single fault draws its own distinct glyph (not one shared mark).
+    single_faults = []
+    for key in ("network", "power", "sensors"):
+        status = {"network": True, "power": True, "sensors": True, key: False}
+        frame = create_display_image(WIDTH, HEIGHT, {**_full_data(), "status": status}, FONT)
+        single_faults.append(list(frame.getdata()))
+    assert single_faults[0] != single_faults[1]
+    assert single_faults[1] != single_faults[2]
+    for frame in single_faults:
+        assert frame != list(all_ok.getdata())
+
 
 def test_renders_with_unknown_wmo_code_and_missing_font():
     data = _full_data()

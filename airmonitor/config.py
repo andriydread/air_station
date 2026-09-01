@@ -173,3 +173,6 @@ class Config:
             raise ValueError(
                 "AIRMONITOR_FULL_UPDATE_INTERVAL must be >= AIRMONITOR_PARTIAL_UPDATE_INTERVAL"
             )
+        if self.display_rotation not in (0, 90, 180, 270):
+            # 45 would silently produce a wrong-size framebuffer.
+            raise ValueError("AIRMONITOR_DISPLAY_ROTATION must be 0, 90, 180 or 270")

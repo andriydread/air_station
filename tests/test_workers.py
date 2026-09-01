@@ -190,3 +190,40 @@ def test_collector_samples_while_display_render_is_blocked(tmp_path):
         release.set()
         monitor.display_worker.stop()
         monitor.database.close()
+
+
+def test_display_worker_survives_event_sink_raising_on_recovery():
+    """The recovery log in the worker's finally block must be guarded — an
+    exploding event sink must not kill the render thread."""
+    release = threading.Event()
+
+    def render(_snapshot, _full):
+        release.wait(2)
+
+    class ExplodingEvents(StubEvents):
+        def log(self, *args, **kwargs):
+            super().log(*args, **kwargs)
+            raise RuntimeError("event sink down")
+
+    worker = DisplayWorker(render, ExplodingEvents(), wedge_timeout=0.05)
+    worker.start()
+    try:
+        worker.submit("frame", False)
+        assert wait_until(lambda: worker._render_started_at is not None)
+        time.sleep(0.1)
+        # In production the PeriodicTask wrapper catches the sink's raise;
+        # here we just swallow it — the wedge flag is set before the log call.
+        try:
+            worker.check_wedged()
+        except RuntimeError:
+            pass
+        release.set()          # completion triggers the recovery log -> raises
+        assert wait_until(lambda: worker._render_started_at is None)
+        # The thread survived and still renders.
+        rendered = []
+        worker._render = lambda s, f: rendered.append(s)
+        worker.submit("next", False)
+        assert wait_until(lambda: rendered == ["next"])
+        assert worker.alive
+    finally:
+        worker.stop()

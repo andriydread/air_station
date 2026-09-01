@@ -380,6 +380,15 @@ class AirMonitor:
         # document is published on its own slower cadence (status task).
         self.database.set_state("latest_measurements", self.readings.fresh_snapshot())
 
+    def _check_display_wedged(self) -> None:
+        """A wedged render must show up as unhealthy, not just as one event.
+
+        The next completed render marks the display healthy again via
+        `_render`'s success path.
+        """
+        if self.display_worker.check_wedged():
+            self.display_health.failed("Display render wedged")
+
     def _display_status(self) -> Dict[str, bool]:
         """Health booleans for the e-paper header glyphs (False = glyph drawn).
 
@@ -668,7 +677,7 @@ class AirMonitor:
             PeriodicTask("storage_prune", 24 * 3600, self.prune_database),
             PeriodicTask("calibration_check", 24 * 3600, self.check_calibration_age),
             PeriodicTask("display", self.config.partial_update_interval, self._display_tick),
-            PeriodicTask("display_watch", 30, self.display_worker.check_wedged),
+            PeriodicTask("display_watch", 30, self._check_display_wedged),
         ]
         self._next_full_refresh = time.monotonic()
 

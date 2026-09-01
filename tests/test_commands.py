@@ -206,3 +206,45 @@ def test_system_commands_refuse_without_confirmation(app):
     row = run_command(app, "system_reboot", {})
     assert row["status"] == "failed"
     assert "confirmation" in row["result"]["error"]
+
+
+def test_system_command_spawn_failure_marks_row_failed(app, monkeypatch):
+    ordinary_id = None
+    command_id = app.database.queue_command("system_reboot", {"confirmed": True})
+    ordinary_id = app.database.queue_command("display_full_refresh", {})
+
+    processor = CommandProcessor(app)
+
+    def broken_spawn(*_a, **_k):
+        raise OSError("sh: not found")
+
+    processor.spawn = broken_spawn
+    processor.process_pending()
+
+    rows = {row["id"]: row for row in app.database.get_recent_commands()}
+    assert rows[command_id]["status"] == "failed"
+    assert "sh: not found" in rows[command_id]["result"]["error"]
+    # A broken spawn must not abort the rest of the queue.
+    assert rows[ordinary_id]["status"] == "succeeded"
+
+
+def test_missing_systemctl_fails_cleanly(app, monkeypatch):
+    import airmonitor.commands as commands_module
+
+    monkeypatch.setattr(commands_module.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(commands_module.os.path, "exists", lambda _p: False)
+    row = run_command(app, "system_restart_collector", {"confirmed": True})
+    assert row["status"] == "failed"
+    assert "not found" in row["result"]["error"]
+
+
+def test_corrupt_payload_degrades_to_empty_object(app):
+    command_id = app.database.queue_command("display_full_refresh", {})
+    with app.database._lock:
+        app.database._connection.execute(
+            "UPDATE commands SET payload='{broken' WHERE id=?", (command_id,)
+        )
+    CommandProcessor(app).process_pending()
+    rows = {row["id"]: row for row in app.database.get_recent_commands()}
+    # _from_json falls back to {} — a torn payload write must not crash the poll.
+    assert rows[command_id]["status"] == "succeeded"

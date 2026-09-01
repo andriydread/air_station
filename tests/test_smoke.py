@@ -29,3 +29,19 @@ def test_dashboard_import_is_side_effect_free():
     import dashboard.app as dashboard_app
 
     assert not hasattr(dashboard_app, "app")
+
+
+def test_config_validate_rejects_bad_values():
+    import pytest
+
+    from airmonitor.config import Config
+
+    with pytest.raises(ValueError, match="SAMPLE_INTERVAL"):
+        Config(sample_interval=0).validate()
+    with pytest.raises(ValueError, match="WEATHER_RETRY"):
+        Config(weather_retry_interval=-1).validate()
+    with pytest.raises(ValueError, match="FULL_UPDATE"):
+        Config(partial_update_interval=300, full_update_interval=60).validate()
+    with pytest.raises(ValueError, match="ROTATION"):
+        Config(display_rotation=45).validate()
+    Config(display_rotation=270).validate()  # all right angles pass

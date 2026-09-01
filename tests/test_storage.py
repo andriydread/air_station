@@ -254,6 +254,8 @@ def test_concurrent_access_is_safe(database):
 
     assert errors == []
     assert len(database.query_history(hours=1, bucket_seconds=3600)) >= 1
+    # No silent lost writes under contention: 8 workers x 50 inserts each.
+    assert database.database_stats()["measurements"] == 8 * 50
 
 
 def test_delete_history_survives_vacuum_failure(monkeypatch, database):
@@ -272,3 +274,42 @@ def test_delete_history_survives_vacuum_failure(monkeypatch, database):
     assert database.delete_history() == 1
     events = database.get_recent_events()
     assert any(e["event_type"] == "vacuum_skipped" for e in events)
+
+
+def test_pending_commands_claimed_exactly_once_across_two_connections(tmp_path):
+    import threading
+
+    path = str(tmp_path / "claims.db")
+    first = AirMonitorDatabase(path)
+    second = AirMonitorDatabase(path)
+    ids = [first.queue_command("display_full_refresh") for _ in range(20)]
+
+    claimed = []
+    claimed_lock = threading.Lock()
+    barrier = threading.Barrier(2)
+
+    def worker(db):
+        barrier.wait()
+        for _ in range(40):
+            for row in db.claim_pending_commands():
+                with claimed_lock:
+                    claimed.append(row["id"])
+
+    threads = [threading.Thread(target=worker, args=(db,)) for db in (first, second)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(claimed) == sorted(ids)  # every command claimed exactly once
+    first.close()
+    second.close()
+
+
+def test_corrupt_state_json_degrades_to_fallback(database):
+    with database._lock:
+        database._connection.execute(
+            "INSERT INTO state(key, value, updated_at) VALUES('latest_weather', '{bad', 0)"
+        )
+    state = database.get_state("latest_weather")
+    assert state["value"] is None  # not an exception
