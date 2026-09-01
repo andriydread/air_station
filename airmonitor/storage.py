@@ -127,7 +127,14 @@ class AirMonitorDatabase:
         self._connection.execute("PRAGMA busy_timeout=10000")
         self._connection.executescript(_SCHEMA)
         self._migrate_schema()
-        # Commands left "running" by a crashed collector will never finish.
+
+    def fail_stale_running_commands(self) -> None:
+        """Fail commands left 'running' by a crashed collector.
+
+        Only the COLLECTOR may call this at startup: both processes open the
+        database, and a dashboard restart must not fail a command the
+        collector is executing at that moment.
+        """
         self._write(
             "UPDATE commands SET status='failed', "
             "result='\"Collector restarted before completing command\"', updated_at=? "
@@ -143,6 +150,13 @@ class AirMonitorDatabase:
         }
         if "flags" not in columns:
             self._connection.execute("ALTER TABLE measurements ADD COLUMN flags TEXT")
+        # Partial index (after the flags column exists): flagged rows are rare
+        # on a healthy station, and without it the diagnostics poll walks the
+        # whole table looking for them.
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_measurements_flagged "
+            "ON measurements(recorded_at DESC) WHERE flags IS NOT NULL"
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -224,18 +238,46 @@ class AirMonitorDatabase:
     def _last_rolled_hour(self) -> Optional[int]:
         return self._query("SELECT MAX(hour_ts) AS last FROM measurements_hourly")[0]["last"]
 
+    # One rollup statement is bounded to this many hours so a first-run
+    # backfill of a big table can't block the collector loop (and its
+    # watchdog heartbeats) in a single multi-minute SQL statement. Callers
+    # loop until 0 to drain a backlog.
+    ROLLUP_MAX_HOURS_PER_CALL = 24 * 14
+
     def rollup_hourly(self) -> int:
         """Fold complete hours of raw samples into measurements_hourly.
 
         Incremental and idempotent: only hours after the newest rolled hour
         are computed, and the still-open current hour never is. The first
-        call on an existing database backfills every complete hour it holds.
-        Returns the number of hours rolled.
+        call on an existing database starts backfilling from its oldest raw
+        row. Returns the number of hours rolled (bounded per call — loop
+        until 0 to drain a backlog).
         """
         current_hour = (self._now() // 3600) * 3600
         last = self._last_rolled_hour()
-        lower = (last + 3600) if last is not None else 0
-        if lower >= current_hour:
+        if last is not None and last >= current_hour:
+            # A forward clock excursion (Pi has no RTC) rolled "future"
+            # hours; left alone they would freeze rollups until wall time
+            # catches up — and strand real hours forever. Drop them and
+            # re-roll from real data.
+            self._write(
+                "DELETE FROM measurements_hourly WHERE hour_ts >= ?", (current_hour,)
+            )
+            self.insert_event(
+                "warning", "storage", "rollup_clock_skew",
+                f"Dropped future-dated hourly rollups at/after {current_hour} "
+                "(clock moved backwards); re-rolling from raw data",
+            )
+            last = self._last_rolled_hour()
+        if last is None:
+            oldest = self._query("SELECT MIN(recorded_at) AS m FROM measurements")[0]["m"]
+            if oldest is None:
+                return 0
+            lower = (oldest // 3600) * 3600
+        else:
+            lower = last + 3600
+        upper = min(current_hour, lower + self.ROLLUP_MAX_HOURS_PER_CALL * 3600)
+        if lower >= upper:
             return 0
         columns = ", ".join(
             f"{field}_{stat}" for field in METRIC_FIELDS for stat in ("min", "avg", "max")
@@ -255,8 +297,24 @@ class AirMonitorDatabase:
             WHERE recorded_at >= ? AND recorded_at < ?
             GROUP BY hour_ts
             """,
-            (lower, current_hour),
+            (lower, upper),
         )
+        if rolled == 0 and upper < current_hour:
+            # Empty stretch (station was off): write an empty marker hour so
+            # the next call advances past it instead of re-scanning forever.
+            # Counts as progress (return 1) so drain loops keep going.
+            columns = ", ".join(
+                f"{field}_{stat}"
+                for field in METRIC_FIELDS for stat in ("min", "avg", "max")
+            )
+            placeholders = ", ".join("NULL" for _ in range(len(METRIC_FIELDS) * 3))
+            self._write(
+                f"INSERT OR REPLACE INTO measurements_hourly "
+                f"(hour_ts, sample_count, flagged_count, {columns}) "
+                f"VALUES (?, 0, 0, {placeholders})",
+                (upper - 3600,),
+            )
+            return 1
         return rolled
 
     def query_history_hourly(
@@ -381,21 +439,32 @@ class AirMonitorDatabase:
             }
         return stats
 
-    def export_rows(self, start_ts: int, end_ts: int) -> List[Dict[str, Any]]:
-        """Raw (uncleaned) samples for CSV export, oldest first, flags included."""
-        rows = self._query(
-            "SELECT * FROM measurements WHERE recorded_at >= ? AND recorded_at <= ? "
-            "ORDER BY recorded_at ASC, id ASC",
-            (start_ts, end_ts),
-        )
-        exported = []
-        for row in rows:
-            item: Dict[str, Any] = {"timestamp": _to_iso(row["recorded_at"])}
-            for field in METRIC_FIELDS:
-                item[field] = row[field]
-            item["flags"] = row["flags"] if "flags" in row.keys() else None
-            exported.append(item)
-        return exported
+    def export_rows(self, start_ts: int, end_ts: int, chunk_size: int = 5000):
+        """Raw samples for CSV export, oldest first, flags included.
+
+        A generator: a 90-day export is ~780k rows, which materialized as a
+        list of dicts OOMs a Pi Zero. Rows are fetched in keyset-paginated
+        chunks — each chunk holds the lock briefly instead of one giant
+        fetchall blocking every other endpoint.
+        """
+        cursor = (start_ts, -1)  # (recorded_at, id) keyset
+        while True:
+            rows = self._query(
+                "SELECT * FROM measurements "
+                "WHERE (recorded_at > ? OR (recorded_at = ? AND id > ?)) "
+                "AND recorded_at <= ? "
+                "ORDER BY recorded_at ASC, id ASC LIMIT ?",
+                (cursor[0], cursor[0], cursor[1], end_ts, chunk_size),
+            )
+            if not rows:
+                return
+            for row in rows:
+                item: Dict[str, Any] = {"timestamp": _to_iso(row["recorded_at"])}
+                for field in METRIC_FIELDS:
+                    item[field] = row[field]
+                item["flags"] = row["flags"] if "flags" in row.keys() else None
+                yield item
+            cursor = (rows[-1]["recorded_at"], rows[-1]["id"])
 
     def get_recent_flagged(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Samples the quality guards flagged, newest first (diagnostics)."""
@@ -415,6 +484,9 @@ class AirMonitorDatabase:
 
     def delete_history(self) -> int:
         deleted, _ = self._write("DELETE FROM measurements")
+        # The hourly rollups mirror the raw data; "delete all history" must
+        # not leave months of it resurrectable through the long-range charts.
+        self._write("DELETE FROM measurements_hourly")
         # VACUUM needs the database to itself; the collector writes every few
         # seconds, so reclaiming space is best-effort — the delete stands.
         try:
@@ -633,5 +705,6 @@ class AirMonitorDatabase:
             "collector_status": self.get_state("collector_status"),
             "scd41_last_calibration": self.get_state("scd41_last_calibration"),
             "recent_commands": self.get_recent_commands(),
-            "recent_events": self.get_recent_events(limit=50),
+            # recent_events deliberately NOT included: the frontend never read
+            # it, and it shipped 50 events (with tracebacks) on every 10s poll.
         }

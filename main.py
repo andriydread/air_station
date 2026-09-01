@@ -176,6 +176,9 @@ class AirMonitor:
         self.database = AirMonitorDatabase(
             config.database_path, min_valid_co2_ppm=config.min_valid_co2_ppm
         )
+        # Collector-only startup step: the dashboard opens this database too,
+        # and must never reap commands the collector is mid-executing.
+        self.database.fail_stale_running_commands()
         self.events = EventLog(LOGGER, self.database)
         self.readings = LatestReadings(config.measurement_max_age, self.events)
         self.buffer = SampleBuffer()
@@ -551,8 +554,16 @@ class AirMonitor:
 
     def prune_database(self) -> None:
         # Roll complete hours into the forever-history table BEFORE pruning,
-        # so raw samples never die unrolled.
-        rolled = self.database.rollup_hourly()
+        # so raw samples never die unrolled. Each rollup_hourly call is
+        # bounded; heartbeat between chunks so a first-run backfill of a big
+        # table can't trip the 90s watchdog.
+        rolled = 0
+        while True:
+            step = self.database.rollup_hourly()
+            rolled += step
+            self.notifier.heartbeat()
+            if step == 0:
+                break
         deleted = self.database.prune(
             self.config.keep_measurements_days, self.config.keep_events_days
         )

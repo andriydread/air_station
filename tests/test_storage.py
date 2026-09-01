@@ -62,6 +62,81 @@ def test_history_and_stats_survive_raw_prune_via_rollups(database):
     assert stats["co2"]["max"] == 900
 
 
+def test_rollup_self_heals_after_forward_clock_excursion(database, monkeypatch):
+    current_hour = (database._now() // 3600) * 3600
+    _insert_raw(database, current_hour - 3600, 700)
+
+    # Clock jumps a week ahead (bad fake-hwclock restore), rolls a bogus hour.
+    monkeypatch.setattr(
+        AirMonitorDatabase, "_now", staticmethod(lambda: current_hour + 7 * 86400)
+    )
+    _insert_raw(database, current_hour + 7 * 86400 - 3600, 999)
+    assert database.rollup_hourly() >= 1
+    monkeypatch.undo()
+
+    # Back on real time: the next rollup drops the future-dated rows.
+    database.rollup_hourly()
+    rows = database._query(
+        "SELECT hour_ts FROM measurements_hourly WHERE hour_ts >= ?", (current_hour,)
+    )
+    assert rows == []  # nothing future-dated survives
+    assert any(
+        e["event_type"] == "rollup_clock_skew" for e in database.get_recent_events()
+    )
+
+
+def test_rollup_backfill_is_chunked_and_drains(database, monkeypatch):
+    monkeypatch.setattr(AirMonitorDatabase, "ROLLUP_MAX_HOURS_PER_CALL", 2)
+    current_hour = (database._now() // 3600) * 3600
+    for i in range(1, 6):  # five complete hours of data
+        _insert_raw(database, current_hour - i * 3600, 600 + i)
+
+    total = 0
+    calls = 0
+    while True:
+        step = database.rollup_hourly()
+        if step == 0:
+            break
+        total += step
+        calls += 1
+    assert total == 5
+    assert calls >= 3  # bounded chunks, not one giant statement
+
+
+def test_rollup_skips_over_empty_stretch(database, monkeypatch):
+    monkeypatch.setattr(AirMonitorDatabase, "ROLLUP_MAX_HOURS_PER_CALL", 2)
+    current_hour = (database._now() // 3600) * 3600
+    _insert_raw(database, current_hour - 10 * 3600, 700)  # old lone hour
+    _insert_raw(database, current_hour - 3600, 800)       # recent hour
+
+    while database.rollup_hourly():
+        pass
+    rolled = database._query(
+        "SELECT hour_ts, sample_count FROM measurements_hourly "
+        "WHERE sample_count > 0 ORDER BY hour_ts"
+    )
+    assert len(rolled) == 2  # both real hours present despite the gap
+
+
+def test_delete_history_also_wipes_rollups(database):
+    current_hour = (database._now() // 3600) * 3600
+    _insert_raw(database, current_hour - 3600, 700)
+    assert database.rollup_hourly() == 1
+    database.delete_history()
+    assert database._query("SELECT COUNT(*) AS n FROM measurements_hourly")[0]["n"] == 0
+
+
+def test_export_rows_is_a_paged_generator(database):
+    current = database._now()
+    for i in range(25):
+        _insert_raw(database, current - 1000 + i, 600 + i)
+    rows = list(database.export_rows(current - 2000, current, chunk_size=10))
+    assert len(rows) == 25
+    assert rows[0]["co2"] == 600 and rows[-1]["co2"] == 624  # ordered, complete
+    import types
+    assert isinstance(database.export_rows(0, 1), types.GeneratorType)
+
+
 def test_database_stats_counts_rows_and_disk_size(database):
     assert database.database_stats() == {
         "measurements": 0,
@@ -106,14 +181,23 @@ def test_command_lifecycle(database):
     assert recent[0]["result"] == {"message": "done"}
 
 
-def test_crashed_running_commands_failed_on_reopen(tmp_path):
+def test_stale_running_commands_reaped_only_by_the_collector(tmp_path):
     path = str(tmp_path / "crash.db")
     db = AirMonitorDatabase(path)
     db.queue_command("sps30_force_clean")
     db.claim_pending_commands()  # left 'running', simulating a crash
+
+    # The dashboard opens the same file: merely opening must NOT reap a
+    # command the collector may be executing right now.
+    dashboard_side = AirMonitorDatabase(path)
+    assert dashboard_side.get_recent_commands()[0]["status"] == "running"
+    dashboard_side.close()
     db.close()
+
+    # The collector's startup step is what fails the stale row.
     reopened = AirMonitorDatabase(path)
     try:
+        reopened.fail_stale_running_commands()
         recent = reopened.get_recent_commands()
         assert recent[0]["status"] == "failed"
         assert "restarted" in recent[0]["result"]

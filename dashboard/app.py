@@ -223,13 +223,18 @@ def create_app() -> Flask:
     @app.errorhandler(500)
     def handle_server_error(exc):
         LOGGER.exception("Unhandled server error on %s", request.path)
-        database.insert_event(
-            "error",
-            "dashboard",
-            "server_error",
-            f"Unhandled server error on {request.path}",
-            {"traceback": traceback.format_exc()},
-        )
+        try:
+            database.insert_event(
+                "error",
+                "dashboard",
+                "server_error",
+                f"Unhandled server error on {request.path}",
+                {"traceback": traceback.format_exc()},
+            )
+        except Exception:
+            # The most likely cause of a 500 is the database itself; the
+            # handler must still return JSON, not crash into Flask's HTML.
+            LOGGER.exception("Could not record server_error event")
         if request.path.startswith("/api/"):
             return jsonify({"error": "internal server error"}), 500
         return "Internal Server Error", 500
@@ -275,7 +280,16 @@ def create_app() -> Flask:
         start, end = resolve_range(request.args)
         bucket_seconds = choose_bucket_seconds((end - start) / 3600)
         # Hour-or-coarser buckets read the rollup table (cheaper, and the only
-        # source once the range outlives raw retention); fine buckets stay raw.
+        # source once the range outlives raw retention); fine buckets stay raw
+        # — unless the window starts before the raw horizon, where only the
+        # rollups still hold data (a short range 6 months back must not come
+        # up empty just because it is short).
+        raw_horizon = (
+            int(time.time()) - config.keep_measurements_days * 86400
+            if config.keep_measurements_days > 0 else None
+        )
+        if raw_horizon is not None and start < raw_horizon:
+            bucket_seconds = max(bucket_seconds, 3600)
         if bucket_seconds >= 3600:
             rows = database.query_history_hourly(start, end, bucket_seconds)
             stats = database.query_stats_hourly(start, end)
@@ -297,17 +311,25 @@ def create_app() -> Flask:
     @app.get("/api/export.csv")
     def api_export_csv() -> Any:
         start, end = resolve_range(request.args)
-        rows = database.export_rows(start, end)
-        buffer = io.StringIO()
-        writer = csv.writer(buffer)
-        writer.writerow(["timestamp", *METRIC_FIELDS, "flags"])
-        for row in rows:
-            writer.writerow(
-                [row["timestamp"], *[row[field] for field in METRIC_FIELDS], row["flags"] or ""]
-            )
+
+        def generate():
+            # Streamed: a 90-day export is ~780k rows and must not be
+            # materialized in RAM on a Pi Zero (export_rows pages in chunks).
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(["timestamp", *METRIC_FIELDS, "flags"])
+            yield buffer.getvalue()
+            for row in database.export_rows(start, end):
+                buffer.seek(0)
+                buffer.truncate()
+                writer.writerow(
+                    [row["timestamp"], *[row[field] for field in METRIC_FIELDS], row["flags"] or ""]
+                )
+                yield buffer.getvalue()
+
         filename = f"airmonitor_{start}_{end}.csv"
         return Response(
-            buffer.getvalue(),
+            generate(),
             mimetype="text/csv",
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
@@ -352,6 +374,7 @@ def create_app() -> Flask:
         if body.get("confirm") != "delete":
             return jsonify({"error": 'history deletion requires {"confirm": "delete"}'}), 400
         deleted_rows = database.delete_history()
+        db_stats_cache["at"] = 0.0  # size/count must not show stale numbers now
         LOGGER.warning("Deleted %s history rows via dashboard", deleted_rows)
         database.insert_event(
             "warning",
