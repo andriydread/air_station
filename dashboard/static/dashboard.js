@@ -55,6 +55,13 @@ function formatAge(seconds) {
   return `${Math.round(seconds / 86400)}d ago`;
 }
 
+function formatBytes(bytes) {
+  if (bytes == null) return '--';
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 function formatInterval(seconds) {
   if (seconds == null) return '--';
   if (seconds === 0) return 'disabled';
@@ -252,6 +259,10 @@ function renderSummary(summary) {
     String(collector.scd41_recent_valid_samples ?? '--');
   document.getElementById('database-path').textContent = collector.database_path || '--';
   document.getElementById('collector-log-file').textContent = collector.log_file || '--';
+  const dbStats = summary.database || {};
+  document.getElementById('database-entries').textContent =
+    dbStats.measurements == null ? '--' : dbStats.measurements.toLocaleString();
+  document.getElementById('database-size').textContent = formatBytes(dbStats.size_bytes);
   document.getElementById('scd41-asc-enabled').checked = !!collector.scd41_asc_enabled;
   document.getElementById('scd41-asc-state').textContent =
     collector.scd41_asc_enabled == null ? '--' : (collector.scd41_asc_enabled ? 'on' : 'off');
@@ -848,7 +859,6 @@ function installActions() {
     refreshHistory().catch((e) => toast(e.message, 'error'));
   });
 
-  document.getElementById('preview-reload').addEventListener('click', reloadPreview);
   document.getElementById('event-refresh').addEventListener('click', () => {
     refreshDiagnostics().catch((e) => toast(e.message, 'error'));
   });

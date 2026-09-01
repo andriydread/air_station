@@ -61,7 +61,7 @@
             <header><h2>PM2.5</h2><span class="badge" id="badge-pm25" hidden></span></header>
             <p id="metric-pm25">--</p>
           </div>
-          <p class="metric-note">smoke, soot, bacteria — reaches deep into the lungs</p>
+          <p class="metric-note">smoke, soot, bacteria</p>
         </article>
         <article class="metric-card metric-compact">
           <div class="metric-compact-main">
@@ -87,9 +87,6 @@
         <section class="panel">
           <div class="panel-head">
             <h2>E-paper screen</h2>
-            <div class="button-row">
-              <button id="preview-reload" class="ghost-button" type="button">Reload</button>
-            </div>
           </div>
           <p class="panel-note">Exactly what the physical display is showing.</p>
           <div class="preview-frame"><img id="display-preview" alt="e-paper preview" hidden></div>
@@ -242,9 +239,6 @@
         <section class="control-card">
           <h2>System <button class="hint" data-hint="These run on the Pi through the command queue; results appear under Diagnostics → Recent commands." type="button">?</button></h2>
           <p class="panel-note">Runs on the Pi through the command queue.</p>
-          <div class="button-row">
-            <button data-command="display_full_refresh" type="button">Redraw display</button>
-          </div>
           <div class="button-row stack-buttons">
             <button data-system="system_restart_collector" type="button">Restart collector</button>
             <button data-system="system_restart_web" type="button">Restart dashboard</button>
@@ -257,6 +251,8 @@
           <div class="info-list">
             <p><span>Path</span><strong id="database-path">--</strong></p>
             <p><span>Log file</span><strong id="collector-log-file">--</strong></p>
+            <p><span>Measurements</span><strong id="database-entries">--</strong></p>
+            <p><span>Size on disk</span><strong id="database-size">--</strong></p>
           </div>
           <div class="button-row">
             <button id="delete-history-button" class="button-danger" type="button">Delete history</button>
