@@ -89,6 +89,22 @@ function prettyJson(value) {
   return JSON.stringify(value || {}, null, 2);
 }
 
+// Magnus-formula dew point — the honest "how the air feels" number.
+function dewPoint(tempC, humidityPct) {
+  if (tempC == null || humidityPct == null || humidityPct <= 0) return null;
+  const gamma = Math.log(humidityPct / 100) + (17.62 * tempC) / (243.12 + tempC);
+  return (243.12 * gamma) / (17.62 - gamma);
+}
+
+function describeDew(dew) {
+  if (dew == null) return '';
+  if (dew < 10) return 'dry';
+  if (dew < 13) return 'comfortable';
+  if (dew < 16) return 'a bit humid';
+  if (dew < 18) return 'muggy';
+  return 'oppressive';
+}
+
 // SPS30 "typical particle size" translated to what usually floats at that size.
 function describeTps(um) {
   if (um == null) return '';
@@ -350,6 +366,9 @@ function renderSummary(summary) {
     }
   }
   document.getElementById('metric-tps-note').textContent = describeTps(metrics.tps);
+  const dew = dewPoint(metrics.temp, metrics.humid);
+  document.getElementById('metric-dew').textContent = dew == null ? '--' : `${dew.toFixed(1)} °C`;
+  document.getElementById('metric-dew-note').textContent = describeDew(dew);
   document.getElementById('metric-aqi').textContent = aqi.value == null ? '--' : String(aqi.value);
   document.getElementById('metric-aqi-label').textContent = aqi.category || '--';
   if (agesKnown) setBadge('aqi', ages.pm25, maxAge);
@@ -478,6 +497,45 @@ async function refreshSparklines() {
     renderSparkline(`spark-${key}`, sparkRows, key);
     renderHeroRange(key);
   }
+  renderTodayRecap();
+}
+
+function renderTodayRecap() {
+  // Retrospective narration under the forecast — "what happened" beside
+  // "what's coming". Derived from the already-fetched 24h rows; nothing
+  // here can turn red.
+  const wrapper = document.getElementById('today-recap');
+  const list = document.getElementById('today-recap-list');
+  if (!wrapper || !list) return;
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const todayRows = sparkRows.filter((row) => row.timestamp_ts * 1000 >= midnight.getTime());
+  const timeOf = (row) => {
+    const date = new Date(row.timestamp_ts * 1000);
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  };
+  const extreme = (key, pick) => {
+    const rows = todayRows.filter((row) => row[key] != null);
+    if (rows.length < 2) return null;
+    return rows.reduce((best, row) => (pick(row[key], best[key]) ? row : best));
+  };
+  const warmest = extreme('temp', (a, b) => a > b);
+  const coolest = extreme('temp', (a, b) => a < b);
+  const co2Peak = extreme('co2', (a, b) => a > b);
+  const lines = [];
+  if (warmest && coolest) {
+    lines.push(['Warmest', `${warmest.temp.toFixed(1)}° at ${timeOf(warmest)}`]);
+    lines.push(['Coolest', `${coolest.temp.toFixed(1)}° at ${timeOf(coolest)}`]);
+  }
+  if (co2Peak) lines.push(['CO2 peak', `${Math.round(co2Peak.co2)} ppm at ${timeOf(co2Peak)}`]);
+  if (!lines.length) {
+    wrapper.hidden = true;
+    return;
+  }
+  list.innerHTML = lines.map(([label, value]) =>
+    `<p><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></p>`
+  ).join('');
+  wrapper.hidden = false;
 }
 
 // Minimum y-span per metric: a rock-steady room must render as a nearly

@@ -89,12 +89,23 @@
           </div>
           <p class="metric-note" id="metric-tps-note"></p>
         </article>
+        <article class="metric-card metric-compact">
+          <div class="metric-compact-main">
+            <header><h2>Dew point</h2><button class="hint" data-hint="Computed from temperature and humidity — the honest 'how the air feels' number. Below ~13° feels dry and comfortable, above ~16° feels muggy." type="button">?</button></header>
+            <p id="metric-dew">--</p>
+          </div>
+          <p class="metric-note" id="metric-dew-note"></p>
+        </article>
       </div>
 
       <div class="live-panels">
         <section class="panel">
           <div class="panel-head"><h2>Forecast</h2><button class="hint" data-hint="Today's forecast in three windows (morning / afternoon / evening) from Open-Meteo, fetched every 30 minutes." type="button">?</button><p id="weather-updated" class="panel-note">Updated: --</p></div>
           <div class="forecast-grid" id="forecast-grid"></div>
+          <div id="today-recap" hidden>
+            <p class="panel-note today-recap-title">Today so far</p>
+            <div class="info-list" id="today-recap-list"></div>
+          </div>
         </section>
         <section class="panel">
           <div class="panel-head">

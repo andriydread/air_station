@@ -286,6 +286,7 @@ button.button-danger {
 .forecast-icon { width: 52px; height: 52px; }
 :root[data-theme="dark"] .forecast-icon { filter: invert(1) hue-rotate(180deg); }
 .forecast-stat { margin: 2px 0; font-size: 15px; }
+.today-recap-title { margin: 14px 0 4px; border-top: 1px solid var(--line); padding-top: 12px; }
 
 /* --- E-paper preview -------------------------------------------------------- */
 
