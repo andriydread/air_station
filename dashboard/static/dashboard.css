@@ -81,24 +81,19 @@ button, input, select { font: inherit; color: inherit; }
 .brand h1 { margin: 0; font-size: 26px; letter-spacing: 0.02em; }
 .brand-sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 
+/* Lives inside .brand, under the "Last sample" line — plain text at the
+   same size, colored only when something is wrong. */
 .status-strip {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
-  margin-left: auto;
+  margin-top: 2px;
 }
 
-.pill {
-  padding: 5px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--paper);
-  font-size: 13px;
-  color: var(--muted);
-}
-.pill-bad { border-color: transparent; background: var(--bad-soft); color: var(--bad); }
+.pill { font-size: 13px; color: var(--muted); }
+.pill-bad { color: var(--bad); font-weight: 600; }
 
-.clock { text-align: right; line-height: 1.25; }
+.clock { text-align: right; line-height: 1.25; margin-left: auto; }
 .clock-time { display: block; font-size: 24px; font-weight: 700; letter-spacing: 0.02em; }
 .clock-date { color: var(--muted); font-size: 12px; }
 
@@ -131,6 +126,9 @@ button.button-danger {
   color: var(--bad);
   border: 1px solid var(--bad);
 }
+
+.icon-button { padding: 9px; line-height: 0; }
+.icon-button svg { display: block; }
 
 /* --- Tabs ------------------------------------------------------------------ */
 
@@ -503,7 +501,6 @@ button.button-danger {
 @media (max-width: 980px) {
   .live-panels, .diag-grid { grid-template-columns: 1fr; }
   .chart-grid { grid-template-columns: 1fr; }
-  .status-strip { margin-left: 0; }
 }
 @media (max-width: 760px) {
   .controls-grid { grid-template-columns: 1fr; }
