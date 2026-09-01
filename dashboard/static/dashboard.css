@@ -204,7 +204,10 @@ button.button-danger {
   margin-bottom: 18px;
 }
 .metric-hero { display: flex; flex-direction: column; }
-.metric-hero p { font-size: 34px; margin: 6px 0 2px; }
+/* tabular-nums: values must not shimmy sideways as digits change each poll. */
+.metric-hero p { font-size: 34px; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+.metric-hero p .unit { font-size: 60%; font-weight: 400; color: var(--muted); }
+.hero-range { color: var(--muted); font-size: 12px; }
 /* Hero values colored by the backend's air-quality band; Good stays plain. */
 .value-warn { color: var(--warning); }
 .value-bad { color: var(--bad); }

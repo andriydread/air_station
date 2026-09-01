@@ -191,6 +191,15 @@ function setBadge(metric, age, maxAge) {
   badge.hidden = false;
 }
 
+// Hero values: the number is the star; the unit rides along small and muted.
+const heroUnits = { temp: '°C', humid: '%', co2: 'ppm' };
+
+function heroValueHtml(metric, value) {
+  if (value == null) return '--';
+  const number = metric === 'co2' ? String(Math.round(value)) : value.toFixed(1);
+  return `${number}<span class="unit"> ${heroUnits[metric]}</span>`;
+}
+
 function applyBandClass(elementId, category) {
   const element = document.getElementById(elementId);
   if (!element) return;
@@ -248,7 +257,12 @@ function renderSummary(summary) {
   const calibration = summary.scd41_last_calibration?.value || {};
 
   for (const metric of ['co2', 'temp', 'humid', 'pm25', 'pm10', 'tps']) {
-    document.getElementById(`metric-${metric}`).textContent = metricFormats[metric](metrics[metric]);
+    const target = document.getElementById(`metric-${metric}`);
+    if (heroUnits[metric]) {
+      target.innerHTML = heroValueHtml(metric, metrics[metric]);
+    } else {
+      target.textContent = metricFormats[metric](metrics[metric]);
+    }
     if (agesKnown) {
       setBadge(metric, ages[metric], maxAge);
     } else {
@@ -369,8 +383,13 @@ async function refreshSparklines() {
   }
   for (const key of ['temp', 'humid', 'co2', 'aqi']) {
     renderSparkline(`spark-${key}`, sparkRows, key);
+    renderHeroRange(key);
   }
 }
+
+// Minimum y-span per metric: a rock-steady room must render as a nearly
+// flat whisper of a line, not autoscaled drama — flat means fine.
+const sparklineMinSpan = { temp: 2, humid: 6, co2: 250, aqi: 25 };
 
 function renderSparkline(svgId, rows, key) {
   const svg = document.getElementById(svgId);
@@ -382,19 +401,41 @@ function renderSparkline(svgId, rows, key) {
   }
   const width = 240;
   const height = 48;
-  const pad = 2;
+  const pad = 3;
   const xs = points.map((row) => row.timestamp_ts);
   const ys = points.map((row) => row[key]);
   const xMin = Math.min(...xs);
   const xSpan = (Math.max(...xs) - xMin) || 1;
-  const yMin = Math.min(...ys);
-  const ySpan = (Math.max(...ys) - yMin) || 1;
-  const line = points.map((row) => {
-    const x = pad + ((row.timestamp_ts - xMin) / xSpan) * (width - 2 * pad);
-    const y = pad + (1 - ((row[key] - yMin) / ySpan)) * (height - 2 * pad);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-  svg.innerHTML = `<polyline fill="none" stroke="currentColor" stroke-width="2" points="${line}"></polyline>`;
+  let yMin = Math.min(...ys);
+  let yMax = Math.max(...ys);
+  const minSpan = sparklineMinSpan[key] || 0;
+  if (yMax - yMin < minSpan) {
+    const mid = (yMax + yMin) / 2;
+    yMin = mid - minSpan / 2;
+    yMax = mid + minSpan / 2;
+  }
+  const ySpan = (yMax - yMin) || 1;
+  const coords = points.map((row) => [
+    pad + ((row.timestamp_ts - xMin) / xSpan) * (width - 2 * pad),
+    pad + (1 - ((row[key] - yMin) / ySpan)) * (height - 2 * pad),
+  ]);
+  const line = coords.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const [lastX, lastY] = coords[coords.length - 1];
+  svg.innerHTML = `<polyline fill="none" stroke="currentColor" stroke-width="2" points="${line}"></polyline>
+    <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.5" fill="currentColor"></circle>`;
+}
+
+function renderHeroRange(key) {
+  const element = document.getElementById(`range-${key}`);
+  if (!element) return;
+  const values = sparkRows.filter((row) => row[key] != null).map((row) => row[key]);
+  if (values.length < 2) {
+    element.textContent = '';
+    return;
+  }
+  const digits = key === 'co2' || key === 'aqi' ? 0 : 1;
+  element.textContent =
+    `24h ${Math.min(...values).toFixed(digits)} – ${Math.max(...values).toFixed(digits)}`;
 }
 
 let previewObjectUrl = null;
