@@ -43,10 +43,18 @@ def choose_bucket_seconds(hours: float) -> int:
         return 300
     if hours <= 72:
         return 900
-    return 1800
+    if hours <= 168:
+        return 1800
+    if hours <= 720:
+        return 3600
+    if hours <= 2160:
+        return 3 * 3600
+    return 86400
 
 
-MAX_RANGE_SECONDS = 90 * 86400
+# Ranges past raw retention are served from the hourly rollups (R8), which
+# never get pruned — 5 years is a UI sanity bound, not a data limit.
+MAX_RANGE_SECONDS = 5 * 365 * 86400
 
 
 def parse_timestamp(value: str, field_name: str) -> int:
@@ -71,12 +79,13 @@ def resolve_range(args) -> Tuple[int, int]:
         start = parse_timestamp(args["from"], "from")
         end = parse_timestamp(args["to"], "to") if args.get("to") is not None else now
     else:
-        hours = max(1, min(parse_int(args.get("hours", 24), "hours"), 24 * 30))
+        max_hours = MAX_RANGE_SECONDS // 3600
+        hours = max(1, min(parse_int(args.get("hours", 24), "hours"), max_hours))
         start, end = now - hours * 3600, now
     if end <= start:
         raise ValueError("'to' must be after 'from'")
     if end - start > MAX_RANGE_SECONDS:
-        raise ValueError("range must not exceed 90 days")
+        raise ValueError("range must not exceed 5 years")
     return start, end
 
 
@@ -265,7 +274,14 @@ def create_app() -> Flask:
     def api_history() -> Any:
         start, end = resolve_range(request.args)
         bucket_seconds = choose_bucket_seconds((end - start) / 3600)
-        rows = database.query_history_range(start, end, bucket_seconds)
+        # Hour-or-coarser buckets read the rollup table (cheaper, and the only
+        # source once the range outlives raw retention); fine buckets stay raw.
+        if bucket_seconds >= 3600:
+            rows = database.query_history_hourly(start, end, bucket_seconds)
+            stats = database.query_stats_hourly(start, end)
+        else:
+            rows = database.query_history_range(start, end, bucket_seconds)
+            stats = database.query_stats(start, end)
         for row in rows:
             row["aqi"] = row_aqi(row)
         return jsonify(
@@ -274,7 +290,7 @@ def create_app() -> Flask:
                 "to_ts": end,
                 "bucket_seconds": bucket_seconds,
                 "rows": rows,
-                "stats": database.query_stats(start, end),
+                "stats": stats,
             }
         )
 

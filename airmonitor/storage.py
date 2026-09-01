@@ -47,6 +47,20 @@ CREATE TABLE IF NOT EXISTS measurements (
 CREATE INDEX IF NOT EXISTS idx_measurements_recorded_at
     ON measurements(recorded_at);
 
+CREATE TABLE IF NOT EXISTS measurements_hourly (
+    hour_ts INTEGER PRIMARY KEY,
+    sample_count INTEGER NOT NULL,
+    flagged_count INTEGER NOT NULL DEFAULT 0,
+    co2_min REAL, co2_avg REAL, co2_max REAL,
+    temp_min REAL, temp_avg REAL, temp_max REAL,
+    humid_min REAL, humid_avg REAL, humid_max REAL,
+    pm1_min REAL, pm1_avg REAL, pm1_max REAL,
+    pm25_min REAL, pm25_avg REAL, pm25_max REAL,
+    pm4_min REAL, pm4_avg REAL, pm4_max REAL,
+    pm10_min REAL, pm10_avg REAL, pm10_max REAL,
+    tps_min REAL, tps_avg REAL, tps_max REAL
+);
+
 CREATE TABLE IF NOT EXISTS state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -202,6 +216,143 @@ class AirMonitorDatabase:
             (bucket_seconds, bucket_seconds, start_ts, end_ts),
         )
         return [self._measurement_to_dict(row, ts_column="bucket_ts") for row in rows]
+
+    # --- Hourly rollups (forever history, R8) -------------------------------
+    # Raw 10s samples die at the prune horizon; one min/avg/max row per hour
+    # survives forever (~9k rows/year) so seasons stay comparable.
+
+    def _last_rolled_hour(self) -> Optional[int]:
+        return self._query("SELECT MAX(hour_ts) AS last FROM measurements_hourly")[0]["last"]
+
+    def rollup_hourly(self) -> int:
+        """Fold complete hours of raw samples into measurements_hourly.
+
+        Incremental and idempotent: only hours after the newest rolled hour
+        are computed, and the still-open current hour never is. The first
+        call on an existing database backfills every complete hour it holds.
+        Returns the number of hours rolled.
+        """
+        current_hour = (self._now() // 3600) * 3600
+        last = self._last_rolled_hour()
+        lower = (last + 3600) if last is not None else 0
+        if lower >= current_hour:
+            return 0
+        columns = ", ".join(
+            f"{field}_{stat}" for field in METRIC_FIELDS for stat in ("min", "avg", "max")
+        )
+        aggregates = ", ".join(
+            f"MIN({field}), AVG({field}), MAX({field})" for field in METRIC_FIELDS
+        )
+        rolled, _ = self._write(
+            f"""
+            INSERT OR REPLACE INTO measurements_hourly
+                (hour_ts, sample_count, flagged_count, {columns})
+            SELECT (recorded_at / 3600) * 3600 AS hour_ts,
+                   COUNT(*),
+                   SUM(CASE WHEN flags IS NOT NULL THEN 1 ELSE 0 END),
+                   {aggregates}
+            FROM measurements
+            WHERE recorded_at >= ? AND recorded_at < ?
+            GROUP BY hour_ts
+            """,
+            (lower, current_hour),
+        )
+        return rolled
+
+    def query_history_hourly(
+        self, start_ts: int, end_ts: int, bucket_seconds: int
+    ) -> List[Dict[str, Any]]:
+        """Bucketed history from the rollups, raw tail (un-rolled hours) included.
+
+        Bucket values are averages of hourly averages — chart precision, not
+        metrology; ranges past the raw prune horizon only exist here.
+        """
+        bucket = max(int(bucket_seconds), 3600)
+        last = self._last_rolled_hour()
+        boundary = (last + 3600) if last is not None else start_ts
+        rows: List[Dict[str, Any]] = []
+        if last is not None and start_ts <= last:
+            selects = ", ".join(f"AVG({field}_avg) AS {field}" for field in METRIC_FIELDS)
+            hourly = self._query(
+                f"""
+                SELECT (hour_ts / ?) * ? AS bucket_ts, {selects}
+                FROM measurements_hourly
+                WHERE hour_ts >= ? AND hour_ts <= ?
+                GROUP BY bucket_ts
+                ORDER BY bucket_ts ASC
+                """,
+                (bucket, bucket, start_ts, min(end_ts, last)),
+            )
+            rows = [self._measurement_to_dict(row, ts_column="bucket_ts") for row in hourly]
+        if boundary <= end_ts:
+            tail = self.query_history_range(max(start_ts, boundary), end_ts, bucket)
+            if tail:
+                first_tail_ts = tail[0]["timestamp_ts"]
+                rows = [row for row in rows if row["timestamp_ts"] < first_tail_ts]
+                rows.extend(tail)
+        return rows
+
+    def query_stats_hourly(self, start_ts: int, end_ts: int) -> Dict[str, Any]:
+        """Stats from the rollups plus the raw tail; avg weighted by sample counts."""
+        last = self._last_rolled_hour()
+        boundary = (last + 3600) if last is not None else start_ts
+        parts: List[Dict[str, Any]] = []
+        if last is not None and start_ts <= last:
+            selects = ["SUM(sample_count) AS sample_count"]
+            for field in METRIC_FIELDS:
+                selects.extend(
+                    (
+                        f"MIN({field}_min) AS {field}_min",
+                        f"SUM({field}_avg * sample_count) AS {field}_weighted",
+                        f"MAX({field}_max) AS {field}_max",
+                    )
+                )
+            row = self._query(
+                f"SELECT {', '.join(selects)} FROM measurements_hourly "
+                "WHERE hour_ts >= ? AND hour_ts <= ?",
+                (start_ts, min(end_ts, last)),
+            )[0]
+            if row["sample_count"]:
+                stats: Dict[str, Any] = {"sample_count": row["sample_count"]}
+                for field in METRIC_FIELDS:
+                    weighted = row[f"{field}_weighted"]
+                    stats[field] = {
+                        "min": row[f"{field}_min"],
+                        "avg": (
+                            round(weighted / row["sample_count"], 2)
+                            if weighted is not None else None
+                        ),
+                        "max": row[f"{field}_max"],
+                    }
+                parts.append(stats)
+        if boundary <= end_ts:
+            tail = self.query_stats(max(start_ts, boundary), end_ts)
+            if tail["sample_count"]:
+                parts.append(tail)
+        if not parts:
+            return self.query_stats(start_ts, end_ts)  # canonical empty shape
+        if len(parts) == 1:
+            return parts[0]
+        merged: Dict[str, Any] = {
+            "sample_count": parts[0]["sample_count"] + parts[1]["sample_count"]
+        }
+        for field in METRIC_FIELDS:
+            entries = [(part[field], part["sample_count"]) for part in parts]
+            mins = [entry["min"] for entry, _ in entries if entry["min"] is not None]
+            maxes = [entry["max"] for entry, _ in entries if entry["max"] is not None]
+            weights = [
+                (entry["avg"], count) for entry, count in entries if entry["avg"] is not None
+            ]
+            total = sum(count for _, count in weights)
+            merged[field] = {
+                "min": min(mins) if mins else None,
+                "avg": (
+                    round(sum(avg * count for avg, count in weights) / total, 2)
+                    if total else None
+                ),
+                "max": max(maxes) if maxes else None,
+            }
+        return merged
 
     def query_stats(self, start_ts: int, end_ts: int) -> Dict[str, Any]:
         """Per-metric min/avg/max over raw samples in the window."""

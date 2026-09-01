@@ -14,6 +14,54 @@ def database(tmp_path):
     db.close()
 
 
+def _insert_raw(database, ts, co2, flagged=False):
+    with database._lock:
+        database._connection.execute(
+            "INSERT INTO measurements (recorded_at, co2, temp, humid, pm1, pm25, pm4, pm10, tps, flags)"
+            " VALUES (?, ?, 21.0, 45.0, 1.0, 3.0, 4.0, 5.0, 0.8, ?)",
+            (ts, co2, '{"co2": {"value": 9999, "reason": "test"}}' if flagged else None),
+        )
+
+
+def test_hourly_rollup_is_incremental_and_skips_open_hour(database):
+    current_hour = (database._now() // 3600) * 3600
+    _insert_raw(database, current_hour - 7200, 600)
+    _insert_raw(database, current_hour - 7200 + 60, None, flagged=True)
+    _insert_raw(database, current_hour - 3600, 800)
+    _insert_raw(database, current_hour + 10, 900)  # still-open hour: never rolled
+
+    assert database.rollup_hourly() == 2
+    assert database.rollup_hourly() == 0  # nothing new -> idempotent
+
+    rows = database._query("SELECT * FROM measurements_hourly ORDER BY hour_ts")
+    assert len(rows) == 2
+    assert rows[0]["sample_count"] == 2
+    assert rows[0]["flagged_count"] == 1
+    assert rows[0]["co2_min"] == 600 and rows[0]["co2_avg"] == 600 and rows[0]["co2_max"] == 600
+    assert rows[1]["co2_avg"] == 800
+
+
+def test_history_and_stats_survive_raw_prune_via_rollups(database):
+    current_hour = (database._now() // 3600) * 3600
+    old = current_hour - 100 * 86400  # beyond the 90-day raw retention
+    for i in range(3):
+        _insert_raw(database, old + i * 600, 500 + i * 100)
+    _insert_raw(database, current_hour + 10, 900)  # un-rolled raw tail
+
+    assert database.rollup_hourly() == 1
+    pruned = database.prune(90, 14)
+    assert pruned["measurements"] == 3  # old raw gone, rollup remains
+
+    rows = database.query_history_hourly(old - 3600, database._now() + 60, 3600)
+    assert rows[0]["co2"] == 600  # avg of 500/600/700 from the rollup
+    assert rows[-1]["co2"] == 900  # raw tail still visible
+
+    stats = database.query_stats_hourly(old - 3600, database._now() + 60)
+    assert stats["sample_count"] == 4
+    assert stats["co2"]["min"] == 500
+    assert stats["co2"]["max"] == 900
+
+
 def test_database_stats_counts_rows_and_disk_size(database):
     assert database.database_stats() == {
         "measurements": 0,

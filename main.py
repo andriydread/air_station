@@ -545,14 +545,18 @@ class AirMonitor:
         )
 
     def prune_database(self) -> None:
+        # Roll complete hours into the forever-history table BEFORE pruning,
+        # so raw samples never die unrolled.
+        rolled = self.database.rollup_hourly()
         deleted = self.database.prune(
             self.config.keep_measurements_days, self.config.keep_events_days
         )
-        if deleted["measurements"] or deleted["events"]:
+        if rolled or deleted["measurements"] or deleted["events"]:
             self.events.log(
                 logging.INFO, "storage", "pruned",
-                f"Pruned {deleted['measurements']} measurements and {deleted['events']} events",
-                deleted,
+                f"Rolled up {rolled} hour(s); pruned {deleted['measurements']} "
+                f"measurements and {deleted['events']} events",
+                {**deleted, "rolled_hours": rolled},
             )
 
     # --- Status shared with the dashboard ------------------------------------

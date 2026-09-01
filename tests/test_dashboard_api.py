@@ -29,6 +29,13 @@ def test_health_reflects_collector_state(client):
     assert body["ok"] is True
 
 
+def test_history_year_range_served_from_rollup_path(client):
+    body = client.get("/api/history?hours=8760").get_json()
+    assert body["bucket_seconds"] == 86400
+    assert body["rows"]  # the un-rolled raw tail keeps fresh data visible
+    assert body["stats"]["sample_count"] == 1
+
+
 def test_summary_includes_database_stats(client):
     body = client.get("/api/summary").get_json()
     assert body["database"]["measurements"] == 1
@@ -51,8 +58,8 @@ def test_history_rows_carry_aqi(client):
 
 
 def test_history_hours_clamped(client):
-    body = client.get("/api/history?hours=99999").get_json()
-    assert body["to_ts"] - body["from_ts"] == 24 * 30 * 3600
+    body = client.get("/api/history?hours=99999999").get_json()
+    assert body["to_ts"] - body["from_ts"] == 5 * 365 * 86400
 
 
 def test_history_rejects_non_integer_hours(client):
