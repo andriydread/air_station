@@ -894,14 +894,40 @@ async function refreshDiagnostics() {
   const query = new URLSearchParams({ limit: 100 });
   if (level) query.set('level', level);
   if (source) query.set('source', source);
-  const [events, flags, collectorEvents] = await Promise.all([
+  const [events, flags, collectorEvents, storageEvents] = await Promise.all([
     fetchJson(`/api/events?${query}`),
     fetchJson('/api/flags?limit=30'),
     fetchJson('/api/events?source=collector&limit=50'),
+    fetchJson('/api/events?source=storage&limit=50'),
   ]);
   renderEvents(events.events || []);
   renderFlagged(flags.flagged || []);
   renderRestartCount(collectorEvents.events || []);
+  renderHousekeeping(storageEvents.events || []);
+}
+
+function renderHousekeeping(storageEvents) {
+  const overdueSeconds = 26 * 3600; // nightly tasks get a 2h grace period
+  const setLine = (id, iso, canBeOverdue) => {
+    const element = document.getElementById(id);
+    if (!element) return;
+    if (!iso) {
+      element.textContent = 'never';
+      element.className = '';
+      return;
+    }
+    const age = (Date.now() - new Date(iso).getTime()) / 1000;
+    const overdue = canBeOverdue && age > overdueSeconds;
+    element.textContent = formatRelative(iso) + (overdue ? ' · overdue' : '');
+    element.title = formatTimestamp(iso);
+    element.className = overdue ? 'health-bad' : '';
+  };
+  const newest = (type) =>
+    storageEvents.find((event) => event.event_type === type)?.created_at || null;
+  setLine('hk-backup', newest('backup_written'), true);
+  setLine('hk-prune', newest('pruned'), true);
+  const cleanIso = lastSummary?.collector_status?.value?.sensors?.sps30?.last_manual_clean_at;
+  setLine('hk-clean', cleanIso || null, false);
 }
 
 function renderRestartCount(collectorEvents) {

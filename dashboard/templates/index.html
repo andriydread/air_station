@@ -201,6 +201,14 @@
             </div>
           </section>
           <section class="panel">
+            <div class="panel-head"><h2>Housekeeping</h2><button class="hint" data-hint="The station maintains itself: nightly database backup and prune, periodic fan cleaning. Colored only when something is overdue." type="button">?</button></div>
+            <div class="info-list">
+              <p><span>Last backup</span><strong id="hk-backup">--</strong></p>
+              <p><span>Last data prune</span><strong id="hk-prune">--</strong></p>
+              <p><span>Last manual fan clean</span><strong id="hk-clean">--</strong></p>
+            </div>
+          </section>
+          <section class="panel">
             <div class="panel-head"><h2>Recent commands</h2><button class="hint" data-hint="Every button press from Controls lands here with its status and result." type="button">?</button></div>
             <div class="command-list" id="command-list"></div>
           </section>
