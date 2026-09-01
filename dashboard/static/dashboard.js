@@ -186,6 +186,23 @@ window.addEventListener('hashchange', () => {
 // ---------------------------------------------------------------------------
 
 let lastSummary = null;
+let lastSampleIso = null;
+
+function renderSampleAge() {
+  // A softly counting "8s ago" is the gentlest proof of life; past ten
+  // minutes the absolute time is more useful (and badges/pills are already
+  // escalating by then).
+  const element = document.getElementById('sample-age');
+  if (!lastSampleIso) {
+    element.textContent = 'No samples yet';
+    return;
+  }
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(lastSampleIso).getTime()) / 1000));
+  element.textContent = seconds < 600
+    ? `Last sample · ${formatAge(seconds)}`
+    : `Last sample: ${formatTimestamp(lastSampleIso)}`;
+  element.title = formatTimestamp(lastSampleIso);
+}
 // The ASC checkbox is a form input the user may be editing; it is seeded
 // from the collector once and never overwritten by the 10s poll (which used
 // to silently revert the user's choice before they clicked Apply).
@@ -342,8 +359,8 @@ function renderSummary(summary) {
   applyBandClass('metric-aqi', aqi.category);
   applyBandClass('metric-co2', aqi.co2_category);
 
-  document.getElementById('sample-age').textContent =
-    metrics.timestamp ? `Last sample: ${formatTimestamp(metrics.timestamp)}` : 'No samples yet';
+  lastSampleIso = metrics.timestamp || null;
+  renderSampleAge();
 
   const problems = [];
   if (collectorSilent) problems.push('Collector not reporting');
@@ -1236,6 +1253,7 @@ function startClock() {
     timeEl.textContent = `${two(now.getHours())}:${two(now.getMinutes())}`;
     const weekday = now.toLocaleDateString(undefined, { weekday: 'long' });
     dateEl.textContent = `${weekday} · ${two(now.getDate())}.${two(now.getMonth() + 1)}.${now.getFullYear()}`;
+    renderSampleAge(); // the "8s ago" line breathes with the clock
   };
   tick();
   window.setInterval(tick, 10000);
