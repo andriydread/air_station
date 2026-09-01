@@ -17,7 +17,7 @@ Slow subsystems run on their own worker threads so they can never stall
 sampling (airmonitor/workers.py):
 
     display worker     renders queued frames (a full refresh blocks ~15s)
-    weather worker     every 30min Open-Meteo forecast
+    weather worker     every 30min Open-Meteo forecast (2min retry on failure)
     network worker     every 30s   Wi-Fi probe + recovery ladder
 """
 
@@ -208,6 +208,10 @@ class AirMonitor:
         self._network_fail_streak = 0
         self._network_unhealthy_since: Optional[float] = None
         self._network_outage_reported = False
+        # One failed weather fetch is usually a Wi-Fi blip and retries soon
+        # (weather_retry_interval); only a persisting failure goes unhealthy.
+        self._weather_fail_streak = 0
+        self._weather_unhealthy_after = 2
 
         self.weather: Dict[str, Any] = {}
         self._calibration_reminder_sent = False
@@ -412,7 +416,8 @@ class AirMonitor:
             self.display_health.failed(str(exc))
         self.publish_status()
 
-    def fetch_weather(self) -> None:
+    def fetch_weather(self) -> bool:
+        """Fetch the forecast; False tells the worker to retry sooner."""
         LOGGER.info("Fetching weather forecast")
         forecast = get_weather_forecast(
             self.config.weather_latitude, self.config.weather_longitude, self.http
@@ -421,10 +426,19 @@ class AirMonitor:
             self.weather = forecast
             self.database.set_state("latest_weather", forecast)
             self.weather_health.state["last_success_at"] = utc_now_iso()
+            self._weather_fail_streak = 0
             self.weather_health.ok()
-        else:
+            self.publish_status()
+            return True
+        self._weather_fail_streak += 1
+        if self._weather_fail_streak >= self._weather_unhealthy_after:
             self.weather_health.failed("Weather fetch failed; using previous forecast")
+        else:
+            LOGGER.info(
+                "Weather fetch failed; retrying in %ss", self.config.weather_retry_interval
+            )
         self.publish_status()
+        return False
 
     def check_network(self) -> None:
         """Probe connectivity; report only outages that last.
@@ -602,7 +616,8 @@ class AirMonitor:
         # Blocking subsystems run on their own threads; sampling never waits.
         self._workers = [
             PeriodicWorker(
-                "weather", self.config.weather_update_interval, self.fetch_weather, self.events
+                "weather", self.config.weather_update_interval, self.fetch_weather, self.events,
+                retry_interval=self.config.weather_retry_interval,
             ),
             PeriodicWorker(
                 "network", self.config.network_check_interval, self.check_network, self.events

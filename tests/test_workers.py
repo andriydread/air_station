@@ -130,6 +130,24 @@ def test_periodic_worker_runs_and_survives_failures():
     assert not worker.alive
 
 
+def test_periodic_worker_retries_sooner_after_failed_iteration():
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        return len(calls) >= 3  # first two iterations fail
+
+    # interval is an hour: reaching three calls quickly proves the failed
+    # iterations waited retry_interval instead.
+    worker = PeriodicWorker("weather", 3600, flaky, StubEvents(), retry_interval=0.01)
+    worker.start()
+    try:
+        assert wait_until(lambda: len(calls) >= 3)
+    finally:
+        worker.stop()
+    assert not worker.alive
+
+
 def test_periodic_worker_stops_promptly_despite_long_interval():
     worker = PeriodicWorker("weather", 3600, lambda: None, StubEvents())
     worker.start()

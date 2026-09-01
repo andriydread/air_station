@@ -37,6 +37,7 @@ class Config:
     partial_update_interval: int = 60   # quick e-paper refresh
     full_update_interval: int = 300     # deep e-paper refresh (removes ghosting)
     weather_update_interval: int = 1800  # fetch forecast
+    weather_retry_interval: int = 120    # next attempt after a failed fetch
     command_poll_interval: int = 2      # look for dashboard commands
     network_check_interval: int = 30    # Wi-Fi / internet probe
     status_publish_interval: int = 30   # write collector status for the dashboard
@@ -109,6 +110,7 @@ class Config:
             partial_update_interval=_env_int("AIRMONITOR_PARTIAL_UPDATE_INTERVAL", cls.partial_update_interval),
             full_update_interval=_env_int("AIRMONITOR_FULL_UPDATE_INTERVAL", cls.full_update_interval),
             weather_update_interval=_env_int("AIRMONITOR_WEATHER_UPDATE_INTERVAL", cls.weather_update_interval),
+            weather_retry_interval=_env_int("AIRMONITOR_WEATHER_RETRY_INTERVAL", cls.weather_retry_interval),
             command_poll_interval=_env_int("AIRMONITOR_COMMAND_POLL_INTERVAL", cls.command_poll_interval),
             network_check_interval=_env_int("AIRMONITOR_CONNECTIVITY_CHECK_INTERVAL", cls.network_check_interval),
             status_publish_interval=_env_int("AIRMONITOR_STATUS_PUBLISH_INTERVAL", cls.status_publish_interval),
@@ -157,6 +159,7 @@ class Config:
             "AIRMONITOR_PARTIAL_UPDATE_INTERVAL": self.partial_update_interval,
             "AIRMONITOR_FULL_UPDATE_INTERVAL": self.full_update_interval,
             "AIRMONITOR_WEATHER_UPDATE_INTERVAL": self.weather_update_interval,
+            "AIRMONITOR_WEATHER_RETRY_INTERVAL": self.weather_retry_interval,
             "AIRMONITOR_COMMAND_POLL_INTERVAL": self.command_poll_interval,
             "AIRMONITOR_CONNECTIVITY_CHECK_INTERVAL": self.network_check_interval,
             "AIRMONITOR_STATUS_PUBLISH_INTERVAL": self.status_publish_interval,

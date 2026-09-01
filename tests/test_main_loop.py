@@ -208,6 +208,40 @@ def test_network_blip_stays_out_of_events_but_outage_is_reported(monkeypatch, tm
         monitor.database.close()
 
 
+# --- Weather failure debounce -------------------------------------------------
+
+
+def test_weather_goes_unhealthy_only_after_second_failed_fetch(monkeypatch, tmp_path):
+    from airmonitor.config import Config
+
+    config = Config(database_path=str(tmp_path / "w.db"), log_file=str(tmp_path / "w.log"))
+    monitor = main_module.AirMonitor(config)
+
+    def weather_events():
+        return [
+            e for e in monitor.database.get_recent_events(limit=50)
+            if e["source"] == "weather"
+        ]
+
+    try:
+        monkeypatch.setattr(main_module, "get_weather_forecast", lambda *_a: None)
+        assert monitor.fetch_weather() is False  # first miss: quiet
+        assert weather_events() == []
+        assert monitor.fetch_weather() is False  # second miss: now unhealthy
+        events = weather_events()
+        assert len(events) == 1
+        assert "using previous forecast" in events[0]["message"]
+
+        monkeypatch.setattr(
+            main_module, "get_weather_forecast", lambda *_a: {"1": ["Now", 20, 10, 5, 1]}
+        )
+        assert monitor.fetch_weather() is True
+        assert monitor.weather_health.state["healthy"] is True
+        assert monitor._weather_fail_streak == 0
+    finally:
+        monitor.database.close()
+
+
 # --- SCD41 calibration-due reminder ------------------------------------------
 
 

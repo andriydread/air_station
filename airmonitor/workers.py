@@ -102,11 +102,27 @@ class DisplayWorker:
 
 
 class PeriodicWorker:
-    def __init__(self, name: str, interval: float, func: Callable[[], None], events):
+    """Runs ``func`` every ``interval`` seconds on its own thread.
+
+    A ``func`` that returns False (or raises) counts as a failed iteration;
+    when ``retry_interval`` is set the next attempt comes that much sooner,
+    so a transient failure (a Wi-Fi blip during a weather fetch) doesn't
+    cost a whole interval. Left unset, failures wait the normal interval.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        interval: float,
+        func: Callable[[], Any],
+        events,
+        retry_interval: Optional[float] = None,
+    ):
         self.name = name
         self.interval = interval
         self.func = func
         self.events = events
+        self.retry_interval = retry_interval
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._run, name=f"{name}-worker", daemon=True)
 
@@ -115,9 +131,11 @@ class PeriodicWorker:
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
+            ok = True
             try:
-                self.func()
+                ok = self.func() is not False
             except Exception as exc:  # noqa: BLE001 - worker must survive anything
+                ok = False
                 LOGGER.exception("%s worker iteration failed", self.name)
                 try:
                     self.events.log(
@@ -126,7 +144,8 @@ class PeriodicWorker:
                     )
                 except Exception:
                     LOGGER.exception("Failed to log %s worker failure", self.name)
-            self._stop_event.wait(self.interval)
+            delay = self.interval if ok or self.retry_interval is None else self.retry_interval
+            self._stop_event.wait(delay)
 
     def stop(self, timeout: float = 10.0) -> None:
         self._stop_event.set()
