@@ -68,6 +68,16 @@ function prettyJson(value) {
   return JSON.stringify(value || {}, null, 2);
 }
 
+// SPS30 "typical particle size" translated to what usually floats at that size.
+function describeTps(um) {
+  if (um == null) return '';
+  if (um < 1) return 'ultrafine — fresh smoke, soot';
+  if (um < 2.5) return 'fine — smoke, bacteria';
+  if (um < 4) return 'fine dust';
+  if (um < 10) return 'coarse — pollen, mold, dust';
+  return 'very coarse — large dust, sand';
+}
+
 // ---------------------------------------------------------------------------
 // Toast: the ONE place errors and confirmations surface
 // ---------------------------------------------------------------------------
@@ -202,6 +212,7 @@ function renderSummary(summary) {
     document.getElementById(`metric-${metric}`).textContent = metricFormats[metric](metrics[metric]);
     setBadge(metric, ages[metric], maxAge);
   }
+  document.getElementById('metric-tps-note').textContent = describeTps(metrics.tps);
   document.getElementById('metric-aqi').textContent = aqi.value == null ? '--' : String(aqi.value);
   document.getElementById('metric-aqi-label').textContent = aqi.category || '--';
   setBadge('aqi', ages.pm25, maxAge);
