@@ -180,6 +180,14 @@ function setBadge(metric, age, maxAge) {
   badge.hidden = false;
 }
 
+function applyBandClass(elementId, category) {
+  const element = document.getElementById(elementId);
+  if (!element) return;
+  element.classList.remove('value-warn', 'value-bad');
+  if (!category || category === 'Good') return;
+  element.classList.add(category === 'Moderate' ? 'value-warn' : 'value-bad');
+}
+
 function sensorHealthSummary(collector) {
   const sensors = collector.sensors || {};
   const entries = ['scd41', 'sht41', 'sps30'].map((key) => sensors[key]).filter(Boolean);
@@ -244,6 +252,10 @@ function renderSummary(summary) {
   document.getElementById('metric-aqi-label').textContent = aqi.category || '--';
   if (agesKnown) setBadge('aqi', ages.pm25, maxAge);
   document.getElementById('metric-co2-label').textContent = aqi.co2_category || '--';
+  // Color by the server-sent band so thresholds can't drift from the
+  // backend; "Good" stays uncolored to keep the calm look.
+  applyBandClass('metric-aqi', aqi.category);
+  applyBandClass('metric-co2', aqi.co2_category);
 
   document.getElementById('sample-age').textContent =
     metrics.timestamp ? `Last sample: ${formatTimestamp(metrics.timestamp)}` : 'No samples yet';
@@ -740,6 +752,12 @@ function renderCalibrationChecklist() {
 // and .value reads keep working — and if this upgrade ever fails the page
 // falls back to the native control.
 
+const dropdownLabels = {
+  'event-level': 'Event level',
+  'event-source': 'Event source',
+  'auto-clean-unit': 'Interval unit',
+};
+
 function upgradeSelect(select) {
   const wrapper = document.createElement('span');
   wrapper.className = 'dropdown';
@@ -753,6 +771,7 @@ function upgradeSelect(select) {
   toggle.className = 'dropdown-toggle';
   toggle.setAttribute('aria-haspopup', 'listbox');
   toggle.setAttribute('aria-expanded', 'false');
+  if (dropdownLabels[select.id]) toggle.setAttribute('aria-label', dropdownLabels[select.id]);
 
   const menu = document.createElement('ul');
   menu.className = 'dropdown-menu';
@@ -771,11 +790,18 @@ function upgradeSelect(select) {
     menu.querySelectorAll('li').forEach((item, index) => {
       item.classList.toggle('focused', index === focusIndex);
     });
+    // Screen readers follow the arrowed-to option through the toggle.
+    if (focusIndex >= 0) {
+      toggle.setAttribute('aria-activedescendant', `${select.id}-option-${focusIndex}`);
+    } else {
+      toggle.removeAttribute('aria-activedescendant');
+    }
   };
 
   const close = () => {
     menu.hidden = true;
     toggle.setAttribute('aria-expanded', 'false');
+    toggle.removeAttribute('aria-activedescendant');
     focusIndex = -1;
   };
 
@@ -790,10 +816,16 @@ function upgradeSelect(select) {
     menu.innerHTML = '';
     Array.from(select.options).forEach((option, index) => {
       const item = document.createElement('li');
+      item.id = `${select.id}-option-${index}`;
       item.setAttribute('role', 'option');
       item.setAttribute('aria-selected', index === select.selectedIndex ? 'true' : 'false');
       item.textContent = labelOf(option);
-      item.addEventListener('click', () => choose(index));
+      // mousedown + preventDefault: selects before the toggle can blur, and
+      // keeps focus on the toggle so the blur-close never races the pick.
+      item.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        choose(index);
+      });
       menu.appendChild(item);
     });
     menu.hidden = false;
@@ -817,6 +849,10 @@ function upgradeSelect(select) {
       event.preventDefault();
       if (focusIndex >= 0) choose(focusIndex);
     }
+  });
+  toggle.addEventListener('blur', (event) => {
+    // Tabbing away must not leave the menu floating over the page.
+    if (!wrapper.contains(event.relatedTarget)) close();
   });
   document.addEventListener('click', (event) => {
     if (!menu.hidden && !wrapper.contains(event.target)) close();

@@ -205,6 +205,9 @@ button.button-danger {
 }
 .metric-hero { display: flex; flex-direction: column; }
 .metric-hero p { font-size: 34px; margin: 6px 0 2px; }
+/* Hero values colored by the backend's air-quality band; Good stays plain. */
+.value-warn { color: var(--warning); }
+.value-bad { color: var(--bad); }
 .sparkline {
   width: 100%;
   height: 44px;
