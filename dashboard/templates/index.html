@@ -42,13 +42,13 @@
           <svg id="spark-humid" class="sparkline" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true"></svg>
         </article>
         <article class="metric-card metric-hero">
-          <header><h2>CO2</h2><span class="badge" id="badge-co2" hidden></span></header>
+          <header><h2>CO2</h2><button class="hint" data-hint="CO2 concentration. Under ~800 ppm is fresh air; above 1500 ppm it is time to ventilate." type="button">?</button><span class="badge" id="badge-co2" hidden></span></header>
           <p id="metric-co2">--</p>
           <small id="metric-co2-label">--</small>
           <svg id="spark-co2" class="sparkline" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true"></svg>
         </article>
         <article class="metric-card metric-hero">
-          <header><h2>Air quality</h2><span class="badge" id="badge-aqi" hidden></span></header>
+          <header><h2>Air quality</h2><button class="hint" data-hint="US EPA air-quality index computed from the particulate readings. Lower is better; under 50 counts as good." type="button">?</button><span class="badge" id="badge-aqi" hidden></span></header>
           <p id="metric-aqi">--</p>
           <small id="metric-aqi-label">--</small>
           <svg id="spark-aqi" class="sparkline" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true"></svg>
@@ -72,7 +72,7 @@
         </article>
         <article class="metric-card metric-compact">
           <div class="metric-compact-main">
-            <header><h2>Particle size</h2><span class="badge" id="badge-tps" hidden></span></header>
+            <header><h2>Particle size</h2><button class="hint" data-hint="Typical size of the particles in the air right now, from the SPS30. The note translates it to what usually floats at that size." type="button">?</button><span class="badge" id="badge-tps" hidden></span></header>
             <p id="metric-tps">--</p>
           </div>
           <p class="metric-note" id="metric-tps-note"></p>
@@ -81,7 +81,7 @@
 
       <div class="live-panels">
         <section class="panel">
-          <div class="panel-head"><h2>Forecast</h2><p id="weather-updated" class="panel-note">Updated: --</p></div>
+          <div class="panel-head"><h2>Forecast</h2><button class="hint" data-hint="3-day outlook from Open-Meteo, fetched by the station every 30 minutes." type="button">?</button><p id="weather-updated" class="panel-note">Updated: --</p></div>
           <div class="forecast-grid" id="forecast-grid"></div>
         </section>
         <section class="panel">
@@ -120,7 +120,7 @@
       </section>
 
       <section class="panel">
-        <div class="panel-head"><h2>Statistics</h2><p class="panel-note" id="stats-note">--</p></div>
+        <div class="panel-head"><h2>Statistics</h2><button class="hint" data-hint="Lowest, average and highest reading inside the range selected above." type="button">?</button><p class="panel-note" id="stats-note">--</p></div>
         <div class="table-scroll">
           <table class="stats-table" id="stats-table">
             <thead><tr><th>Metric</th><th>Min</th><th>Average</th><th>Max</th></tr></thead>
@@ -145,6 +145,7 @@
         <section class="panel">
           <div class="panel-head">
             <h2>Events</h2>
+            <button class="hint" data-hint="The station's own log: sensor errors, Wi-Fi drops, commands and self-recoveries." type="button">?</button>
             <div class="filter-row">
               <select id="event-level">
                 <option value="">all levels</option>
@@ -171,7 +172,7 @@
             <div class="event-list" id="flagged-list"></div>
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Connectivity &amp; power</h2></div>
+            <div class="panel-head"><h2>Connectivity &amp; power</h2><button class="hint" data-hint="Live Wi-Fi state plus the Pi's power flags — undervoltage means the power supply is struggling." type="button">?</button></div>
             <div class="info-list">
               <p><span>Interface</span><strong id="network-interface">--</strong></p>
               <p><span>State</span><strong id="network-status">--</strong></p>
@@ -183,7 +184,7 @@
             </div>
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Recent commands</h2></div>
+            <div class="panel-head"><h2>Recent commands</h2><button class="hint" data-hint="Every button press from Controls lands here with its status and result." type="button">?</button></div>
             <div class="command-list" id="command-list"></div>
           </section>
         </div>
@@ -194,7 +195,7 @@
     <section id="tab-controls" class="tab">
       <div class="controls-grid">
         <section class="control-card">
-          <h2>SCD41 CO2</h2>
+          <h2>SCD41 CO2 <button class="hint" data-hint="CO2 sensor. Forced calibration tells it what the true CO2 is right now — only run it in fresh air (~420 ppm). ASC lets the sensor drift-correct itself instead." type="button">?</button></h2>
           <div class="info-list">
             <p><span>Self-calibration (ASC)</span><strong id="scd41-asc-state">--</strong></p>
             <p><span>Last calibration</span><strong id="scd41-last-calibration">--</strong></p>
@@ -215,7 +216,7 @@
         </section>
 
         <section class="control-card">
-          <h2>SPS30 particulates</h2>
+          <h2>SPS30 particulates <button class="hint" data-hint="Particulate sensor. The fan clean blows accumulated dust out; the interval controls how often that happens automatically." type="button">?</button></h2>
           <div class="info-list">
             <p><span>Auto-clean interval</span><strong id="auto-clean-current">--</strong></p>
           </div>
@@ -238,7 +239,7 @@
         </section>
 
         <section class="control-card">
-          <h2>System</h2>
+          <h2>System <button class="hint" data-hint="These run on the Pi through the command queue; results appear under Diagnostics → Recent commands." type="button">?</button></h2>
           <p class="panel-note">Runs on the Pi through the command queue.</p>
           <div class="button-row">
             <button data-command="display_full_refresh" type="button">Redraw display</button>
@@ -251,7 +252,7 @@
         </section>
 
         <section class="control-card">
-          <h2>Database</h2>
+          <h2>Database <button class="hint" data-hint="Where measurements live on the Pi. Delete history permanently wipes all stored readings." type="button">?</button></h2>
           <div class="info-list">
             <p><span>Path</span><strong id="database-path">--</strong></p>
             <p><span>Log file</span><strong id="collector-log-file">--</strong></p>

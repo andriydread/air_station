@@ -469,7 +469,7 @@ button.button-danger {
 .control-card {
   padding: 16px 18px;
 }
-.control-card h2 { margin: 0 0 8px; font-size: 16px; }
+.control-card h2 { margin: 0 0 8px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
 
 .info-list p {
   display: flex;
@@ -503,6 +503,56 @@ button.button-danger {
 .checkbox { display: flex; align-items: center; gap: 8px; color: var(--ink) !important; }
 
 .empty-state { color: var(--muted); padding: 14px 4px; font-size: 14px; }
+
+/* --- Hints ------------------------------------------------------------------
+   Small "?" beside a title; the explanation appears on hover/focus as a
+   CSS-only bubble fed from data-hint (aria-label mirrored in JS). */
+
+.hint {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  cursor: help;
+}
+.hint:hover { filter: none; border-color: var(--muted); }
+.hint::after {
+  content: attr(data-hint);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: -8px;
+  z-index: 40;
+  width: max-content;
+  max-width: 260px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--tooltip-bg);
+  color: var(--tooltip-ink);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.hint:hover::after, .hint:focus-visible::after { opacity: 1; }
+/* Keep the hint hugging the title while badges/notes stay right-aligned. */
+.metric-card header .hint, .panel-head .hint { margin-right: auto; }
 
 /* --- Toast ------------------------------------------------------------------ */
 

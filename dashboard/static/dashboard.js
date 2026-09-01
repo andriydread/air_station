@@ -805,6 +805,10 @@ async function refreshAll() {
 }
 
 function installActions() {
+  document.querySelectorAll('.hint[data-hint]').forEach((hint) => {
+    hint.setAttribute('aria-label', hint.dataset.hint);
+  });
+
   document.querySelectorAll('.tab-button').forEach((button) => {
     button.addEventListener('click', () => switchTab(button.dataset.tab));
   });
