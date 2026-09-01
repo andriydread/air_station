@@ -437,16 +437,15 @@ button.button-danger {
 
 /* --- Controls --------------------------------------------------------------- */
 
-/* Multi-column flow instead of a grid: unequal cards pack top-to-bottom
-   without the ragged holes auto-fit rows left behind. */
+/* Fixed 2x2 grid (operator decision 2026-09-01): SCD41 + SPS30 on top,
+   System + Database below; row mates stretch to equal height. */
 .controls-grid {
-  columns: 2 340px;
-  column-gap: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 18px;
 }
 .control-card {
   padding: 16px 18px;
-  break-inside: avoid;
-  margin-bottom: 18px;
 }
 .control-card h2 { margin: 0 0 8px; font-size: 16px; }
 
@@ -505,6 +504,9 @@ button.button-danger {
   .live-panels, .diag-grid { grid-template-columns: 1fr; }
   .chart-grid { grid-template-columns: 1fr; }
   .status-strip { margin-left: 0; }
+}
+@media (max-width: 760px) {
+  .controls-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .page { padding: 14px 12px 40px; }

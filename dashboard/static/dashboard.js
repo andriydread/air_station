@@ -242,6 +242,8 @@ function renderSummary(summary) {
   document.getElementById('database-path').textContent = collector.database_path || '--';
   document.getElementById('collector-log-file').textContent = collector.log_file || '--';
   document.getElementById('scd41-asc-enabled').checked = !!collector.scd41_asc_enabled;
+  document.getElementById('scd41-asc-state').textContent =
+    collector.scd41_asc_enabled == null ? '--' : (collector.scd41_asc_enabled ? 'on' : 'off');
 
   const weather = summary.latest_weather?.value || {};
   document.getElementById('weather-updated').textContent =

@@ -176,16 +176,29 @@
     <section id="tab-controls" class="tab">
       <div class="controls-grid">
         <section class="control-card">
-          <h2>Display</h2>
-          <p class="panel-note">The screen refreshes itself; use this if it looks ghosted.</p>
-          <div class="button-row">
-            <button data-command="display_full_refresh" type="button">Redraw display</button>
+          <h2>SCD41 CO2</h2>
+          <div class="info-list">
+            <p><span>Self-calibration (ASC)</span><strong id="scd41-asc-state">--</strong></p>
+            <p><span>Last calibration</span><strong id="scd41-last-calibration">--</strong></p>
+            <p><span>Stable samples</span><strong id="scd41-recent-samples">--</strong></p>
           </div>
+          <form id="scd41-calibration-form" class="stack-form">
+            <label for="target-co2">Forced calibration target, ppm</label>
+            <input id="target-co2" type="number" min="350" max="2000" value="420">
+            <label class="checkbox"><input id="scd41-calibration-confirm" type="checkbox"> Sensor is in known stable reference air</label>
+            <label class="checkbox"><input id="scd41-calibration-persist" type="checkbox" checked> Persist in sensor</label>
+            <button type="submit">Run forced calibration</button>
+          </form>
+          <form id="scd41-asc-form" class="stack-form">
+            <label class="checkbox"><input id="scd41-asc-enabled" type="checkbox"> Automatic self-calibration (ASC)</label>
+            <label class="checkbox"><input id="scd41-asc-persist" type="checkbox"> Persist in sensor</label>
+            <button type="submit">Apply ASC setting</button>
+          </form>
         </section>
 
         <section class="control-card">
           <h2>SPS30 particulates</h2>
-          <div class="info-list compact-info">
+          <div class="info-list">
             <p><span>Auto-clean interval</span><strong id="auto-clean-current">--</strong></p>
           </div>
           <div class="button-row">
@@ -207,43 +220,26 @@
         </section>
 
         <section class="control-card">
-          <h2>SCD41 CO2</h2>
-          <div class="info-list compact-info">
-            <p><span>Last calibration</span><strong id="scd41-last-calibration">--</strong></p>
-            <p><span>Stable samples</span><strong id="scd41-recent-samples">--</strong></p>
+          <h2>System</h2>
+          <p class="panel-note">Runs on the Pi through the command queue.</p>
+          <div class="button-row">
+            <button data-command="display_full_refresh" type="button">Redraw display</button>
           </div>
-          <form id="scd41-calibration-form" class="stack-form">
-            <label for="target-co2">Forced calibration target, ppm</label>
-            <input id="target-co2" type="number" min="350" max="2000" value="420">
-            <label class="checkbox"><input id="scd41-calibration-confirm" type="checkbox"> Sensor is in known stable reference air</label>
-            <label class="checkbox"><input id="scd41-calibration-persist" type="checkbox" checked> Persist in sensor</label>
-            <button type="submit">Run forced calibration</button>
-          </form>
-          <form id="scd41-asc-form" class="stack-form">
-            <label class="checkbox"><input id="scd41-asc-enabled" type="checkbox"> Automatic self-calibration (ASC)</label>
-            <label class="checkbox"><input id="scd41-asc-persist" type="checkbox"> Persist in sensor</label>
-            <button type="submit">Apply ASC setting</button>
-          </form>
+          <div class="button-row stack-buttons">
+            <button data-system="system_restart_collector" type="button">Restart collector</button>
+            <button data-system="system_restart_web" type="button">Restart dashboard</button>
+            <button data-system="system_reboot" class="button-danger" type="button">Reboot Pi</button>
+          </div>
         </section>
 
         <section class="control-card">
           <h2>Database</h2>
-          <div class="info-list compact-info">
+          <div class="info-list">
             <p><span>Path</span><strong id="database-path">--</strong></p>
             <p><span>Log file</span><strong id="collector-log-file">--</strong></p>
           </div>
           <div class="button-row">
             <button id="delete-history-button" class="button-danger" type="button">Delete history</button>
-          </div>
-        </section>
-
-        <section class="control-card">
-          <h2>System</h2>
-          <p class="panel-note">Runs on the Pi through the command queue.</p>
-          <div class="button-row stack-buttons">
-            <button data-system="system_restart_collector" type="button">Restart collector</button>
-            <button data-system="system_restart_web" type="button">Restart dashboard</button>
-            <button data-system="system_reboot" class="button-danger" type="button">Reboot Pi</button>
           </div>
         </section>
       </div>
