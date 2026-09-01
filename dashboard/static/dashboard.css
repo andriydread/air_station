@@ -321,6 +321,14 @@ button.button-danger {
 .table-scroll { overflow-x: auto; }
 .stats-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .stats-table th, .stats-table td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); }
+/* Narrow right-aligned number columns so min/avg/max sit together instead
+   of spreading across the whole panel; the metric column absorbs the rest. */
+.stats-table th:not(:first-child), .stats-table td:not(:first-child) {
+  text-align: right;
+  width: 90px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .stats-table th { color: var(--muted); font-weight: 600; font-size: 13px; }
 .stats-table tr:last-child td { border-bottom: none; }
 
