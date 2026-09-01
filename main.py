@@ -213,7 +213,12 @@ class AirMonitor:
         self._weather_fail_streak = 0
         self._weather_unhealthy_after = 2
 
-        self.weather: Dict[str, Any] = {}
+        # Start from the last stored forecast so the first display frame after
+        # a restart shows weather instead of N/A while the fresh fetch is
+        # still racing Wi-Fi coming up. (JSON round-trip: keys are strings —
+        # the renderer checks both.)
+        cached_weather = self.database.get_state("latest_weather")
+        self.weather: Dict[str, Any] = (cached_weather or {}).get("value") or {}
         self._calibration_reminder_sent = False
         self.last_display_snapshot: Optional[Dict[str, Any]] = None
         self._last_display_write = None  # (mode, snapshot minus timestamp)

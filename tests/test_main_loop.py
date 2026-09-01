@@ -261,6 +261,29 @@ def test_display_snapshot_carries_health_status(tmp_path):
         monitor.database.close()
 
 
+# --- Cached forecast survives restarts ------------------------------------------
+
+
+def test_restart_reuses_stored_forecast_for_first_display_frame(tmp_path):
+    from airmonitor.config import Config
+    from airmonitor.storage import AirMonitorDatabase
+
+    db_path = str(tmp_path / "wcache.db")
+    seed = AirMonitorDatabase(db_path)
+    seed.set_state("latest_weather", {1: ["Now", 20, 10, 5, 1]})
+    seed.close()
+
+    config = Config(database_path=db_path, log_file=str(tmp_path / "wcache.log"))
+    monitor = main_module.AirMonitor(config)
+    try:
+        # JSON round-trip stringifies the keys; the renderer checks both forms.
+        assert monitor.weather == {"1": ["Now", 20, 10, 5, 1]}
+        monitor.update_display(False)
+        assert monitor.last_display_snapshot["1"] == ["Now", 20, 10, 5, 1]
+    finally:
+        monitor.database.close()
+
+
 # --- Weather failure debounce -------------------------------------------------
 
 
