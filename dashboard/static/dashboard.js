@@ -499,10 +499,13 @@ function rangeQuery() {
   return `hours=${range.hours}`;
 }
 
+let lastBucketSeconds = 60;
+
 async function refreshHistory() {
   const token = ++historyRequestToken;
   const data = await fetchJson(`/api/history?${rangeQuery()}`);
   if (token !== historyRequestToken) return; // superseded by a newer request
+  lastBucketSeconds = data.bucket_seconds || 60;
   lastHistoryRows = data.rows || [];
   renderAllCharts(lastHistoryRows);
   renderStats(data.stats || {}, data.from_ts, data.to_ts);
@@ -557,6 +560,45 @@ function computeTicks(min, max, count) {
   return Array.from({ length: count }, (_, index) => min + step * index);
 }
 
+// Threshold guide lines, matching the backend's category boundaries
+// (get_co2_category / get_aqi_category) so "crossed into stuffy" is
+// readable straight off the chart.
+const chartGuides = {
+  co2: [{ at: 1000, label: 'stuffy' }, { at: 1500, label: 'ventilate' }],
+  aqi: [{ at: 50, label: 'good' }, { at: 100, label: 'moderate' }, { at: 175, label: 'unhealthy' }],
+};
+
+function formatTickLabel(tick, yRange) {
+  return yRange >= 50 ? String(Math.round(tick)) : tick.toFixed(1);
+}
+
+function nightRects(xMin, xMax, toX, padding, height) {
+  // Local 22:00–07:00 shading; only worthwhile on short ranges where the
+  // stripes aid orientation instead of becoming noise.
+  if (xMax - xMin > 3 * 86400) return '';
+  const rects = [];
+  const cursor = new Date(xMin * 1000);
+  cursor.setHours(0, 0, 0, 0);
+  cursor.setDate(cursor.getDate() - 1);
+  while (cursor.getTime() / 1000 < xMax) {
+    const nightStart = new Date(cursor);
+    nightStart.setHours(22, 0, 0, 0);
+    const nightEnd = new Date(cursor);
+    nightEnd.setDate(nightEnd.getDate() + 1);
+    nightEnd.setHours(7, 0, 0, 0);
+    const start = Math.max(nightStart.getTime() / 1000, xMin);
+    const end = Math.min(nightEnd.getTime() / 1000, xMax);
+    if (end > start) {
+      rects.push(
+        `<rect x="${toX(start)}" y="${padding.top}" width="${toX(end) - toX(start)}" ` +
+        `height="${height - padding.top - padding.bottom}" fill="currentColor" opacity="0.05"></rect>`
+      );
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return rects.join('');
+}
+
 function formatAxisTimestamp(seconds, spanSeconds) {
   const date = new Date(seconds * 1000);
   const two = (n) => String(n).padStart(2, '0');
@@ -591,34 +633,63 @@ function renderLineChart(svgId, rows, key, config) {
   const yRange = yBounds.max - yBounds.min || 1;
   const span = xMax - xMin;
 
-  const coordinates = points.map((row) => ({
-    x: padding.left + ((row.timestamp_ts - xMin) / (xMax - xMin)) * (width - padding.left - padding.right),
-    y: padding.top + (height - padding.top - padding.bottom) * (1 - ((row[key] - yBounds.min) / yRange)),
-    row,
-  }));
+  const toX = (ts) =>
+    padding.left + ((ts - xMin) / (xMax - xMin)) * (width - padding.left - padding.right);
+  const toY = (value) =>
+    padding.top + (height - padding.top - padding.bottom) * (1 - ((value - yBounds.min) / yRange));
 
-  const polyline = coordinates.map((point) => `${point.x},${point.y}`).join(' ');
+  const coordinates = points.map((row) => ({ x: toX(row.timestamp_ts), y: toY(row[key]), row }));
+
+  // Split into segments across data gaps: an offline stretch must render as
+  // a gap, not a confident straight line bridging fabricated values.
+  const gapSeconds = Math.max(lastBucketSeconds * 2, 120);
+  const segments = [];
+  let current = [];
+  coordinates.forEach((point, index) => {
+    if (index > 0 &&
+        point.row.timestamp_ts - coordinates[index - 1].row.timestamp_ts > gapSeconds) {
+      segments.push(current);
+      current = [];
+    }
+    current.push(point);
+  });
+  segments.push(current);
+  const series = segments.map((segment) =>
+    segment.length === 1
+      ? `<circle cx="${segment[0].x}" cy="${segment[0].y}" r="4" fill="${config.color}"></circle>`
+      : `<polyline fill="none" stroke="${config.color}" stroke-width="3" points="${segment.map((p) => `${p.x},${p.y}`).join(' ')}"></polyline>`
+  ).join('');
+
   const horizontalGrid = computeTicks(yBounds.min, yBounds.max, 5).map((tick) => {
-    const y = padding.top + (height - padding.top - padding.bottom) * (1 - ((tick - yBounds.min) / yRange));
+    const y = toY(tick);
     return `
       <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="${colors.chartGrid}" stroke-dasharray="4 4" />
-      <text x="8" y="${y + 4}" fill="${colors.chartLabel}" font-size="12">${tick.toFixed(1)}</text>`;
+      <text x="8" y="${y + 4}" fill="${colors.chartLabel}" font-size="12">${formatTickLabel(tick, yRange)}</text>`;
   }).join('');
   const verticalTicks = computeTicks(xMin, xMax, 5).map((tick) => {
-    const x = padding.left + ((tick - xMin) / (xMax - xMin)) * (width - padding.left - padding.right);
+    const x = toX(tick);
     return `
       <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="${colors.chartGridSoft}" />
       <text x="${x}" y="${height - 12}" text-anchor="middle" fill="${colors.chartLabel}" font-size="12">${formatAxisTimestamp(tick, span)}</text>`;
   }).join('');
+  const guides = (chartGuides[key] || [])
+    .filter((guide) => guide.at > yBounds.min && guide.at < yBounds.max)
+    .map((guide) => {
+      const y = toY(guide.at);
+      return `
+      <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="${colors.chartLabel}" stroke-width="1" stroke-dasharray="2 5" opacity="0.6" />
+      <text x="${width - padding.right - 4}" y="${y - 4}" text-anchor="end" fill="${colors.chartLabel}" font-size="10">${guide.at} · ${guide.label}</text>`;
+    }).join('');
 
   svg.innerHTML = `
     <rect x="0" y="0" width="${width}" height="${height}" fill="transparent"></rect>
+    <g style="color:${colors.chartLabel}">${nightRects(xMin, xMax, toX, padding, height)}</g>
     ${horizontalGrid}
     ${verticalTicks}
+    ${guides}
     <line id="crosshair-${svgId}" x1="0" y1="${padding.top}" x2="0" y2="${height - padding.bottom}" stroke="${config.color}" stroke-width="1.5" stroke-dasharray="4 4" opacity="0"></line>
     <circle id="focus-${svgId}" cx="0" cy="0" r="5" fill="${config.color}" stroke="${colors.paper}" stroke-width="2" opacity="0"></circle>
-    <polyline fill="none" stroke="${config.color}" stroke-width="3" points="${polyline}"></polyline>
-    ${coordinates.length === 1 ? `<circle cx="${coordinates[0].x}" cy="${coordinates[0].y}" r="4" fill="${config.color}"></circle>` : ''}`;
+    ${series}`;
 
   chartState.set(svgId, { coordinates, formatValue: config.formatter, width, height });
 }
@@ -634,6 +705,30 @@ function hideChartTooltip(svgId) {
 
 function hideAllChartTooltips() {
   chartState.forEach((_state, id) => hideChartTooltip(id));
+}
+
+// All six charts render the same rows, so one hover can move every
+// crosshair to the same moment — cause-and-effect reading across metrics.
+function syncCrosshairs(sourceId, timestampTs) {
+  chartState.forEach((state, id) => {
+    if (id === sourceId || !state.coordinates.length) return;
+    let nearest = state.coordinates[0];
+    for (const point of state.coordinates) {
+      if (Math.abs(point.row.timestamp_ts - timestampTs)
+          < Math.abs(nearest.row.timestamp_ts - timestampTs)) {
+        nearest = point;
+      }
+    }
+    const crosshair = document.getElementById(`crosshair-${id}`);
+    const focus = document.getElementById(`focus-${id}`);
+    if (!crosshair || !focus) return;
+    crosshair.setAttribute('x1', nearest.x);
+    crosshair.setAttribute('x2', nearest.x);
+    crosshair.setAttribute('opacity', '1');
+    focus.setAttribute('cx', nearest.x);
+    focus.setAttribute('cy', nearest.y);
+    focus.setAttribute('opacity', '1');
+  });
 }
 
 function installChartHover(svgId) {
@@ -661,6 +756,7 @@ function installChartHover(svgId) {
     tooltip.style.opacity = '1';
     tooltip.style.left = `${(nearest.x / state.width) * rect.width}px`;
     tooltip.style.top = `${(nearest.y / state.height) * rect.height - 10}px`;
+    syncCrosshairs(svgId, nearest.row.timestamp_ts);
   };
 
   // Pointer events instead of mouse events: a tap pins the tooltip (there
@@ -670,7 +766,7 @@ function installChartHover(svgId) {
     if (event.pointerType === 'mouse') show(event);
   });
   svg.addEventListener('pointerdown', show);
-  svg.addEventListener('mouseleave', () => hideChartTooltip(svgId));
+  svg.addEventListener('mouseleave', hideAllChartTooltips);
 }
 
 document.addEventListener('pointerdown', (event) => {
