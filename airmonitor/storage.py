@@ -461,6 +461,18 @@ class AirMonitorDatabase:
 
     # --- Dashboard summary --------------------------------------------------
 
+    def database_stats(self) -> Dict[str, Any]:
+        """Row count and on-disk size (main file + WAL/SHM) for the dashboard."""
+        count = self._query("SELECT COUNT(*) AS n FROM measurements")[0]["n"]
+        size = 0
+        for suffix in ("", "-wal", "-shm"):
+            candidate = Path(str(self.path) + suffix)
+            try:
+                size += candidate.stat().st_size
+            except OSError:
+                pass
+        return {"measurements": count, "size_bytes": size}
+
     def get_dashboard_summary(self) -> Dict[str, Any]:
         return {
             "latest_measurement": self.get_latest_measurement(),

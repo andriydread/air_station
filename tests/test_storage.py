@@ -14,6 +14,18 @@ def database(tmp_path):
     db.close()
 
 
+def test_database_stats_counts_rows_and_disk_size(database):
+    assert database.database_stats() == {
+        "measurements": 0,
+        "size_bytes": database.database_stats()["size_bytes"],
+    }
+    for _ in range(3):
+        database.insert_measurement({"co2": 600, "temp": 21.0, "humid": 45.0})
+    stats = database.database_stats()
+    assert stats["measurements"] == 3
+    assert stats["size_bytes"] > 0
+
+
 def test_insert_and_latest_roundtrip(database):
     database.insert_measurement({"co2": 612.4, "temp": 21.37, "humid": 44.2, "pm25": 3.456})
     latest = database.get_latest_measurement()

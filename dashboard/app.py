@@ -241,12 +241,24 @@ def create_app() -> Flask:
         is_running = bool(payload.get("running"))
         return jsonify({"ok": is_running, "collector": payload})
 
+    # COUNT(*) walks the whole measurements table (~750k rows at full
+    # retention) — too heavy for the 10s summary poll, so it's cached.
+    db_stats_cache: Dict[str, Any] = {"at": 0.0, "value": None}
+
+    def cached_database_stats() -> Dict[str, Any]:
+        now = time.monotonic()
+        if db_stats_cache["value"] is None or now - db_stats_cache["at"] > 60:
+            db_stats_cache["value"] = database.database_stats()
+            db_stats_cache["at"] = now
+        return db_stats_cache["value"]
+
     @app.get("/api/summary")
     def api_summary() -> Any:
         summary = database.get_dashboard_summary()
         live = summary.get("latest_measurements") or {}
         metrics = live.get("value") or summary.get("latest_measurement") or {}
         summary["aqi"] = compute_aqi_fields(metrics)
+        summary["database"] = cached_database_stats()
         return jsonify(summary)
 
     @app.get("/api/history")

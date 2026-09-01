@@ -29,6 +29,12 @@ def test_health_reflects_collector_state(client):
     assert body["ok"] is True
 
 
+def test_summary_includes_database_stats(client):
+    body = client.get("/api/summary").get_json()
+    assert body["database"]["measurements"] == 1
+    assert body["database"]["size_bytes"] > 0
+
+
 def test_summary_includes_backend_aqi(client):
     body = client.get("/api/summary").get_json()
     # pm25=12, pm10=54 both sit exactly on the AQI-50 breakpoint
