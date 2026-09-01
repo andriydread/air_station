@@ -519,15 +519,9 @@ class AirMonitorDatabase:
         # The hourly rollups mirror the raw data; "delete all history" must
         # not leave months of it resurrectable through the long-range charts.
         self._write("DELETE FROM measurements_hourly")
-        # VACUUM needs the database to itself; the collector writes every few
-        # seconds, so reclaiming space is best-effort — the delete stands.
-        try:
-            self._write("VACUUM")
-        except sqlite3.Error as exc:
-            self.insert_event(
-                "warning", "storage", "vacuum_skipped",
-                f"VACUUM after history delete failed: {exc}",
-            )
+        # Deliberately NO VACUUM: it holds the global lock long enough on a
+        # slow SD card to starve the collector's writes past its 10s busy
+        # timeout. Freed pages are simply reused by future inserts.
         return int(deleted)
 
     def prune(self, keep_measurements_days: int, keep_events_days: int) -> Dict[str, int]:

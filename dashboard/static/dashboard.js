@@ -374,20 +374,27 @@ function renderSparkline(svgId, rows, key) {
   svg.innerHTML = `<polyline fill="none" stroke="currentColor" stroke-width="2" points="${line}"></polyline>`;
 }
 
-function reloadPreview() {
+let previewObjectUrl = null;
+
+async function reloadPreview() {
   const image = document.getElementById('display-preview');
   const note = document.getElementById('preview-note');
-  const probe = new Image();
-  probe.onload = () => {
-    image.src = probe.src;
+  try {
+    // Stable URL on purpose: the server ETags the snapshot, so an unchanged
+    // preview revalidates as a free 304 (served from the browser cache)
+    // instead of a fresh server-side render every poll.
+    const response = await fetch('/api/display-preview.png');
+    if (!response.ok) throw new Error(`preview ${response.status}`);
+    const blob = await response.blob();
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = URL.createObjectURL(blob);
+    image.src = previewObjectUrl;
     image.hidden = false;
     note.hidden = true;
-  };
-  probe.onerror = () => {
+  } catch (_error) {
     image.hidden = true;
     note.hidden = false;
-  };
-  probe.src = `/api/display-preview.png?t=${Date.now()}`;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -243,3 +243,19 @@ def test_system_commands_require_confirmation(client):
         json={"command": "system_restart_web", "payload": {"confirmed": True}},
     )
     assert accepted.status_code == 202
+
+
+def test_display_preview_etag_roundtrip(client):
+    seed = AirMonitorDatabase(__import__("os").environ["AIRMONITOR_DATABASE_PATH"])
+    seed.set_state("latest_display_snapshot", {"mode": "partial", "snapshot": {"co2": 700}})
+    seed.close()
+
+    first = client.get("/api/display-preview.png")
+    assert first.status_code == 200
+    etag = first.headers["ETag"]
+    assert first.headers["Cache-Control"] == "no-cache"
+
+    revalidated = client.get(
+        "/api/display-preview.png", headers={"If-None-Match": etag}
+    )
+    assert revalidated.status_code == 304  # unchanged snapshot: no re-render

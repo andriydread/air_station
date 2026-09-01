@@ -208,7 +208,7 @@ def create_app() -> Flask:
     def add_response_headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
-        if request.path.startswith("/api/"):
+        if request.path.startswith("/api/") and "ETag" not in response.headers:
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -346,10 +346,19 @@ def create_app() -> Flask:
 
     @app.get("/api/display-preview.png")
     def api_display_preview() -> Any:
-        """Render exactly what the e-paper shows, from the stored snapshot."""
+        """Render exactly what the e-paper shows, from the stored snapshot.
+
+        ETagged on the snapshot's timestamp: the Live tab polls this every
+        60s and re-rendering an unchanged PIL frame + PNG encode on a Pi
+        Zero is pure waste — a 304 costs nothing. (Trade-off: the clock in
+        the preview header freezes at snapshot time between changes.)
+        """
         state = database.get_state("latest_display_snapshot")
         if state is None or not isinstance(state.get("value"), dict):
             return jsonify({"error": "no display snapshot yet"}), 404
+        etag = f'"{state.get("updated_at_ts")}"'
+        if request.headers.get("If-None-Match") == etag:
+            return Response(status=304, headers={"ETag": etag})
         snapshot = state["value"].get("snapshot") or {}
         if config.display_rotation in (90, 270):
             width, height = 416, 240
@@ -361,7 +370,9 @@ def create_app() -> Flask:
         return Response(
             buffer.getvalue(),
             mimetype="image/png",
-            headers={"Cache-Control": "no-store"},
+            # no-cache (not no-store): the browser may keep it but must
+            # revalidate, which the ETag answers with a 304.
+            headers={"Cache-Control": "no-cache", "ETag": etag},
         )
 
     @app.get("/api/events")

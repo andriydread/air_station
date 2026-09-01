@@ -258,22 +258,22 @@ def test_concurrent_access_is_safe(database):
     assert database.database_stats()["measurements"] == 8 * 50
 
 
-def test_delete_history_survives_vacuum_failure(monkeypatch, database):
-    """B7: a busy database must not turn a completed delete into an error."""
-    import sqlite3 as sqlite3_module
-
+def test_delete_history_never_vacuums(monkeypatch, database):
+    """VACUUM was removed on purpose: on a slow SD card it starves the
+    collector's writes. Inserts must still work fine after a delete."""
     database.insert_measurement({"co2": 500})
+    statements = []
     original = database._write
 
-    def flaky_write(sql, params=()):
-        if sql.strip().upper().startswith("VACUUM"):
-            raise sqlite3_module.OperationalError("database is locked")
+    def spying_write(sql, params=()):
+        statements.append(sql.strip().upper())
         return original(sql, params)
 
-    monkeypatch.setattr(database, "_write", flaky_write)
+    monkeypatch.setattr(database, "_write", spying_write)
     assert database.delete_history() == 1
-    events = database.get_recent_events()
-    assert any(e["event_type"] == "vacuum_skipped" for e in events)
+    assert not any(sql.startswith("VACUUM") for sql in statements)
+    database.insert_measurement({"co2": 600})  # freed pages get reused
+    assert database.get_latest_measurement()["co2"] == 600
 
 
 def test_pending_commands_claimed_exactly_once_across_two_connections(tmp_path):
