@@ -248,8 +248,17 @@ class Scd41:
             return None
         return int(time.monotonic() - self.measurement_started_at)
 
-    def check_calibration_preconditions(self, target_co2: int) -> Dict[str, Any]:
-        """Refuse a forced calibration unless the sensor is warmed up and stable."""
+    def check_calibration_preconditions(
+        self, target_co2: int, allow_large_offset: bool = False
+    ) -> Dict[str, Any]:
+        """Refuse a forced calibration unless the sensor is warmed up and stable.
+
+        The distance-to-target check can't tell "room air is genuinely high"
+        (calibrating then would program a wrong offset) from "the sensor has
+        drifted far off" (the exact thing forced calibration fixes), so
+        ``allow_large_offset`` skips that one check; warm-up and stability
+        are always enforced.
+        """
         cfg = self.config
         runtime = self.runtime_seconds() or 0
         if runtime < cfg.calibration_min_runtime:
@@ -270,15 +279,23 @@ class Scd41:
                 f"limit is {cfg.calibration_max_drift_ppm} ppm"
             )
         average = sum(samples) / len(samples)
-        if abs(average - target_co2) > cfg.calibration_max_reference_delta_ppm:
+        delta = abs(average - target_co2)
+        if delta > cfg.calibration_max_reference_delta_ppm and not allow_large_offset:
             raise RuntimeError(
-                f"Readings average {average:.1f} ppm, too far from target {target_co2} ppm"
+                f"Readings average {average:.1f} ppm, more than "
+                f"{cfg.calibration_max_reference_delta_ppm} ppm from target {target_co2} ppm. "
+                "If the air here is NOT at the target level, ventilate the room or move "
+                "the station to fresh outdoor air (~420 ppm), wait ~10 minutes for readings "
+                "to settle, then retry. Only if the sensor itself has drifted far off, "
+                "retry with the drift override enabled."
             )
         return {
             "runtime_seconds": runtime,
             "sample_count": len(samples),
             "average_co2": round(average, 1),
             "spread_co2": round(spread, 1),
+            "reference_delta_ppm": round(delta, 1),
+            "large_offset_allowed": allow_large_offset,
         }
 
     def force_calibration(self, target_co2: int, persist: bool) -> int:

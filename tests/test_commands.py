@@ -149,6 +149,28 @@ def test_scd41_calibration_refused_when_unstable(app, monkeypatch):
     assert "stable" in row["result"]["error"]
 
 
+def test_scd41_calibration_far_from_target(app, monkeypatch):
+    wrapper, device = _warmed_scd41(monkeypatch, StubEvents())
+    now = time.monotonic()
+    wrapper.recent_valid_samples.clear()
+    wrapper.recent_valid_samples.extend([(now - 5, 1460.0), (now - 3, 1465.0), (now - 1, 1463.0)])
+    app.scd41 = wrapper
+
+    blocked = run_command(
+        app, "scd41_force_calibration", {"target_co2": 420, "confirmed": True}
+    )
+    assert blocked["status"] == "failed"
+    assert "drift override" in blocked["result"]["error"]
+
+    allowed = run_command(
+        app, "scd41_force_calibration",
+        {"target_co2": 420, "confirmed": True, "allow_large_offset": True},
+    )
+    assert allowed["status"] == "succeeded"
+    assert allowed["result"]["correction"] == device.calibration_result
+    assert allowed["result"]["validation"]["large_offset_allowed"] is True
+
+
 def test_scd41_set_asc(app, monkeypatch):
     app.scd41, device = _warmed_scd41(monkeypatch, StubEvents())
     row = run_command(app, "scd41_set_asc", {"enabled": True})

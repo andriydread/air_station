@@ -144,10 +144,15 @@ def validate_scd41_calibration(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("target_co2 must be between 350 and 2000 ppm")
     confirmed = parse_bool(payload.get("confirmed"), "confirmed")
     persist = True if payload.get("persist") is None else parse_bool(payload.get("persist"), "persist")
+    allow_large_offset = (
+        False if payload.get("allow_large_offset") is None
+        else parse_bool(payload.get("allow_large_offset"), "allow_large_offset")
+    )
     return {
         "target_co2": target_co2,
         "confirmed": confirmed,
         "persist": persist,
+        "allow_large_offset": allow_large_offset,
     }
 
 

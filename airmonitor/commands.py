@@ -134,6 +134,7 @@ class CommandProcessor:
         scd41 = self._require_sensor(self.app.scd41, "SCD41")
         target_co2 = as_int(payload.get("target_co2", 420), "target_co2")
         persist = as_bool(payload.get("persist"), True)
+        allow_large_offset = as_bool(payload.get("allow_large_offset"), False)
         if not as_bool(payload.get("confirmed"), False):
             raise ValueError(
                 "Forced calibration requires explicit confirmation that the sensor is in known stable air"
@@ -141,7 +142,7 @@ class CommandProcessor:
         if not 350 <= target_co2 <= 2000:
             raise ValueError("target_co2 must be between 350 and 2000 ppm")
 
-        validation = scd41.check_calibration_preconditions(target_co2)
+        validation = scd41.check_calibration_preconditions(target_co2, allow_large_offset)
         correction = scd41.force_calibration(target_co2, persist)
 
         result = {

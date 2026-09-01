@@ -1,5 +1,7 @@
 """Sensor wrapper tests: good data, bad data, and recovery paths (B3)."""
 
+import time
+
 import pytest
 
 import airmonitor.sensors as sensors
@@ -133,6 +135,28 @@ def test_scd41_calibration_preconditions_refuse_cold_sensor(monkeypatch, events)
     wrapper = sensors.Scd41(object(), Config(), events)
     with pytest.raises(RuntimeError, match="must run"):
         wrapper.check_calibration_preconditions(420)
+
+
+def test_scd41_calibration_reference_delta_override(monkeypatch, events):
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: FakeScd41Device())
+    wrapper = sensors.Scd41(object(), Config(), events)
+    now = time.monotonic()
+    wrapper.measurement_started_at = now - 3600
+    # Stable readings far above the target: a drifted sensor (or a stuffy room).
+    wrapper.recent_valid_samples.extend([(now - 5, 1460.0), (now - 3, 1465.0), (now - 1, 1463.0)])
+
+    with pytest.raises(RuntimeError, match="drift override"):
+        wrapper.check_calibration_preconditions(420)
+
+    result = wrapper.check_calibration_preconditions(420, allow_large_offset=True)
+    assert result["large_offset_allowed"] is True
+    assert result["reference_delta_ppm"] > 1000
+
+    # The override never bypasses the stability check.
+    wrapper.recent_valid_samples.clear()
+    wrapper.recent_valid_samples.extend([(now - 5, 1400.0), (now - 3, 1900.0), (now - 1, 1450.0)])
+    with pytest.raises(RuntimeError, match="stable"):
+        wrapper.check_calibration_preconditions(420, allow_large_offset=True)
 
 
 def test_scd41_rejected_calibration_raises(monkeypatch, events):

@@ -873,6 +873,7 @@ function installActions() {
     submitCommand('scd41_force_calibration', {
       target_co2: Number(document.getElementById('target-co2').value),
       confirmed: document.getElementById('scd41-calibration-confirm').checked,
+      allow_large_offset: document.getElementById('scd41-calibration-drift').checked,
       persist: document.getElementById('scd41-calibration-persist').checked,
     }).catch((e) => toast(e.message, 'error'));
   });
