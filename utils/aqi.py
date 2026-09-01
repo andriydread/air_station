@@ -4,6 +4,12 @@ def calculate_aqi(pm25: float, pm10: float) -> int:
     The final AQI is always the highest (worst) index of all pollutants measured.
     """
 
+    # EPA truncates concentrations before breakpoint lookup (PM2.5 to one
+    # decimal, PM10 to integer); without it, gap values like 35.45 select the
+    # bracket above and interpolate to 101 instead of the correct 100.
+    pm25 = int(max(0.0, pm25) * 10) / 10.0
+    pm10 = int(max(0.0, pm10))
+
     def _linear(aqi_high, aqi_low, conc_high, conc_low, conc):
         """Standard EPA linear interpolation formula."""
         return round(

@@ -5,6 +5,7 @@ time) import from here, so the definition of "believable data" can never
 silently diverge between the two.
 """
 
+import math
 from typing import Any, Optional
 
 DEFAULT_MIN_VALID_CO2_PPM = 350
@@ -21,6 +22,11 @@ def clean_value(
     if value is None:
         return None
     number = float(value)
+    # NaN/inf slip through ordinary comparisons (NaN fails every one, inf
+    # passes >= 0) and json.dumps writes literal NaN — which browsers refuse
+    # to parse. Non-finite is never a believable reading.
+    if not math.isfinite(number):
+        return None
     if field == "co2":
         number = int(round(number))
         return number if number >= min_valid_co2_ppm else None

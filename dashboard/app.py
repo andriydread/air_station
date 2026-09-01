@@ -1,6 +1,7 @@
 import csv
 import io
 import logging
+import math
 import os
 import time
 import traceback
@@ -111,7 +112,11 @@ def parse_bool(value: Any, field_name: str) -> bool:
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 def compute_aqi_fields(metrics: Dict[str, Any]) -> Dict[str, Any]:

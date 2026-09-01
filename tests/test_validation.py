@@ -41,3 +41,12 @@ def test_storage_honors_configured_co2_floor(tmp_path):
         assert db.get_latest_measurement()["co2"] == 320
     finally:
         db.close()
+
+
+def test_non_finite_values_are_never_believable():
+    from math import inf, nan
+
+    for field in ("co2", "temp", "humid", "pm25", "tps"):
+        assert clean_value(field, nan) is None
+        assert clean_value(field, inf) is None
+        assert clean_value(field, -inf) is None

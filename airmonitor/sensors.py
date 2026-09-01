@@ -13,6 +13,7 @@ it is restarted (this happened in production in July 2026).
 """
 
 import logging
+import math
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -37,6 +38,11 @@ READ_FAILURE_REINIT_THRESHOLD = 30
 # The SPS30 fan cleaning runs ~10s at full speed; readings taken during it
 # are not representative air, so they are blanked (with margin).
 FAN_CLEAN_BLANK_SECONDS = 15.0
+
+# A device that answers I2C but never raises data_ready is stuck in a third
+# way (neither hard errors nor invalid values); after this long without a
+# successful read it gets the same re-init treatment.
+NOT_READY_REINIT_SECONDS = 600.0
 
 
 class ReinitBackoff:
@@ -111,6 +117,8 @@ class Scd41:
         # read; the cross-check compares them against the SHT41.
         self.last_temperature: Optional[float] = None
         self.last_humidity: Optional[float] = None
+        self.last_ambient_at: Optional[float] = None
+        self._last_data_at: Optional[float] = None
         self.measurement_started_at: Optional[float] = None
         # (monotonic time, ppm) pairs used by the calibration safety checks
         self.recent_valid_samples: deque = deque()
@@ -149,6 +157,7 @@ class Scd41:
         self.asc_enabled = bool(self.device.self_calibration_enabled)
         self.device.start_periodic_measurement()
         self.measurement_started_at = time.monotonic()
+        self._last_data_at = time.monotonic()
         self.recent_valid_samples.clear()
         self.invalid_streak = 0
 
@@ -159,6 +168,7 @@ class Scd41:
         try:
             if not self.device.data_ready:
                 self.failure_streak = 0
+                self._check_never_ready()
                 return None
             co2 = float(self.device.CO2)
             # The transaction itself worked, so the bus/device are alive —
@@ -169,14 +179,17 @@ class Scd41:
                 return None
             self.invalid_streak = 0
             now = time.monotonic()
+            self._last_data_at = now
             self.recent_valid_samples.append((now, co2))
             self._trim_recent_samples(now)
             try:
                 self.last_temperature = float(self.device.temperature)
                 self.last_humidity = float(self.device.relative_humidity)
+                self.last_ambient_at = now
             except Exception:
                 self.last_temperature = None
                 self.last_humidity = None
+                self.last_ambient_at = None
             self.health.ok()
             return co2
         except Exception as exc:
@@ -185,6 +198,43 @@ class Scd41:
             self.events.log(logging.ERROR, "scd41", "read_failed", f"Failed to read SCD41: {exc}")
             self._register_read_failure()
             return None
+
+    def _check_never_ready(self) -> None:
+        """Re-init a device that answers I2C but never becomes data-ready.
+
+        Neither the hard-error streak nor the invalid-value streak covers
+        this stuck mode: read() used to just return None forever with the
+        sensor still marked healthy.
+        """
+        if self._last_data_at is None:
+            self._last_data_at = time.monotonic()
+            return
+        if time.monotonic() - self._last_data_at < NOT_READY_REINIT_SECONDS:
+            return
+        self.health.failed(
+            f"No reading for {int(NOT_READY_REINIT_SECONDS)}s (data_ready never set)"
+        )
+        self.events.log(
+            logging.WARNING, "scd41", "auto_reinit",
+            f"Re-initializing SCD41: no data-ready for {int(NOT_READY_REINIT_SECONDS)}s",
+        )
+        # Reset the timer BEFORE attempting: a failing re-init must wait a
+        # full window, not retry every 10s sample.
+        self._last_data_at = time.monotonic()
+        self.reinitialize()
+
+    def recent_ambient(self, max_age: float = 60.0) -> Tuple[Optional[float], Optional[float]]:
+        """SCD41 ambient values for the cross-check, or (None, None) if stale.
+
+        Comparing a live SHT41 against hours-old SCD41 values produces false
+        sensor_disagreement accusations during an SCD41 outage.
+        """
+        if (
+            self.last_ambient_at is None
+            or time.monotonic() - self.last_ambient_at > max_age
+        ):
+            return None, None
+        return self.last_temperature, self.last_humidity
 
     def _register_read_failure(self) -> None:
         """Re-create the device after a long streak of hard read errors.
@@ -253,10 +303,15 @@ class Scd41:
 
         Same numbers `check_calibration_preconditions` enforces, but as data:
         the UI shows which conditions pass and enables the button only when
-        the sensor is actually ready.
+        the sensor is actually ready. Called from the status-publish path on
+        several threads, so it must only SNAPSHOT the deque — mutating it
+        here would race the read() thread's append/trim.
         """
-        self._trim_recent_samples(time.monotonic())
-        samples = [ppm for _, ppm in self.recent_valid_samples]
+        now = time.monotonic()
+        window = self.config.calibration_window
+        samples = [
+            ppm for ts, ppm in list(self.recent_valid_samples) if now - ts <= window
+        ]
         average = sum(samples) / len(samples) if samples else None
         spread = max(samples) - min(samples) if samples else None
         return {
@@ -333,20 +388,28 @@ class Scd41:
             self._start_measurement()
 
     def set_asc(self, enabled: bool, persist: bool) -> bool:
-        """Enable/disable automatic self-calibration. Returns the applied value."""
+        """Enable/disable automatic self-calibration. Returns the applied value.
+
+        `asc_enabled` is only updated from the device read-back AFTER a
+        successful write — a failed write must keep reporting the setting
+        the device actually holds (calibration reminders key off it).
+        """
         if self.device is None:
             raise RuntimeError("SCD41 is not initialized")
         self.device.stop_periodic_measurement()
         time.sleep(1.0)
         try:
-            self.asc_enabled = enabled
             self.device.self_calibration_enabled = enabled
             self.asc_enabled = bool(self.device.self_calibration_enabled)
             if persist:
                 self.device.persist_settings()
             return self.asc_enabled
         finally:
-            self._start_measurement()
+            try:
+                self._start_measurement()
+            except Exception:
+                # Never mask the original error with a restart failure.
+                LOGGER.exception("Failed to restart measurement after ASC change")
 
     def stop(self) -> None:
         if self.device is None:
@@ -440,6 +503,7 @@ class Sps30:
         self.auto_cleaning_interval: Optional[int] = None
         self.last_manual_clean_at: Optional[float] = None
         self._blank_until: Optional[float] = None
+        self._last_data_at: Optional[float] = None
         self.failure_streak = 0
         self._backoff = ReinitBackoff()
         self._try_init()
@@ -450,6 +514,7 @@ class Sps30:
             device.wakeup()
             device.start_measurement()
             self.device = device
+            self._last_data_at = time.monotonic()
             self.auto_cleaning_interval = device.auto_cleaning_interval
             self.failure_streak = 0
             self.health.ok()
@@ -478,15 +543,20 @@ class Sps30:
             self._blank_until = None
         try:
             if not self.device.data_ready:
+                self._check_never_ready()
                 return None
             data = self.device.read()
             values = {}
             for field in self.FIELDS:
                 value = float(data[field])
-                if value < 0:
-                    raise ValueError(f"{field} must not be negative")
+                # NaN survives every ordinary comparison and a CRC collision
+                # can deliver one with a "valid" frame; reject non-finite
+                # alongside negatives.
+                if not math.isfinite(value) or value < 0:
+                    raise ValueError(f"{field} reading implausible: {value}")
                 values[field] = value
             self.failure_streak = 0
+            self._last_data_at = time.monotonic()
             self.health.ok()
             return values
         except Exception as exc:
@@ -495,6 +565,24 @@ class Sps30:
             self.events.log(logging.ERROR, "sps30", "read_failed", f"Failed to read SPS30: {exc}")
             self._register_read_failure()
             return None
+
+    def _check_never_ready(self) -> None:
+        """Re-create a device that answers I2C but never signals data-ready."""
+        if self._last_data_at is None:
+            self._last_data_at = time.monotonic()
+            return
+        if time.monotonic() - self._last_data_at < NOT_READY_REINIT_SECONDS:
+            return
+        self.health.failed(
+            f"No reading for {int(NOT_READY_REINIT_SECONDS)}s (data_ready never set)"
+        )
+        self.events.log(
+            logging.WARNING, "sps30", "auto_reinit",
+            f"Re-initializing SPS30: no data-ready for {int(NOT_READY_REINIT_SECONDS)}s",
+        )
+        self._last_data_at = time.monotonic()  # a failing re-init waits a full window
+        self.device = None
+        self._try_init()
 
     def _register_read_failure(self) -> None:
         """Re-create the device after a long streak of failed reads.

@@ -346,10 +346,11 @@ class AirMonitor:
             if ambient is not None:
                 sample["temp"], sample["humid"] = ambient
                 if self.scd41 is not None:
-                    self.cross_check.compare(
-                        ambient[0], ambient[1],
-                        self.scd41.last_temperature, self.scd41.last_humidity,
-                    )
+                    # recent_ambient() goes (None, None) when the SCD41 has
+                    # been quiet — comparing live SHT41 values against stale
+                    # ones would accuse a healthy sensor of lying.
+                    self.cross_check.compare(ambient[0], ambient[1],
+                                             *self.scd41.recent_ambient())
             else:
                 self.readings.report_stale("temp", "sht41")
                 self.readings.report_stale("humid", "sht41")
@@ -625,15 +626,18 @@ class AirMonitor:
             "sps30_auto_cleaning_interval_seconds": (
                 self.sps30.auto_cleaning_interval if self.sps30 else None
             ),
+            # Copies, not live references: publish_status runs on several
+            # threads and json.dumps over a dict another thread is growing
+            # raises "dictionary changed size during iteration".
             "sensors": {
-                "i2c": self.i2c_health.state,
-                "scd41": self.scd41.health.state if self.scd41 else self._missing("SCD41"),
-                "sht41": self.sht41.health.state if self.sht41 else self._missing("SHT41"),
-                "sps30": self.sps30.health.state if self.sps30 else self._missing("SPS30"),
-                "display": self.display_health.state,
-                "weather": self.weather_health.state,
-                "network": self.network_state,
-                "power": self.power.state,
+                "i2c": dict(self.i2c_health.state),
+                "scd41": dict(self.scd41.health.state) if self.scd41 else self._missing("SCD41"),
+                "sht41": dict(self.sht41.health.state) if self.sht41 else self._missing("SHT41"),
+                "sps30": dict(self.sps30.health.state) if self.sps30 else self._missing("SPS30"),
+                "display": dict(self.display_health.state),
+                "weather": dict(self.weather_health.state),
+                "network": dict(self.network_state),
+                "power": dict(self.power.state),
             },
         }
 

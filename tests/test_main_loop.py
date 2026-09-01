@@ -261,6 +261,44 @@ def test_display_snapshot_carries_health_status(tmp_path):
         monitor.database.close()
 
 
+# --- NaN never reaches storage, state JSON, or the display ----------------------
+
+
+def test_nan_reading_never_poisons_state_or_display(tmp_path, monkeypatch):
+    import json as _json
+
+    import pytest
+
+    import airmonitor.sensors as sensors_module
+    from airmonitor.config import Config
+    from tests.mocks.fake_devices import FakeSps30Device
+    from utils.display import create_display_image
+
+    monkeypatch.setattr(sensors_module, "SPS30", lambda _i2c: FakeSps30Device())
+    config = Config(database_path=str(tmp_path / "nan.db"), log_file=str(tmp_path / "nan.log"))
+    monitor = main_module.AirMonitor(config)
+    try:
+        monitor._init_i2c_and_sensors()
+        monitor.collect_sample()  # good baseline
+        monitor.sps30.device.values["pm25"] = float("nan")
+        monitor.collect_sample()
+
+        # The state row must be STRICT json — json.dumps writes literal NaN,
+        # which browsers refuse to parse and which would kill the live tab.
+        raw = monitor.database._query(
+            "SELECT value FROM state WHERE key='latest_measurements'"
+        )[0]["value"]
+        parsed = _json.loads(raw, parse_constant=lambda c: pytest.fail(f"non-finite {c} in state JSON"))
+        assert parsed["pm25"] is None or parsed["pm25"] == 2.5
+
+        # And a frame renders from whatever snapshot resulted.
+        monitor.update_display(False)
+        image = create_display_image(416, 240, monitor.last_display_snapshot, None)
+        assert image.size == (416, 240)
+    finally:
+        monitor.database.close()
+
+
 # --- Cached forecast survives restarts ------------------------------------------
 
 

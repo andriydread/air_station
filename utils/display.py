@@ -4,6 +4,7 @@ Generates the 1-bit Black/White Image to be pushed to the E-Paper display.
 """
 
 import logging
+import math
 import os
 from datetime import datetime
 
@@ -13,8 +14,11 @@ from utils.aqi import calculate_aqi, get_aqi_category, get_co2_category
 
 LOGGER = logging.getLogger("airmonitor")
 
-# Location of icon PNGs
-ICONS_DIR = os.path.join("assets", "icons")
+# Location of icon PNGs — anchored to the source tree, not the CWD, so a
+# consumer started from any directory still finds them.
+ICONS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "icons"
+)
 
 ACTIVE_ICON_MAP = {
     0: "sun.png",
@@ -63,6 +67,13 @@ def draw_left_text(draw, text, font, x_pad, y_pos):
 def draw_right_text(draw, text, font, width, x_pad, y_pos):
     text_w = draw.textlength(text, font=font)
     draw.text((width - text_w - x_pad, y_pos), text, font=font, fill=0)
+
+
+def _finite(value):
+    """The value as float, or None unless it is a real finite number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
 
 
 # --- Status Glyphs ---
@@ -164,20 +175,21 @@ def create_display_image(width, height, data, font_path=None):
     fonts = _load_fonts(font_path)
     font_huge, font_lg, font_md, font_sm, font_xs = fonts
 
-    # Values
-    if isinstance(data.get("pm25"), (int, float)) and isinstance(
-        data.get("pm10"), (int, float)
-    ):
-        aqi_val = calculate_aqi(data.get("pm25"), data.get("pm10"))
+    # Values. NaN passes isinstance(float) but int(nan) raises — one bad
+    # sample must not kill the whole frame, hence _finite everywhere.
+    pm25 = _finite(data.get("pm25"))
+    pm10 = _finite(data.get("pm10"))
+    if pm25 is not None and pm10 is not None:
+        aqi_val = calculate_aqi(pm25, pm10)
         aqi_cat = get_aqi_category(aqi_val)
     else:
         aqi_val = None
         aqi_cat = None
 
-    co2_val = int(data.get("co2")) if isinstance(data.get("co2"), (int, float)) else None
-
-    temp = float(data.get("temp")) if isinstance(data.get("temp"), (int, float)) else None
-    humid = float(data.get("humid")) if isinstance(data.get("humid"), (int, float)) else None
+    co2 = _finite(data.get("co2"))
+    co2_val = int(co2) if co2 is not None else None
+    temp = _finite(data.get("temp"))
+    humid = _finite(data.get("humid"))
 
     # Layout Grid (Horizontal Dividers)
     Y_LINE_1, Y_LINE_2, Y_LINE_3 = 30, 92, 122

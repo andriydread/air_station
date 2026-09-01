@@ -30,3 +30,16 @@ def test_categories():
     assert get_co2_category(1000) == "Moderate"
     assert get_co2_category(1500) == "Unhealthy"
     assert get_co2_category(None) == "N/A"
+
+
+def test_epa_truncation_at_breakpoint_gaps():
+    from utils.aqi import calculate_aqi
+
+    # Values in the gap between brackets truncate DOWN per EPA, and must not
+    # jump to the higher bracket (35.45 -> 100 "Moderate", not 101).
+    assert calculate_aqi(35.45, 0) == 100
+    assert calculate_aqi(12.05, 0) == 50
+    assert calculate_aqi(0, 54.9) == 50
+    # Exact boundaries unchanged.
+    assert calculate_aqi(12.0, 0) == 50
+    assert calculate_aqi(0, 54) == 50

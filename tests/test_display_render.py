@@ -81,3 +81,19 @@ def test_renders_with_unknown_wmo_code_and_missing_font():
     data[1][4] = 12345  # unmapped WMO code falls back to a default icon
     image = create_display_image(WIDTH, HEIGHT, data, None)
     assert image.size == (WIDTH, HEIGHT)
+
+
+def test_renders_with_hostile_values():
+    """NaN/inf/bool/malformed weather must degrade to dashes, not crash."""
+    data = {
+        "co2": float("nan"),
+        "temp": float("inf"),
+        "humid": True,
+        "pm25": float("nan"),
+        "pm10": 700.0,
+        1: ["09:00-12:00", 3.0],  # wrong-length block
+        2: "not-a-list",
+        3: None,
+    }
+    image = create_display_image(WIDTH, HEIGHT, data, FONT)
+    assert image.size == (WIDTH, HEIGHT)

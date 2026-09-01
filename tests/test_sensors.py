@@ -137,6 +137,117 @@ def test_scd41_calibration_preconditions_refuse_cold_sensor(monkeypatch, events)
         wrapper.check_calibration_preconditions(420)
 
 
+def test_scd41_reinits_when_data_ready_never_comes(monkeypatch, events):
+    device = FakeScd41Device()
+    device.data_ready = False
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(sensors.time, "monotonic", lambda: clock["now"])
+    wrapper = sensors.Scd41(object(), Config(), events)
+
+    assert wrapper.read() is None
+    assert wrapper.health.state["healthy"] is True  # not stuck yet
+
+    clock["now"] += sensors.NOT_READY_REINIT_SECONDS + 1
+    assert wrapper.read() is None
+    assert device.reinit_calls == 1
+    assert "auto_reinit" in events.types("scd41")
+
+    # A still-stuck device must wait a full window, not re-init every sample.
+    clock["now"] += 10
+    wrapper.read()
+    assert device.reinit_calls == 1
+
+
+def test_sps30_reinits_when_data_ready_never_comes(monkeypatch, events):
+    device = FakeSps30Device()
+    device.data_ready = False
+    monkeypatch.setattr(sensors, "SPS30", lambda _i2c: device)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(sensors.time, "monotonic", lambda: clock["now"])
+    wrapper = sensors.Sps30(object(), Config(), events)
+
+    assert wrapper.read() is None
+    clock["now"] += sensors.NOT_READY_REINIT_SECONDS + 1
+    assert wrapper.read() is None
+    assert device.start_calls == 2  # re-created and restarted
+    assert "auto_reinit" in events.types("sps30")
+
+
+def test_sps30_rejects_nan_and_inf_readings(monkeypatch, events):
+    device = FakeSps30Device()
+    monkeypatch.setattr(sensors, "SPS30", lambda _i2c: device)
+    wrapper = sensors.Sps30(object(), Config(), events)
+
+    device.values["pm25"] = float("nan")
+    assert wrapper.read() is None
+    assert wrapper.health.state["healthy"] is False
+
+    device.values["pm25"] = float("inf")
+    assert wrapper.read() is None
+
+    device.values["pm25"] = 2.5
+    assert wrapper.read() is not None
+    assert wrapper.health.state["healthy"] is True
+
+
+def test_scd41_ambient_goes_stale_for_the_cross_check(monkeypatch, events):
+    device = FakeScd41Device()
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(sensors.time, "monotonic", lambda: clock["now"])
+    wrapper = sensors.Scd41(object(), Config(), events)
+
+    assert wrapper.read() is not None
+    assert wrapper.recent_ambient() == (23.0, 40.0)
+
+    clock["now"] += 300  # SCD41 quiet for 5 minutes
+    assert wrapper.recent_ambient() == (None, None)
+
+
+def test_scd41_set_asc_failure_keeps_device_truth(monkeypatch, events):
+    device = FakeScd41Device()
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
+    wrapper = sensors.Scd41(object(), Config(), events)
+    assert wrapper.asc_enabled is False
+
+    class BrokenAscDevice:
+        altitude = 0
+
+        def stop_periodic_measurement(self):
+            pass
+
+        def start_periodic_measurement(self):
+            pass
+
+        @property
+        def self_calibration_enabled(self):
+            return False
+
+        @self_calibration_enabled.setter
+        def self_calibration_enabled(self, _value):
+            raise OSError("EEPROM write failed")
+
+    wrapper.device = BrokenAscDevice()
+    with pytest.raises(OSError):
+        wrapper.set_asc(True, persist=False)
+    # The failed write must not report the requested value as applied.
+    assert wrapper.asc_enabled is False
+
+
+def test_scd41_calibration_readiness_does_not_mutate_the_deque(monkeypatch, events):
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: FakeScd41Device())
+    wrapper = sensors.Scd41(object(), Config(), events)
+    now = sensors.time.monotonic()
+    # One sample far outside the window plus two inside.
+    wrapper.recent_valid_samples.extend(
+        [(now - 9999, 500.0), (now - 5, 420.0), (now - 1, 421.0)]
+    )
+    readiness = wrapper.calibration_readiness()
+    assert readiness["sample_count"] == 2  # old sample excluded from the numbers
+    assert len(wrapper.recent_valid_samples) == 3  # ...but the deque untouched
+
+
 def test_scd41_calibration_readiness_snapshot(monkeypatch, events):
     monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: FakeScd41Device())
     wrapper = sensors.Scd41(object(), Config(), events)
@@ -177,13 +288,16 @@ def test_scd41_calibration_reference_delta_override(monkeypatch, events):
         wrapper.check_calibration_preconditions(420, allow_large_offset=True)
 
 
-def test_scd41_rejected_calibration_raises(monkeypatch, events):
+def test_scd41_rejected_calibration_raises_but_restarts_measurement(monkeypatch, events):
     device = FakeScd41Device()
     device.calibration_result = 0xFFFF
     monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
     wrapper = sensors.Scd41(object(), Config(), events)
     with pytest.raises(RuntimeError, match="0xFFFF"):
         wrapper.force_calibration(420, persist=False)
+    # The finally-restart is what keeps CO2 flowing after a failed attempt.
+    assert device.start_calls == 2
+    assert wrapper.measurement_started_at is not None
 
 
 # --- SHT41 ------------------------------------------------------------------
