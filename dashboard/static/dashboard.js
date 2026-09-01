@@ -610,6 +610,106 @@ function renderCommands(commands) {
 }
 
 // ---------------------------------------------------------------------------
+// Custom dropdowns
+// ---------------------------------------------------------------------------
+// Native <select> popups commit on mouse-release on the operator's system
+// (press-and-hold semantics), which made the menus unusable. The native
+// select stays in the DOM as the value store — existing change listeners
+// and .value reads keep working — and if this upgrade ever fails the page
+// falls back to the native control.
+
+function upgradeSelect(select) {
+  const wrapper = document.createElement('span');
+  wrapper.className = 'dropdown';
+  select.parentNode.insertBefore(wrapper, select);
+  wrapper.appendChild(select);
+  select.tabIndex = -1;
+  select.style.display = 'none';
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'dropdown-toggle';
+  toggle.setAttribute('aria-haspopup', 'listbox');
+  toggle.setAttribute('aria-expanded', 'false');
+
+  const menu = document.createElement('ul');
+  menu.className = 'dropdown-menu';
+  menu.setAttribute('role', 'listbox');
+  menu.hidden = true;
+
+  const labelOf = (option) => option.textContent.trim() || option.value;
+  const syncToggle = () => {
+    const selected = select.options[select.selectedIndex];
+    toggle.textContent = selected ? labelOf(selected) : '--';
+  };
+
+  let focusIndex = -1;
+
+  const highlight = () => {
+    menu.querySelectorAll('li').forEach((item, index) => {
+      item.classList.toggle('focused', index === focusIndex);
+    });
+  };
+
+  const close = () => {
+    menu.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    focusIndex = -1;
+  };
+
+  const choose = (index) => {
+    select.selectedIndex = index;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    syncToggle();
+    close();
+  };
+
+  const open = () => {
+    menu.innerHTML = '';
+    Array.from(select.options).forEach((option, index) => {
+      const item = document.createElement('li');
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', index === select.selectedIndex ? 'true' : 'false');
+      item.textContent = labelOf(option);
+      item.addEventListener('click', () => choose(index));
+      menu.appendChild(item);
+    });
+    menu.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+    focusIndex = select.selectedIndex;
+    highlight();
+  };
+
+  toggle.addEventListener('click', () => (menu.hidden ? open() : close()));
+  toggle.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { close(); return; }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (menu.hidden) { open(); return; }
+      const delta = event.key === 'ArrowDown' ? 1 : -1;
+      focusIndex = Math.min(Math.max(focusIndex + delta, 0), select.options.length - 1);
+      highlight();
+      return;
+    }
+    if (event.key === 'Enter' && !menu.hidden) {
+      event.preventDefault();
+      if (focusIndex >= 0) choose(focusIndex);
+    }
+  });
+  document.addEventListener('click', (event) => {
+    if (!menu.hidden && !wrapper.contains(event.target)) close();
+  });
+
+  wrapper.appendChild(toggle);
+  wrapper.appendChild(menu);
+  syncToggle();
+}
+
+function upgradeSelects() {
+  document.querySelectorAll('#event-level, #event-source, #auto-clean-unit').forEach(upgradeSelect);
+}
+
+// ---------------------------------------------------------------------------
 // Controls tab actions
 // ---------------------------------------------------------------------------
 
@@ -784,6 +884,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initTheme();
   startClock();
   ['chart-temp', 'chart-humid', 'chart-co2', 'chart-aqi', 'chart-pm25', 'chart-pm10'].forEach(installChartHover);
+  upgradeSelects();
   installActions();
   installRefreshLoop();
   reloadPreview();
