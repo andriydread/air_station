@@ -254,6 +254,7 @@ function renderSummary(summary) {
   if (!health.ok && health.headline !== '--') problems.push(health.headline);
   if (network.healthy === false) problems.push('Network offline');
   if (power.available !== false && power.healthy === false) problems.push('Power issue');
+  if (collector.sensors?.storage?.healthy === false) problems.push('Low disk space');
   renderStatusStrip(problems);
 
   // Diagnostics-side details rendered from the same summary
@@ -284,6 +285,8 @@ function renderSummary(summary) {
   document.getElementById('database-entries').textContent =
     dbStats.measurements == null ? '--' : dbStats.measurements.toLocaleString();
   document.getElementById('database-size').textContent = formatBytes(dbStats.size_bytes);
+  document.getElementById('database-free').textContent =
+    formatBytes(collector.sensors?.storage?.free_bytes);
   if (!ascCheckboxInitialized && collector.scd41_asc_enabled != null) {
     document.getElementById('scd41-asc-enabled').checked = !!collector.scd41_asc_enabled;
     ascCheckboxInitialized = true;

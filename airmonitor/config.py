@@ -100,6 +100,11 @@ class Config:
     keep_measurements_days: int = 90
     keep_events_days: int = 14
 
+    # Warn when the data partition has less than this much space left; the
+    # most likely terminal failure of an SD-card logger is a full disk that
+    # nothing ever mentioned. 0 disables the check.
+    min_free_disk_mb: int = 200
+
     # A measurement older than this is shown as missing/stale
     measurement_max_age: int = 45
 
@@ -148,6 +153,7 @@ class Config:
             sps30_manual_clean_cooldown=_env_int(
                 "AIRMONITOR_SPS30_MIN_SECONDS_BETWEEN_MANUAL_CLEANS", cls.sps30_manual_clean_cooldown
             ),
+            min_free_disk_mb=_env_int("AIRMONITOR_MIN_FREE_DISK_MB", cls.min_free_disk_mb),
             keep_measurements_days=_env_int("AIRMONITOR_KEEP_MEASUREMENTS_DAYS", cls.keep_measurements_days),
             keep_events_days=_env_int("AIRMONITOR_KEEP_EVENTS_DAYS", cls.keep_events_days),
             measurement_max_age=_env_int("AIRMONITOR_MEASUREMENT_MAX_AGE", cls.measurement_max_age),

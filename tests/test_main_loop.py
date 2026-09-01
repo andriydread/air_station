@@ -499,3 +499,36 @@ def test_display_tick_full_refresh_cadence(monkeypatch, tmp_path):
         assert submitted == [True, False]
     finally:
         monitor.database.close()
+
+
+# --- Disk-space health ----------------------------------------------------------
+
+
+def test_low_disk_space_goes_unhealthy_and_recovers(monkeypatch, tmp_path):
+    from collections import namedtuple
+
+    from airmonitor.config import Config
+
+    Stat = namedtuple("Stat", "f_bavail f_frsize")
+    config = Config(
+        database_path=str(tmp_path / "disk.db"), log_file=str(tmp_path / "disk.log"),
+        min_free_disk_mb=200,
+    )
+    monitor = main_module.AirMonitor(config)
+    try:
+        monkeypatch.setattr(main_module.os, "statvfs", lambda _p: Stat(100_000, 4096))
+        monitor.check_disk()  # ~390 MB free: fine
+        assert monitor.storage_health.state["healthy"] is True
+        assert monitor.storage_health.state["free_bytes"] == 100_000 * 4096
+
+        monkeypatch.setattr(main_module.os, "statvfs", lambda _p: Stat(10_000, 4096))
+        monitor.check_disk()  # ~39 MB free: below the 200 MB threshold
+        assert monitor.storage_health.state["healthy"] is False
+        assert "Low disk space" in monitor.storage_health.state["last_error"]
+        assert monitor._status_payload()["sensors"]["storage"]["healthy"] is False
+
+        monkeypatch.setattr(main_module.os, "statvfs", lambda _p: Stat(200_000, 4096))
+        monitor.check_disk()
+        assert monitor.storage_health.state["healthy"] is True
+    finally:
+        monitor.database.close()

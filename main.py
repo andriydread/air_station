@@ -22,6 +22,7 @@ sampling (airmonitor/workers.py):
 """
 
 import logging
+import os
 import signal
 import sys
 import time
@@ -199,6 +200,7 @@ class AirMonitor:
         self.display_worker = DisplayWorker(self._render, self.events)
         self._workers: List[PeriodicWorker] = []
         self.weather_health = SensorHealth("weather", self.events)
+        self.storage_health = SensorHealth("storage", self.events)
         self.network_state: Dict[str, Any] = {"interface": config.wifi_interface}
         self.rate_guard = RateGuard(self.events)
         self.cross_check = CrossCheck(self.events)
@@ -379,6 +381,25 @@ class AirMonitor:
         # Only the live values are refreshed per sample; the full status
         # document is published on its own slower cadence (status task).
         self.database.set_state("latest_measurements", self.readings.fresh_snapshot())
+
+    def check_disk(self) -> None:
+        """Warn while there is still room to act — a full SD card is the one
+        failure that can't even log itself."""
+        threshold_mb = self.config.min_free_disk_mb
+        try:
+            stat = os.statvfs(str(self.database.path.parent))
+        except OSError as exc:
+            self.storage_health.failed(f"statvfs failed: {exc}")
+            return
+        free_bytes = stat.f_bavail * stat.f_frsize
+        self.storage_health.state["free_bytes"] = free_bytes
+        if threshold_mb > 0 and free_bytes < threshold_mb * 1024 * 1024:
+            self.storage_health.failed(
+                f"Low disk space: {free_bytes // (1024 * 1024)} MB free "
+                f"(threshold {threshold_mb} MB)"
+            )
+        else:
+            self.storage_health.ok()
 
     def _check_display_wedged(self) -> None:
         """A wedged render must show up as unhealthy, not just as one event.
@@ -648,6 +669,7 @@ class AirMonitor:
                 "sps30": dict(self.sps30.health.state) if self.sps30 else self._missing("SPS30"),
                 "display": dict(self.display_health.state),
                 "weather": dict(self.weather_health.state),
+                "storage": dict(self.storage_health.state),
                 "network": dict(self.network_state),
                 "power": dict(self.power.state),
             },
@@ -677,6 +699,7 @@ class AirMonitor:
             PeriodicTask("commands", self.config.command_poll_interval, self.process_commands),
             PeriodicTask("status", self.config.status_publish_interval, self.publish_status),
             PeriodicTask("power", 60, self.power.check),
+            PeriodicTask("disk", 300, self.check_disk),
             PeriodicTask("storage_prune", 24 * 3600, self.prune_database),
             PeriodicTask("calibration_check", 24 * 3600, self.check_calibration_age),
             PeriodicTask("display", self.config.partial_update_interval, self._display_tick),
