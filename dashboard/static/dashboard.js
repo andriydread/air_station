@@ -126,7 +126,9 @@ async function submitCommand(command, payload = {}) {
     body: JSON.stringify({ command, payload }),
   });
   toast(`Command queued (#${data.id}). Result appears in Diagnostics.`, 'info');
-  window.setTimeout(refreshSummary, 3000);
+  // Quiet catch: after restart/reboot commands the station is briefly down
+  // by design — an unhandled rejection here is noise, not information.
+  window.setTimeout(() => refreshSummary().catch(() => {}), 3000);
   // A display command's visible effect is the panel redraw; refresh the
   // preview once the collector has had time to render.
   if (command.startsWith('display_')) window.setTimeout(reloadPreview, 8000);
@@ -159,6 +161,10 @@ function switchTab(name) {
 // ---------------------------------------------------------------------------
 
 let lastSummary = null;
+// The ASC checkbox is a form input the user may be editing; it is seeded
+// from the collector once and never overwritten by the 10s poll (which used
+// to silently revert the user's choice before they clicked Apply).
+let ascCheckboxInitialized = false;
 
 function setBadge(metric, age, maxAge) {
   // Quiet when healthy: a fresh metric shows no badge at all, so the one
@@ -206,7 +212,14 @@ function renderSummary(summary) {
   lastSummary = summary;
   const live = summary.latest_measurements?.value || {};
   const metrics = Object.keys(live).length ? live : (summary.latest_measurement || {});
+  // A crashed collector leaves a last status document saying "running" with
+  // young ages forever; the state row's own timestamp is the truth.
+  const statusAgeSeconds = summary.collector_status?.updated_at_ts
+    ? Date.now() / 1000 - summary.collector_status.updated_at_ts
+    : null;
+  const collectorSilent = statusAgeSeconds != null && statusAgeSeconds > 90;
   const ages = live.ages || {};
+  const agesKnown = Object.keys(ages).length > 0 && !collectorSilent;
   const aqi = summary.aqi || {};
   const collector = summary.collector_status?.value || {};
   const maxAge = collector.measurement_max_age_seconds || 45;
@@ -217,19 +230,27 @@ function renderSummary(summary) {
 
   for (const metric of ['co2', 'temp', 'humid', 'pm25', 'pm10', 'tps']) {
     document.getElementById(`metric-${metric}`).textContent = metricFormats[metric](metrics[metric]);
-    setBadge(metric, ages[metric], maxAge);
+    if (agesKnown) {
+      setBadge(metric, ages[metric], maxAge);
+    } else {
+      // Unknown freshness (old collector, or one that stopped reporting):
+      // asserting "no data" beside a visible value would be a contradiction.
+      const badge = document.getElementById(`badge-${metric}`);
+      if (badge) badge.hidden = true;
+    }
   }
   document.getElementById('metric-tps-note').textContent = describeTps(metrics.tps);
   document.getElementById('metric-aqi').textContent = aqi.value == null ? '--' : String(aqi.value);
   document.getElementById('metric-aqi-label').textContent = aqi.category || '--';
-  setBadge('aqi', ages.pm25, maxAge);
+  if (agesKnown) setBadge('aqi', ages.pm25, maxAge);
   document.getElementById('metric-co2-label').textContent = aqi.co2_category || '--';
 
   document.getElementById('sample-age').textContent =
     metrics.timestamp ? `Last sample: ${formatTimestamp(metrics.timestamp)}` : 'No samples yet';
 
   const problems = [];
-  if (!collector.running) problems.push('Collector stopped');
+  if (collectorSilent) problems.push('Collector not reporting');
+  else if (!collector.running) problems.push('Collector stopped');
   if (!health.ok && health.headline !== '--') problems.push(health.headline);
   if (network.healthy === false) problems.push('Network offline');
   if (power.available !== false && power.healthy === false) problems.push('Power issue');
@@ -263,7 +284,10 @@ function renderSummary(summary) {
   document.getElementById('database-entries').textContent =
     dbStats.measurements == null ? '--' : dbStats.measurements.toLocaleString();
   document.getElementById('database-size').textContent = formatBytes(dbStats.size_bytes);
-  document.getElementById('scd41-asc-enabled').checked = !!collector.scd41_asc_enabled;
+  if (!ascCheckboxInitialized && collector.scd41_asc_enabled != null) {
+    document.getElementById('scd41-asc-enabled').checked = !!collector.scd41_asc_enabled;
+    ascCheckboxInitialized = true;
+  }
   document.getElementById('scd41-asc-state').textContent =
     collector.scd41_asc_enabled == null ? '--' : (collector.scd41_asc_enabled ? 'on' : 'off');
 
@@ -272,6 +296,11 @@ function renderSummary(summary) {
     `Updated: ${formatTimestamp(summary.latest_weather?.updated_at)}`;
   renderWeather(weather);
   renderCommands(summary.recent_commands || []);
+
+  // A pinned tab doubles as an ambient display.
+  const titleCo2 = metrics.co2 != null ? `${Math.round(metrics.co2)} ppm` : '--';
+  const titleAqi = aqi.value != null ? ` · AQI ${aqi.value}` : '';
+  document.title = `${titleCo2}${titleAqi} — Air Station`;
 }
 
 function renderWeather(weather) {
@@ -364,6 +393,9 @@ function reloadPreview() {
 
 let range = { mode: 'preset', hours: 24 };
 let lastHistoryRows = null;
+// Monotonic token: a slow 7d response landing after a fast 6h one must not
+// overwrite the charts with data for a range no longer selected.
+let historyRequestToken = 0;
 
 const chartConfigs = {
   temp: {
@@ -394,7 +426,9 @@ function rangeQuery() {
 }
 
 async function refreshHistory() {
+  const token = ++historyRequestToken;
   const data = await fetchJson(`/api/history?${rangeQuery()}`);
+  if (token !== historyRequestToken) return; // superseded by a newer request
   lastHistoryRows = data.rows || [];
   renderAllCharts(lastHistoryRows);
   renderStats(data.stats || {}, data.from_ts, data.to_ts);
@@ -509,7 +543,8 @@ function renderLineChart(svgId, rows, key, config) {
     ${verticalTicks}
     <line id="crosshair-${svgId}" x1="0" y1="${padding.top}" x2="0" y2="${height - padding.bottom}" stroke="${config.color}" stroke-width="1.5" stroke-dasharray="4 4" opacity="0"></line>
     <circle id="focus-${svgId}" cx="0" cy="0" r="5" fill="${config.color}" stroke="${colors.paper}" stroke-width="2" opacity="0"></circle>
-    <polyline fill="none" stroke="${config.color}" stroke-width="3" points="${polyline}"></polyline>`;
+    <polyline fill="none" stroke="${config.color}" stroke-width="3" points="${polyline}"></polyline>
+    ${coordinates.length === 1 ? `<circle cx="${coordinates[0].x}" cy="${coordinates[0].y}" r="4" fill="${config.color}"></circle>` : ''}`;
 
   chartState.set(svgId, { coordinates, formatValue: config.formatter, width, height });
 }
@@ -879,7 +914,10 @@ function installActions() {
 
   document.querySelectorAll('[data-command]').forEach((button) => {
     button.addEventListener('click', () => {
-      submitCommand(button.dataset.command).catch((e) => toast(e.message, 'error'));
+      button.disabled = true; // a double-click must not queue two fan cleans
+      submitCommand(button.dataset.command)
+        .catch((e) => toast(e.message, 'error'))
+        .finally(() => { button.disabled = false; });
     });
   });
 
@@ -887,7 +925,10 @@ function installActions() {
     button.addEventListener('click', () => {
       const command = button.dataset.system;
       if (!window.confirm(systemConfirmations[command])) return;
-      submitCommand(command, { confirmed: true }).catch((e) => toast(e.message, 'error'));
+      button.disabled = true;
+      submitCommand(command, { confirmed: true })
+        .catch((e) => toast(e.message, 'error'))
+        .finally(() => { button.disabled = false; });
     });
   });
 
