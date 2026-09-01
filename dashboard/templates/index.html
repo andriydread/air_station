@@ -186,11 +186,14 @@
             <div class="event-list" id="flagged-list"></div>
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Connectivity &amp; power</h2><button class="hint" data-hint="Live Wi-Fi state plus the Pi's power flags — undervoltage means the power supply is struggling." type="button">?</button></div>
+            <div class="panel-head"><h2>Station &amp; connectivity</h2><button class="hint" data-hint="How long the collector has run, its Wi-Fi connection, and the Pi's power flags — undervoltage means the power supply is struggling." type="button">?</button></div>
             <div class="info-list">
+              <p><span>Collector up</span><strong id="collector-uptime">--</strong></p>
+              <p><span>Restarts (24h)</span><strong id="collector-restarts">--</strong></p>
               <p><span>Interface</span><strong id="network-interface">--</strong></p>
               <p><span>State</span><strong id="network-status">--</strong></p>
               <p><span>Signal</span><strong id="network-signal">--</strong></p>
+              <p><span>Latency</span><strong id="network-latency">--</strong></p>
               <p><span>Last success</span><strong id="network-last-success">--</strong></p>
               <p><span>Last error</span><strong id="network-last-error">--</strong></p>
               <p><span>Undervoltage</span><strong id="power-undervoltage">--</strong></p>

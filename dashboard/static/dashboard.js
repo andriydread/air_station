@@ -62,6 +62,13 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+function formatDuration(seconds) {
+  if (seconds == null) return '--';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
+}
+
 function formatRelative(value) {
   // "3m ago" for humans; callers put the absolute form in a title attribute.
   if (!value) return '--';
@@ -215,6 +222,13 @@ function applyBandClass(elementId, category) {
   element.classList.add(category === 'Moderate' ? 'value-warn' : 'value-bad');
 }
 
+function signalQuality(dbm) {
+  if (dbm >= -60) return 'good';
+  if (dbm >= -70) return 'ok';
+  if (dbm >= -80) return 'weak';
+  return 'very weak';
+}
+
 const subsystemLabels = [
   ['scd41', 'SCD41 · CO2'],
   ['sht41', 'SHT41 · temp/RH'],
@@ -342,12 +356,26 @@ function renderSummary(summary) {
 
   // Diagnostics-side details rendered from the same summary
   renderSensorHealthList(collector.sensors || {});
+  document.getElementById('collector-uptime').textContent =
+    collector.uptime_seconds == null
+      ? '--'
+      : `${formatDuration(collector.uptime_seconds)} (since ${formatTimestamp(collector.started_at)})`;
   document.getElementById('network-interface').textContent = network.interface || '--';
-  document.getElementById('network-status').textContent =
-    `healthy=${network.healthy ? 'yes' : 'no'} | operstate=${network.operstate || '--'} | carrier=${network.carrier || '--'}`;
+  // Human words up front; the raw kernel flags live in the hover title.
+  const stateElement = document.getElementById('network-status');
+  const offlineSince = network.last_success_at
+    ? ` · last ok ${formatRelative(network.last_success_at)}` : '';
+  stateElement.textContent = network.healthy ? 'Connected' : `Offline${offlineSince}`;
+  stateElement.className = network.healthy ? '' : 'health-bad';
+  stateElement.title =
+    `operstate=${network.operstate || '--'} carrier=${network.carrier || '--'}`;
   document.getElementById('network-signal').textContent =
-    network.signal_level_dbm == null ? '--' : `${network.signal_level_dbm} dBm`;
-  document.getElementById('network-last-success').textContent = formatTimestamp(network.last_success_at);
+    network.signal_level_dbm == null ? '--' : `${network.signal_level_dbm} dBm · ${signalQuality(network.signal_level_dbm)}`;
+  document.getElementById('network-latency').textContent =
+    network.latency_ms == null ? '--' : `${network.latency_ms} ms`;
+  const lastSuccess = document.getElementById('network-last-success');
+  lastSuccess.textContent = formatRelative(network.last_success_at);
+  lastSuccess.title = formatTimestamp(network.last_success_at);
   document.getElementById('network-last-error').textContent = network.last_error || '--';
   document.getElementById('power-undervoltage').textContent =
     power.available === false ? 'n/a' :
@@ -830,12 +858,26 @@ async function refreshDiagnostics() {
   const query = new URLSearchParams({ limit: 100 });
   if (level) query.set('level', level);
   if (source) query.set('source', source);
-  const [events, flags] = await Promise.all([
+  const [events, flags, collectorEvents] = await Promise.all([
     fetchJson(`/api/events?${query}`),
     fetchJson('/api/flags?limit=30'),
+    fetchJson('/api/events?source=collector&limit=50'),
   ]);
   renderEvents(events.events || []);
   renderFlagged(flags.flagged || []);
+  renderRestartCount(collectorEvents.events || []);
+}
+
+function renderRestartCount(collectorEvents) {
+  // >1 start in 24h is the watchdog-crash-loop tell; a single boot is normal.
+  const element = document.getElementById('collector-restarts');
+  if (!element) return;
+  const dayAgo = Date.now() - 24 * 3600 * 1000;
+  const restarts = collectorEvents.filter(
+    (event) => event.event_type === 'started' && new Date(event.created_at).getTime() >= dayAgo
+  ).length;
+  element.textContent = String(restarts);
+  element.className = restarts > 1 ? 'health-bad' : '';
 }
 
 function renderEvents(events) {
@@ -856,7 +898,7 @@ function renderEvents(events) {
         <span class="event-level event-level-${escapeHtml(event.level)}">${escapeHtml(event.level)}</span>
       </header>
       <p>${escapeHtml(event.message)}</p>
-      <p class="event-time">${escapeHtml(formatTimestamp(event.created_at))}</p>
+      <p class="event-time" title="${escapeHtml(formatTimestamp(event.created_at))}">${escapeHtml(formatRelative(event.created_at))}</p>
       ${details}`;
     list.appendChild(item);
   }
@@ -876,7 +918,7 @@ function renderFlagged(flagged) {
       .map(([metric, info]) => `${metric}=${info.value} (${info.reason})`).join('; ');
     article.innerHTML = `
       <p>${escapeHtml(parts)}</p>
-      <p class="event-time">${escapeHtml(formatTimestamp(item.timestamp))}</p>`;
+      <p class="event-time" title="${escapeHtml(formatTimestamp(item.timestamp))}">${escapeHtml(formatRelative(item.timestamp))}</p>`;
     list.appendChild(article);
   }
 }
