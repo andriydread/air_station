@@ -116,11 +116,19 @@ class UC8253C_SPI:
 
     def _wake(self) -> None:
         self._hardware_reset()
-        self._wait_until_idle()
-        self._write(self._CMD_POWER_ON)
-        self._wait_until_idle()
-        self._write(self._CMD_PANEL_SETTING, [0x1F, 0x0D])
-        self._apply_mode(self.current_mode)
+        try:
+            self._wait_until_idle()
+            self._write(self._CMD_POWER_ON)
+            self._wait_until_idle()
+            self._write(self._CMD_PANEL_SETTING, [0x1F, 0x0D])
+            self._apply_mode(self.current_mode)
+        except TimeoutError:
+            # _hardware_reset marked us awake, but the init never finished —
+            # a half-initialized controller must not count as awake, or the
+            # next display_image writes frames into the void. Re-arm the
+            # full reset+init for the next attempt.
+            self.is_sleeping = True
+            raise
         self.is_sleeping = False
 
     def _ensure_awake(self) -> None:
@@ -181,10 +189,18 @@ class UC8253C_SPI:
 
         new_frame = bytearray(image.convert("1").tobytes())
         old_command, new_command = self._frame_commands()
-        self._write(old_command, self._framebuffer)
-        self._write(new_command, new_frame)
-        self._write(self._CMD_DISPLAY_REFRESH)
-        self._wait_until_idle()
+        try:
+            self._write(old_command, self._framebuffer)
+            self._write(new_command, new_frame)
+            self._write(self._CMD_DISPLAY_REFRESH)
+            self._wait_until_idle()
+        except TimeoutError:
+            # Both RAM banks may already hold the new frame while our
+            # shadow state does not — recovering without a reset would
+            # ghost/invert the next partial refresh. Route the next
+            # operation through _wake's hardware reset.
+            self.is_sleeping = True
+            raise
 
         self._framebuffer = new_frame
         self._bank_swapped = not self._bank_swapped
@@ -198,9 +214,17 @@ class UC8253C_SPI:
     def sleep(self) -> None:
         if self.is_sleeping:
             return
-        self._write(self._CMD_POWER_OFF)
-        self._wait_until_idle()
-        self._write(self._CMD_DEEP_SLEEP, 0xA5)
+        try:
+            self._write(self._CMD_POWER_OFF)
+            self._wait_until_idle()
+            self._write(self._CMD_DEEP_SLEEP, 0xA5)
+        except TimeoutError:
+            # The panel is now in an unknown power state; claiming "awake"
+            # would let the next display_image write frames to a dead
+            # controller. Marking sleeping forces the next operation through
+            # _wake's hardware reset, from which every state converges.
+            self.is_sleeping = True
+            raise
         self.is_sleeping = True
 
     def close(self) -> None:

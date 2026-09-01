@@ -64,3 +64,61 @@ def test_hardware_reset_clears_the_bank_swap():
     assert display._bank_swapped is True
     display._hardware_reset()
     assert display._bank_swapped is False  # controller RAM is gone with the reset
+
+
+def _accelerate_clock(monkeypatch, uc_module):
+    """No-op sleeps and a monotonic that jumps 1s per call, so the driver's
+    15s busy timeout elapses in ~15 loop iterations instead of real time."""
+    clock = {"now": 0.0}
+
+    def fake_monotonic():
+        clock["now"] += 1.0
+        return clock["now"]
+
+    monkeypatch.setattr(uc_module.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(uc_module.time, "monotonic", fake_monotonic)
+
+
+def test_busy_timeout_forces_reset_before_next_operation(monkeypatch):
+    """A BUSY-pin timeout mid-refresh must not leave the driver believing the
+    panel is awake — the next operation goes through a hardware reset."""
+    import lib.uc8253c as uc_module
+
+    import RPi.GPIO as gpio
+
+    display = UC8253C_SPI()
+    image = Image.new("1", (display.width, display.height), 255)
+
+    # Make the busy-wait cheap and the pin stuck busy (active low).
+    _accelerate_clock(monkeypatch, uc_module)
+    gpio.pin_values[display.busy_pin] = 0
+    with pytest.raises(TimeoutError):
+        display.display_image(image, mode=display.MODE_PARTIAL, auto_sleep=False)
+    assert display.is_sleeping is True  # unknown state == treat as asleep
+
+    # Panel unwedges: next render must begin with a hardware reset (rst pin
+    # pulsed low) and a POWER_ON, then succeed.
+    gpio.pin_values[display.busy_pin] = 1
+    gpio.outputs.clear()
+    display.spi.written.clear()
+    display.display_image(image, mode=display.MODE_PARTIAL, auto_sleep=False)
+    assert (display.rst_pin, 0) in gpio.outputs  # reset pulse happened
+    commands = [entry[0] for entry in display.spi.written if len(entry) == 1]
+    assert commands[0] == UC8253C_SPI._CMD_POWER_ON
+    assert display.is_sleeping is False
+
+
+def test_sleep_timeout_marks_panel_asleep(monkeypatch):
+    import lib.uc8253c as uc_module
+
+    import RPi.GPIO as gpio
+
+    display = UC8253C_SPI()
+    image = Image.new("1", (display.width, display.height), 255)
+    display.display_image(image, mode=display.MODE_PARTIAL, auto_sleep=False)
+
+    _accelerate_clock(monkeypatch, uc_module)
+    gpio.pin_values[display.busy_pin] = 0  # wedges during POWER_OFF wait
+    with pytest.raises(TimeoutError):
+        display.sleep()
+    assert display.is_sleeping is True
