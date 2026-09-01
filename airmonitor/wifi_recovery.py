@@ -48,12 +48,24 @@ class WifiRecovery:
         self.which = which
         self.consecutive_failures = 0
         self.actions_taken = 0
+        self.service_restarts = 0
+        # Failure count required before the NEXT service restart; doubles
+        # after each one so a long outage can't restart networking forever.
+        self._next_restart_gate = 0
+        self._upstream_hold_reported = False
 
     @property
     def enabled(self) -> bool:
         return self.after_failures > 0
 
-    def record_probe(self, healthy: bool) -> None:
+    def record_probe(self, healthy: bool, link_ok: Optional[bool] = None) -> None:
+        """Feed one probe result; `link_ok` = interface up with carrier.
+
+        A probe can fail with a perfectly healthy link (ISP outage): local
+        recovery can't fix that, so service restarts are skipped once one
+        has been tried — restarting NetworkManager every few minutes would
+        only kill LAN access to the dashboard during the outage.
+        """
         if not self.enabled:
             return
         if healthy:
@@ -64,20 +76,36 @@ class WifiRecovery:
                 )
             self.consecutive_failures = 0
             self.actions_taken = 0
+            self.service_restarts = 0
+            self._next_restart_gate = 0
+            self._upstream_hold_reported = False
             return
         self.consecutive_failures += 1
         if self.consecutive_failures % self.after_failures == 0:
-            self._escalate()
+            self._escalate(link_ok)
 
     # --- Escalation ---------------------------------------------------------
 
-    def _escalate(self) -> None:
+    def _escalate(self, link_ok: Optional[bool] = None) -> None:
         if self.actions_taken < _BOUNCE_STEPS:
             description = f"bounce interface {self.interface}"
             commands = self._bounce_commands()
         else:
+            if link_ok and self.service_restarts >= 1:
+                if not self._upstream_hold_reported:
+                    self._upstream_hold_reported = True
+                    self.events.log(
+                        logging.INFO, "network", "recovery_hold",
+                        "Link is up but the internet is unreachable — likely an "
+                        "upstream outage; holding further networking restarts",
+                    )
+                return
+            if self.consecutive_failures < self._next_restart_gate:
+                return  # backoff between service restarts
             description = "restart networking service"
             commands = self._service_restart_commands()
+            self.service_restarts += 1
+            self._next_restart_gate = self.consecutive_failures * 2
         self.actions_taken += 1
         self.events.log(
             logging.WARNING, "network", "recovery_action",

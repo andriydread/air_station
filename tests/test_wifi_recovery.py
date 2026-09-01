@@ -168,3 +168,64 @@ def test_partial_bounce_failure_is_retried_next_escalation():
     # Second escalation runs the bounce again from the start (off then on).
     joined = [" ".join(c) for c in commands]
     assert any("off" in c for c in joined)
+
+
+class _RecordingRunner:
+    def __init__(self):
+        self.commands = []
+
+    def __call__(self, command):
+        self.commands.append(command)
+
+        class R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return R()
+
+
+class _QuietEvents:
+    def __init__(self):
+        self.entries = []
+
+    def log(self, _lvl, _src, event_type, message, *args):
+        self.entries.append((event_type, message))
+
+
+def test_service_restarts_back_off_during_a_long_outage():
+    runner = _RecordingRunner()
+    events = _QuietEvents()
+    recovery = WifiRecovery(
+        "wlan0", events, after_failures=6, runner=runner,
+        which=lambda name: f"/usr/bin/{name}",
+    )
+    for _ in range(120):  # a one-hour outage at 30s probes
+        recovery.record_probe(False)
+
+    restarts = [c for c in runner.commands if "restart" in c]
+    # bounces at 6 and 12; restart at 18; gate doubles -> 36, then 72.
+    assert len(restarts) == 3
+    assert recovery.consecutive_failures == 120
+
+
+def test_isp_only_outage_stops_after_one_service_restart():
+    runner = _RecordingRunner()
+    events = _QuietEvents()
+    recovery = WifiRecovery(
+        "wlan0", events, after_failures=6, runner=runner,
+        which=lambda name: f"/usr/bin/{name}",
+    )
+    for _ in range(120):
+        recovery.record_probe(False, link_ok=True)  # link fine, upstream dead
+
+    restarts = [c for c in runner.commands if "restart" in c]
+    assert len(restarts) == 1  # one try, then hold — LAN access survives
+    assert any(e == "recovery_hold" for e, _ in events.entries)
+    # ...and the hold is reported once, not per probe.
+    assert sum(1 for e, _ in events.entries if e == "recovery_hold") == 1
+
+    # Real Wi-Fi trouble later (link down) escalates again.
+    recovery.record_probe(True)  # brief recovery resets the ladder
+    for _ in range(20):
+        recovery.record_probe(False, link_ok=False)
+    assert any("restart" in c for c in runner.commands[len(restarts) + 4:])

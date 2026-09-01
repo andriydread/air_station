@@ -524,7 +524,10 @@ class AirMonitor:
                     message += f"; error={status['error']}"
                 self.events.log(logging.WARNING, "network", "connectivity_check", message, status)
                 self.publish_status()
-        self.wifi_recovery.record_probe(status["healthy"])
+        self.wifi_recovery.record_probe(
+            status["healthy"],
+            link_ok=(status.get("operstate") == "up" and status.get("carrier") == "1"),
+        )
 
     def process_commands(self) -> None:
         self.commands.process_pending()
