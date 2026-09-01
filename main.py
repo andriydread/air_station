@@ -371,11 +371,28 @@ class AirMonitor:
         # document is published on its own slower cadence (status task).
         self.database.set_state("latest_measurements", self.readings.fresh_snapshot())
 
+    def _display_status(self) -> Dict[str, bool]:
+        """Health booleans for the e-paper header glyphs (False = glyph drawn).
+
+        Power reads True unless vcgencmd is available AND reporting a
+        problem — no telemetry is not a power problem.
+        """
+        power = self.power.state
+        return {
+            "network": self.network_state.get("healthy") is not False,
+            "power": not (power.get("available") and power.get("healthy") is False),
+            "sensors": all(
+                sensor is not None and bool(sensor.health.state.get("healthy"))
+                for sensor in (self.scd41, self.sht41, self.sps30)
+            ),
+        }
+
     def update_display(self, full_refresh: bool) -> None:
         """Average the buffered samples and queue an e-paper redraw."""
         snapshot = self.buffer.take_averages()
         snapshot["timestamp"] = utc_now_iso()
         snapshot.update(self.weather)
+        snapshot["status"] = self._display_status()
         self.last_display_snapshot = snapshot
         self.display_worker.submit(snapshot, full_refresh)
 

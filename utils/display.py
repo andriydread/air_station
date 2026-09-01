@@ -65,6 +65,56 @@ def draw_right_text(draw, text, font, width, x_pad, y_pos):
     draw.text((width - text_w - x_pad, y_pos), text, font=font, fill=0)
 
 
+# --- Status Glyphs ---
+# Tiny 1-bit header icons so the physical screen can say "station broken"
+# instead of silently showing dashes (R9). Drawn with PIL primitives only.
+
+
+def _draw_wifi_down(draw, x, y, size):
+    cx = x + size / 2
+    cy = y + size * 0.9
+    for radius in (size * 0.45, size * 0.25):
+        draw.arc(
+            [cx - radius, cy - radius, cx + radius, cy + radius],
+            225, 315, fill=0, width=2,
+        )
+    draw.ellipse([cx - 2, cy - 3, cx + 2, cy + 1], fill=0)
+    draw.line([x + 1, y + size - 2, x + size - 1, y + 1], fill=0, width=2)
+
+
+def _draw_power_issue(draw, x, y, size):
+    draw.polygon(
+        [(x + size / 2, y), (x, y + size - 1), (x + size - 1, y + size - 1)],
+        outline=0,
+    )
+    cx = x + size / 2
+    draw.line([cx, y + size * 0.35, cx, y + size * 0.65], fill=0, width=2)
+    draw.ellipse([cx - 1, y + size * 0.75, cx + 1, y + size * 0.75 + 2], fill=0)
+
+
+def _draw_sensor_fault(draw, x, y, size):
+    draw.ellipse([x, y, x + size - 1, y + size - 1], outline=0, width=2)
+    cx = x + size / 2
+    draw.line([cx, y + size * 0.25, cx, y + size * 0.55], fill=0, width=2)
+    draw.ellipse([cx - 1, y + size * 0.68, cx + 1, y + size * 0.68 + 2], fill=0)
+
+
+def _draw_status_glyphs(draw, status, left_start):
+    """Draw up to 3 problem glyphs rightwards from `left_start` (after the clock)."""
+    size = 18
+    y = 6
+    glyphs = []
+    if status.get("network") is False:
+        glyphs.append(_draw_wifi_down)
+    if status.get("power") is False:
+        glyphs.append(_draw_power_issue)
+    if status.get("sensors") is False:
+        glyphs.append(_draw_sensor_fault)
+    for index, glyph in enumerate(glyphs):
+        x = left_start + index * (size + 8)
+        glyph(draw, x, y, size)
+
+
 # --- Font Loading ---
 
 _FONT_SIZES = (36, 24, 18, 16, 14)  # huge, large, medium, small, extra-small
@@ -133,11 +183,18 @@ def create_display_image(width, height, data, font_path=None):
     Y_LINE_1, Y_LINE_2, Y_LINE_3 = 30, 92, 122
     EDGE_PAD = 12
 
-    # --- 1. HEADER (Time & Date) ---
+    # --- 1. HEADER (Time & Date + status glyphs) ---
     now = datetime.now()
-    draw_left_text(draw, now.strftime("%H:%M"), font_sm, EDGE_PAD, 5)
+    time_text = now.strftime("%H:%M")
+    draw_left_text(draw, time_text, font_sm, EDGE_PAD, 5)
     center_text(draw, now.strftime("%A"), font_sm, 0, width, 5)
     draw_right_text(draw, now.strftime("%d/%m/%Y"), font_sm, width, EDGE_PAD, 5)
+    status = data.get("status") or {}
+    if status:
+        # Right of the clock: the gap before the centered weekday fits all
+        # three glyphs even on the narrow axis.
+        time_width = draw.textlength(time_text, font=font_sm)
+        _draw_status_glyphs(draw, status, EDGE_PAD + time_width + 12)
     draw.line((0, Y_LINE_1, width, Y_LINE_1), fill=0, width=1)
 
     # --- 2. SENSOR DATA (AQI & CO2) ---

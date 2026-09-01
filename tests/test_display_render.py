@@ -48,6 +48,34 @@ def test_renders_with_partial_weather_block():
     assert image.size == (WIDTH, HEIGHT)
 
 
+def test_status_glyphs_appear_only_for_problems(monkeypatch):
+    import utils.display as display_module
+
+    class FrozenDatetime:
+        @staticmethod
+        def now():
+            from datetime import datetime as real
+            return real(2026, 9, 1, 12, 0, 0)
+
+    monkeypatch.setattr(display_module, "datetime", FrozenDatetime)
+
+    all_ok = create_display_image(
+        WIDTH, HEIGHT,
+        {**_full_data(), "status": {"network": True, "power": True, "sensors": True}},
+        FONT,
+    )
+    all_bad = create_display_image(
+        WIDTH, HEIGHT,
+        {**_full_data(), "status": {"network": False, "power": False, "sensors": False}},
+        FONT,
+    )
+    no_status = create_display_image(WIDTH, HEIGHT, _full_data(), FONT)
+
+    # Healthy status draws nothing extra; problems visibly change the header.
+    assert list(all_ok.getdata()) == list(no_status.getdata())
+    assert list(all_bad.getdata()) != list(all_ok.getdata())
+
+
 def test_renders_with_unknown_wmo_code_and_missing_font():
     data = _full_data()
     data[1][4] = 12345  # unmapped WMO code falls back to a default icon

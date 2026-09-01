@@ -208,6 +208,38 @@ def test_network_blip_stays_out_of_events_but_outage_is_reported(monkeypatch, tm
         monitor.database.close()
 
 
+# --- Display status glyphs (R9) -----------------------------------------------
+
+
+def test_display_snapshot_carries_health_status(tmp_path):
+    from airmonitor.config import Config
+
+    config = Config(database_path=str(tmp_path / "d.db"), log_file=str(tmp_path / "d.log"))
+    monitor = main_module.AirMonitor(config)
+    try:
+        # Before sensor init the sensor glyph is active, but unknown network/
+        # power state counts as healthy, not broken.
+        assert monitor._display_status() == {"network": True, "power": True, "sensors": False}
+
+        monitor._init_i2c_and_sensors()
+        for sensor in (monitor.scd41, monitor.sht41, monitor.sps30):
+            sensor.health.state["healthy"] = True
+        monitor.update_display(False)
+        assert monitor.last_display_snapshot["status"] == {
+            "network": True, "power": True, "sensors": True,
+        }
+
+        monitor.network_state["healthy"] = False
+        monitor.scd41.health.state["healthy"] = False
+        monitor.update_display(False)
+        status = monitor.last_display_snapshot["status"]
+        assert status["network"] is False
+        assert status["sensors"] is False
+        assert status["power"] is True
+    finally:
+        monitor.database.close()
+
+
 # --- Weather failure debounce -------------------------------------------------
 
 
