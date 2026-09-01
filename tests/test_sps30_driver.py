@@ -4,30 +4,8 @@ from struct import pack
 
 import pytest
 
+from tests.mocks.fake_devices import ScriptedI2CDevice
 from lib.sps30_i2c import SPS30, SPS30Error
-
-
-class ScriptedI2CDevice:
-    """Plays back queued response frames; records written commands."""
-
-    def __init__(self):
-        self.responses = []
-        self.written = []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_exc):
-        return False
-
-    def write(self, buffer, end=None):
-        self.written.append(bytes(buffer[: end if end is not None else len(buffer)]))
-
-    def readinto(self, buffer, end=None):
-        response = self.responses.pop(0)
-        length = end if end is not None else len(buffer)
-        assert len(response) == length, "test scripted the wrong response size"
-        buffer[:length] = response
 
 
 @pytest.fixture
@@ -109,3 +87,18 @@ def test_auto_cleaning_interval_roundtrip_encoding(sps30):
     assert written[:2] == bytes([0x80, 0x04])
     assert written[2:4] == pack(">H", 0x0009)
     assert written[5:7] == pack(">H", 0x3A80)
+
+
+def test_wakeup_tolerates_the_expected_first_nak(sps30):
+    device, wire = sps30
+    # Sleeping sensor: first 0x1103 NAKs (interface off), second ACKs.
+    wire.raise_on_write = [OSError("NAK"), None]
+    device.wakeup()
+    assert wire.written  # the second send went through
+
+
+def test_wakeup_raises_on_a_dead_bus(sps30):
+    device, wire = sps30
+    wire.raise_on_write = OSError("no ack")  # every write fails: sensor absent
+    with pytest.raises(OSError):
+        device.wakeup()

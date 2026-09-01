@@ -42,12 +42,18 @@ def _install_fake_hardware() -> None:
     board.I2C = lambda: FakeI2C()
 
     # --- RPi.GPIO ---------------------------------------------------------
+    # Scriptable: tests may set RPi.GPIO.pin_values[pin] to an int or a
+    # zero-arg callable (e.g. "busy for N polls, then idle") to exercise the
+    # display driver's BUSY handling; RPi.GPIO.outputs records every
+    # output() call as (pin, value). Defaults keep the old benign behavior.
     class FakeGPIO:
         BCM = "BCM"
         IN = "IN"
         OUT = "OUT"
         LOW = 0
         HIGH = 1
+        pin_values = {}
+        outputs = []
 
         @staticmethod
         def setwarnings(_flag):
@@ -61,13 +67,14 @@ def _install_fake_hardware() -> None:
         def setup(_pin, _direction):
             pass
 
-        @staticmethod
-        def output(_pin, _value):
-            pass
+        @classmethod
+        def output(cls, pin, value):
+            cls.outputs.append((pin, value))
 
-        @staticmethod
-        def input(_pin):
-            return 1  # busy pin idle: display never blocks in tests
+        @classmethod
+        def input(cls, pin):
+            value = cls.pin_values.get(pin, 1)  # default: busy pin idle
+            return value() if callable(value) else value
 
         @staticmethod
         def cleanup(_pins=None):
@@ -86,14 +93,19 @@ def _install_fake_hardware() -> None:
             self.max_speed_hz = 0
             self.mode = 0
             self.written = []
+            self.raise_on_write = None  # set an Exception to fail SPI writes
 
         def open(self, _bus, _device):
             pass
 
         def writebytes(self, data):
+            if self.raise_on_write is not None:
+                raise self.raise_on_write
             self.written.append(bytes(data))
 
         def writebytes2(self, data):
+            if self.raise_on_write is not None:
+                raise self.raise_on_write
             self.written.append(bytes(data))
 
         def close(self):
@@ -165,3 +177,18 @@ def _install_fake_hardware() -> None:
 
 
 _install_fake_hardware()
+
+
+import pytest  # noqa: E402  (after the fakes exist)
+
+
+@pytest.fixture(autouse=True)
+def _reset_fake_gpio():
+    """Scripted GPIO state must never leak between tests."""
+    import RPi.GPIO as gpio
+
+    gpio.pin_values.clear()
+    gpio.outputs.clear()
+    yield
+    gpio.pin_values.clear()
+    gpio.outputs.clear()

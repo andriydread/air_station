@@ -469,3 +469,18 @@ def test_sht41_temp_offset_applied(monkeypatch, events):
     )
     wrapper = sensors.Sht41(object(), events, temp_offset=-1.5)
     assert wrapper.read() == (21.0, 45.0)
+
+
+def test_scd41_data_ready_raising_counts_as_read_failure(monkeypatch, events):
+    device = FakeScd41Device()
+    device.raise_on_data_ready = OSError("I2C timeout on poll")
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
+    wrapper = sensors.Scd41(object(), Config(), events)
+
+    assert wrapper.read() is None
+    assert wrapper.failure_streak == 1  # the poll itself failing is a hard error
+    assert wrapper.health.state["healthy"] is False
+
+    device.raise_on_data_ready = None
+    assert wrapper.read() is not None
+    assert wrapper.failure_streak == 0

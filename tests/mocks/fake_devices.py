@@ -14,7 +14,8 @@ class FakeScd41Device:
     def __init__(self):
         self.co2_values: List[float] = []  # popped per read; empty -> default_co2
         self.default_co2 = 600.0
-        self.data_ready = True
+        self._data_ready = True
+        self.raise_on_data_ready: Optional[Exception] = None
         self.temperature = 23.0
         self.relative_humidity = 40.0
         self.altitude = 0
@@ -25,6 +26,16 @@ class FakeScd41Device:
         self.stop_calls = 0
         self.reinit_calls = 0
         self.persist_calls = 0
+
+    @property
+    def data_ready(self) -> bool:
+        if self.raise_on_data_ready is not None:
+            raise self.raise_on_data_ready
+        return self._data_ready
+
+    @data_ready.setter
+    def data_ready(self, value: bool) -> None:
+        self._data_ready = value
 
     @property
     def CO2(self) -> float:
@@ -79,7 +90,8 @@ class FakeSps30Device:
             "pm1": 1.1, "pm25": 2.5, "pm4": 3.0, "pm10": 4.2, "tps": 0.6,
             "nc05": 0.0, "nc10": 0.0, "nc25": 0.0, "nc40": 0.0, "nc100": 0.0,
         }
-        self.data_ready = True
+        self._data_ready = True
+        self.raise_on_data_ready: Optional[Exception] = None
         self.raise_on_read: Optional[Exception] = None
         self.auto_cleaning_interval = 604800
         self.wakeup_calls = 0
@@ -103,7 +115,61 @@ class FakeSps30Device:
     def force_clean(self):
         self.clean_calls += 1
 
+    @property
+    def data_ready(self) -> bool:
+        if self.raise_on_data_ready is not None:
+            raise self.raise_on_data_ready
+        return self._data_ready
+
+    @data_ready.setter
+    def data_ready(self, value: bool) -> None:
+        self._data_ready = value
+
     def read(self) -> Dict[str, float]:
         if self.raise_on_read is not None:
             raise self.raise_on_read
         return dict(self.values)
+
+
+class ScriptedI2CDevice:
+    """Plays back queued response frames; records written commands.
+
+    Failure injection: `raise_on_write` / `raise_on_read` hold exceptions
+    consumed one write/read at a time (list) or raised every time (single
+    exception) — enough to express "NAK the first wakeup, ACK the second"
+    or an I2C error mid-transaction.
+    """
+
+    def __init__(self):
+        self.responses: List[bytes] = []
+        self.written: List[bytes] = []
+        self.raise_on_write = None
+        self.raise_on_read = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def _maybe_raise(self, source):
+        if source is None:
+            return None
+        if isinstance(source, list):
+            if source:
+                exc = source.pop(0)
+                if exc is not None:
+                    raise exc
+            return None
+        raise source
+
+    def write(self, buffer, end=None):
+        self._maybe_raise(self.raise_on_write)
+        self.written.append(bytes(buffer[: end if end is not None else len(buffer)]))
+
+    def readinto(self, buffer, end=None):
+        self._maybe_raise(self.raise_on_read)
+        response = self.responses.pop(0)
+        length = end if end is not None else len(buffer)
+        assert len(response) == length, "test scripted the wrong response size"
+        buffer[:length] = response
