@@ -344,6 +344,36 @@ button.button-danger {
 }
 .stats-table th { color: var(--muted); font-weight: 600; font-size: 13px; }
 .stats-table tr:last-child td { border-bottom: none; }
+/* min→max range bar (last column) */
+.stats-table th.stats-range-head, .stats-table td.stats-range {
+  width: 140px;
+  text-align: left;
+  white-space: normal;
+}
+.range-track {
+  position: relative;
+  height: 6px;
+  min-width: 110px;
+  border-radius: 999px;
+  background: var(--chart-grid-soft);
+}
+.range-fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0.35;
+}
+.range-dot {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+}
 
 .chart-grid {
   display: grid;

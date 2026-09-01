@@ -619,9 +619,27 @@ function renderStats(stats, fromTs, toTs) {
     const entry = stats[key] || {};
     const format = (v) => v == null ? '--' : Number(v).toFixed(digits);
     const row = document.createElement('tr');
-    row.innerHTML = `<td>${escapeHtml(label)}</td><td>${format(entry.min)}</td><td>${format(entry.avg)}</td><td>${format(entry.max)}</td>`;
+    row.innerHTML = `<td>${escapeHtml(label)}</td><td>${format(entry.min)}</td><td>${format(entry.avg)}</td><td>${format(entry.max)}</td><td class="stats-range">${statsRangeBar(key, entry)}</td>`;
     body.appendChild(row);
   }
+}
+
+function statsRangeBar(key, entry) {
+  // A one-row box-plot-lite: min→max as a slim track, a dot at the average
+  // — shows at a glance whether the average hugs the floor or the ceiling.
+  if (entry.min == null || entry.max == null || entry.avg == null) return '';
+  const config = chartConfigs[key];
+  const bounds = config
+    ? config.bounds([entry.min, entry.max])
+    : { min: 0, max: Math.max(entry.max * 1.15, 1) };
+  const span = bounds.max - bounds.min || 1;
+  const clamp = (value) => Math.min(Math.max(value, 0), 100);
+  const left = clamp(((entry.min - bounds.min) / span) * 100);
+  const right = clamp(((entry.max - bounds.min) / span) * 100);
+  const dot = clamp(((entry.avg - bounds.min) / span) * 100);
+  return `<div class="range-track">` +
+    `<div class="range-fill" style="left:${left.toFixed(1)}%;width:${Math.max(right - left, 1.5).toFixed(1)}%"></div>` +
+    `<div class="range-dot" style="left:${dot.toFixed(1)}%"></div></div>`;
 }
 
 function renderAllCharts(rows) {
