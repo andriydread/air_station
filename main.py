@@ -588,6 +588,24 @@ class AirMonitor:
             "scd41_recent_valid_samples": (
                 len(self.scd41.recent_valid_samples) if self.scd41 else 0
             ),
+            # Live readiness for the dashboard's calibration checklist (R11);
+            # limits ride along so the UI can't drift from the enforcement.
+            "scd41_calibration": {
+                **(
+                    self.scd41.calibration_readiness()
+                    if self.scd41
+                    else {
+                        "runtime_seconds": 0, "sample_count": 0,
+                        "average_co2": None, "spread_co2": None,
+                    }
+                ),
+                "limits": {
+                    "min_runtime": self.config.calibration_min_runtime,
+                    "min_samples": self.config.calibration_min_samples,
+                    "max_spread": self.config.calibration_max_drift_ppm,
+                    "max_reference_delta": self.config.calibration_max_reference_delta_ppm,
+                },
+            },
             "sps30_auto_cleaning_interval_seconds": (
                 self.sps30.auto_cleaning_interval if self.sps30 else None
             ),

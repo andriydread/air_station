@@ -137,6 +137,24 @@ def test_scd41_calibration_preconditions_refuse_cold_sensor(monkeypatch, events)
         wrapper.check_calibration_preconditions(420)
 
 
+def test_scd41_calibration_readiness_snapshot(monkeypatch, events):
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: FakeScd41Device())
+    wrapper = sensors.Scd41(object(), Config(), events)
+
+    cold = wrapper.calibration_readiness()
+    assert cold["sample_count"] == 0
+    assert cold["average_co2"] is None and cold["spread_co2"] is None
+
+    now = time.monotonic()
+    wrapper.measurement_started_at = now - 600
+    wrapper.recent_valid_samples.extend([(now - 5, 418.0), (now - 3, 422.0), (now - 1, 420.0)])
+    ready = wrapper.calibration_readiness()
+    assert ready["runtime_seconds"] >= 600
+    assert ready["sample_count"] == 3
+    assert ready["average_co2"] == 420.0
+    assert ready["spread_co2"] == 4.0
+
+
 def test_scd41_calibration_reference_delta_override(monkeypatch, events):
     monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: FakeScd41Device())
     wrapper = sensors.Scd41(object(), Config(), events)

@@ -255,8 +255,8 @@ function renderSummary(summary) {
     formatInterval(collector.sps30_auto_cleaning_interval_seconds);
   document.getElementById('scd41-last-calibration').textContent =
     formatTimestamp(calibration.calibrated_at || collector.sensors?.scd41?.last_calibration_at);
-  document.getElementById('scd41-recent-samples').textContent =
-    String(collector.scd41_recent_valid_samples ?? '--');
+  lastCalibrationReadiness = collector.scd41_calibration || null;
+  renderCalibrationChecklist();
   document.getElementById('database-path').textContent = collector.database_path || '--';
   document.getElementById('collector-log-file').textContent = collector.log_file || '--';
   const dbStats = summary.database || {};
@@ -634,6 +634,59 @@ function renderCommands(commands) {
 }
 
 // ---------------------------------------------------------------------------
+// SCD41 calibration checklist
+// ---------------------------------------------------------------------------
+// The collector publishes live readiness numbers plus the very limits the
+// backend enforces, so the button unlocks exactly when a command would pass.
+
+let lastCalibrationReadiness = null;
+
+function renderCalibrationChecklist() {
+  const box = document.getElementById('scd41-checklist');
+  const submit = document.getElementById('scd41-calibration-submit');
+  const cal = lastCalibrationReadiness;
+  if (!cal || !cal.limits) {
+    // Collector too old (or down) to publish readiness: don't block the form.
+    box.innerHTML = '';
+    submit.disabled = false;
+    return;
+  }
+  const limits = cal.limits;
+  const target = Number(document.getElementById('target-co2').value) || 420;
+  const driftOverride = document.getElementById('scd41-calibration-drift').checked;
+  const delta = cal.average_co2 == null ? null : Math.abs(cal.average_co2 - target);
+
+  const checks = [
+    {
+      ok: cal.runtime_seconds >= limits.min_runtime,
+      text: `Warmed up — running ${cal.runtime_seconds}s of ${limits.min_runtime}s`,
+    },
+    {
+      ok: cal.sample_count >= limits.min_samples,
+      text: `Enough readings — ${cal.sample_count} of ${limits.min_samples}`,
+    },
+    {
+      ok: cal.spread_co2 != null && cal.spread_co2 <= limits.max_spread,
+      text: cal.spread_co2 == null
+        ? 'Stable readings — no data yet'
+        : `Stable readings — spread ${cal.spread_co2} ppm (limit ${limits.max_spread})`,
+    },
+    driftOverride
+      ? { ok: true, text: 'Near target — skipped (drift override)' }
+      : {
+        ok: delta != null && delta <= limits.max_reference_delta,
+        text: delta == null
+          ? `Near ${target} ppm — no data yet`
+          : `Near ${target} ppm — sensor reads ${cal.average_co2} (±${limits.max_reference_delta} allowed)`,
+      },
+  ];
+  box.innerHTML = checks.map((check) =>
+    `<p class="cal-check ${check.ok ? 'cal-ok' : 'cal-wait'}">${check.ok ? '✓' : '•'} ${escapeHtml(check.text)}</p>`
+  ).join('');
+  submit.disabled = !checks.every((check) => check.ok);
+}
+
+// ---------------------------------------------------------------------------
 // Custom dropdowns
 // ---------------------------------------------------------------------------
 // Native <select> popups commit on mouse-release on the operator's system
@@ -877,6 +930,9 @@ function installActions() {
     submitCommand('sps30_set_auto_cleaning_interval', { seconds: Math.round(value * multipliers[unit]) })
       .catch((e) => toast(e.message, 'error'));
   });
+
+  document.getElementById('target-co2').addEventListener('input', renderCalibrationChecklist);
+  document.getElementById('scd41-calibration-drift').addEventListener('change', renderCalibrationChecklist);
 
   document.getElementById('scd41-calibration-form').addEventListener('submit', (event) => {
     event.preventDefault();

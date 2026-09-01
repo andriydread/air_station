@@ -502,6 +502,14 @@ button.button-danger {
 }
 .checkbox { display: flex; align-items: center; gap: 8px; color: var(--ink) !important; }
 
+/* Calibration readiness checklist (SCD41 card) */
+.cal-checklist { display: flex; flex-direction: column; gap: 2px; }
+.cal-check { margin: 0; font-size: 13px; }
+.cal-ok { color: var(--ok); }
+.cal-wait { color: var(--muted); }
+
+button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
+
 .empty-state { color: var(--muted); padding: 14px 4px; font-size: 14px; }
 
 /* --- Hints ------------------------------------------------------------------

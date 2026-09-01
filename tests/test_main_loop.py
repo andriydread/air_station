@@ -208,6 +208,27 @@ def test_network_blip_stays_out_of_events_but_outage_is_reported(monkeypatch, tm
         monitor.database.close()
 
 
+# --- Calibration readiness in the status payload (R11) --------------------------
+
+
+def test_status_payload_carries_calibration_readiness(tmp_path):
+    from airmonitor.config import Config
+
+    config = Config(database_path=str(tmp_path / "cr.db"), log_file=str(tmp_path / "cr.log"))
+    monitor = main_module.AirMonitor(config)
+    try:
+        payload = monitor._status_payload()["scd41_calibration"]
+        assert payload["sample_count"] == 0  # no sensor yet: empty but shaped
+        assert payload["limits"]["min_samples"] == config.calibration_min_samples
+
+        monitor._init_i2c_and_sensors()
+        payload = monitor._status_payload()["scd41_calibration"]
+        assert payload["limits"]["max_reference_delta"] == config.calibration_max_reference_delta_ppm
+        assert "average_co2" in payload and "spread_co2" in payload
+    finally:
+        monitor.database.close()
+
+
 # --- Display status glyphs (R9) -----------------------------------------------
 
 

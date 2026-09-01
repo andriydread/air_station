@@ -197,15 +197,16 @@
           <div class="info-list">
             <p><span>Self-calibration (ASC)</span><strong id="scd41-asc-state">--</strong></p>
             <p><span>Last calibration</span><strong id="scd41-last-calibration">--</strong></p>
-            <p><span>Stable samples</span><strong id="scd41-recent-samples">--</strong></p>
           </div>
           <form id="scd41-calibration-form" class="stack-form">
             <label for="target-co2">Forced calibration target, ppm</label>
             <input id="target-co2" type="number" min="350" max="2000" value="420">
+            <p class="panel-note">Put the station in fresh air (open window / outside), wait for the checklist, then calibrate.</p>
+            <div class="cal-checklist" id="scd41-checklist"></div>
             <label class="checkbox"><input id="scd41-calibration-confirm" type="checkbox"> Sensor is in known stable reference air</label>
             <label class="checkbox"><input id="scd41-calibration-drift" type="checkbox"> Sensor has drifted badly — skip distance-to-target check</label>
             <label class="checkbox"><input id="scd41-calibration-persist" type="checkbox" checked> Persist in sensor</label>
-            <button type="submit">Run forced calibration</button>
+            <button type="submit" id="scd41-calibration-submit">Run forced calibration</button>
           </form>
           <form id="scd41-asc-form" class="stack-form">
             <label class="checkbox"><input id="scd41-asc-enabled" type="checkbox"> Automatic self-calibration (ASC)</label>

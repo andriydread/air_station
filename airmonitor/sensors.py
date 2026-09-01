@@ -248,6 +248,24 @@ class Scd41:
             return None
         return int(time.monotonic() - self.measurement_started_at)
 
+    def calibration_readiness(self) -> Dict[str, Any]:
+        """Live inputs for the dashboard's calibration checklist (never raises).
+
+        Same numbers `check_calibration_preconditions` enforces, but as data:
+        the UI shows which conditions pass and enables the button only when
+        the sensor is actually ready.
+        """
+        self._trim_recent_samples(time.monotonic())
+        samples = [ppm for _, ppm in self.recent_valid_samples]
+        average = sum(samples) / len(samples) if samples else None
+        spread = max(samples) - min(samples) if samples else None
+        return {
+            "runtime_seconds": self.runtime_seconds() or 0,
+            "sample_count": len(samples),
+            "average_co2": round(average, 1) if average is not None else None,
+            "spread_co2": round(spread, 1) if spread is not None else None,
+        }
+
     def check_calibration_preconditions(
         self, target_co2: int, allow_large_offset: bool = False
     ) -> Dict[str, Any]:
