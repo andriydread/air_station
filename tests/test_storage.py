@@ -343,3 +343,26 @@ def test_hourly_stats_not_biased_by_null_gaps(database):
         )
     stats = database.query_stats_hourly(hour_a, hour_b + 3600)
     assert stats["co2"]["avg"] == 600.0
+
+
+def test_integrity_check_reports_ok_on_a_healthy_database(database):
+    database.insert_measurement({"co2": 600})
+    assert database.integrity_check() == []
+
+
+def test_backup_is_a_faithful_readable_copy(database, tmp_path):
+    for i in range(50):
+        database.insert_measurement({"co2": 600 + i})
+    heartbeats = []
+    target = str(tmp_path / "copy.db")
+    written = database.backup_to(target, progress=lambda: heartbeats.append(1))
+    assert written > 0
+
+    copy = AirMonitorDatabase(target)
+    try:
+        # The copy stands alone: full row count, latest value intact.
+        assert copy.database_stats()["measurements"] == 50
+        assert copy.get_latest_measurement()["co2"] == 649
+        assert copy.integrity_check() == []
+    finally:
+        copy.close()

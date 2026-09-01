@@ -217,6 +217,9 @@ class AirMonitor:
         # (weather_retry_interval); only a persisting failure goes unhealthy.
         self._weather_fail_streak = 0
         self._weather_unhealthy_after = 2
+        # Last integrity failure line; sticky so the periodic disk check
+        # can't paper over corruption with an "ok".
+        self._integrity_problem: Optional[str] = None
 
         # Start from the last stored forecast so the first display frame after
         # a restart shows weather instead of N/A while the fresh fetch is
@@ -398,6 +401,9 @@ class AirMonitor:
                 f"Low disk space: {free_bytes // (1024 * 1024)} MB free "
                 f"(threshold {threshold_mb} MB)"
             )
+        elif self._integrity_problem:
+            # Plenty of space doesn't make a corrupt database healthy.
+            self.storage_health.failed(f"Integrity check: {self._integrity_problem}")
         else:
             self.storage_health.ok()
 
@@ -586,11 +592,74 @@ class AirMonitor:
             {"age_days": age_days, "threshold_days": days},
         )
 
+    def _check_integrity(self) -> None:
+        """Nightly PRAGMA quick_check — SD corruption must be loud, not latent."""
+        try:
+            problems = self.database.integrity_check()
+        except Exception as exc:  # noqa: BLE001 - a raising check IS a finding
+            problems = [str(exc)]
+        if problems:
+            self._integrity_problem = problems[0]
+            self.storage_health.failed(f"Integrity check: {problems[0]}")
+            self.events.log(
+                logging.ERROR, "storage", "integrity_check_failed",
+                f"Database integrity check reported problems: {problems[0]}",
+                {"problems": problems[:10]},
+            )
+        else:
+            self._integrity_problem = None
+
+    def backup_database(self) -> None:
+        """Rotating online backup next to the live file (.bak, .bak.1).
+
+        Skipped when free space is under 2x the database size — a backup
+        must never be the thing that fills the card. Corrupt databases are
+        still backed up: a damaged copy beats no copy, and the integrity
+        event already screamed.
+        """
+        db_path = self.database.path
+        backup_path = str(db_path) + ".bak"
+        previous_path = str(db_path) + ".bak.1"
+        tmp_path = str(db_path) + ".bak.tmp"
+        size = max(self.database.database_stats()["size_bytes"], 1)
+        try:
+            stat = os.statvfs(str(db_path.parent))
+            free = stat.f_bavail * stat.f_frsize
+        except OSError:
+            free = None
+        if free is not None and free < 2 * size:
+            self.events.log(
+                logging.WARNING, "storage", "backup_skipped",
+                f"Skipping database backup: {free // (1024 * 1024)} MB free is "
+                "less than twice the database size",
+            )
+            return
+        try:
+            written = self.database.backup_to(tmp_path, progress=self.notifier.heartbeat)
+            if os.path.exists(backup_path):
+                os.replace(backup_path, previous_path)
+            os.replace(tmp_path, backup_path)
+            self.events.log(
+                logging.INFO, "storage", "backup_written",
+                f"Database backup written ({written // 1024} KB)",
+            )
+        except Exception as exc:  # noqa: BLE001 - backup failure must not kill the task
+            LOGGER.exception("Database backup failed")
+            self.events.log(
+                logging.ERROR, "storage", "backup_failed", f"Database backup failed: {exc}",
+            )
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
     def prune_database(self) -> None:
-        # Roll complete hours into the forever-history table BEFORE pruning,
-        # so raw samples never die unrolled. Each rollup_hourly call is
-        # bounded; heartbeat between chunks so a first-run backfill of a big
-        # table can't trip the 90s watchdog.
+        # Nightly maintenance, watchdog-heartbeated between steps: integrity
+        # check first (corruption must be known before we prune anything),
+        # then rollup BEFORE prune so raw samples never die unrolled, then
+        # the rotating backup of the freshly-maintained file.
+        self._check_integrity()
+        self.notifier.heartbeat()
         rolled = 0
         while True:
             step = self.database.rollup_hourly()
@@ -601,6 +670,8 @@ class AirMonitor:
         deleted = self.database.prune(
             self.config.keep_measurements_days, self.config.keep_events_days
         )
+        self.notifier.heartbeat()
+        self.backup_database()
         if rolled or deleted["measurements"] or deleted["events"]:
             self.events.log(
                 logging.INFO, "storage", "pruned",

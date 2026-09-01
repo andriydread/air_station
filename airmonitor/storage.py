@@ -710,6 +710,38 @@ class AirMonitorDatabase:
 
     # --- Dashboard summary --------------------------------------------------
 
+    def integrity_check(self) -> List[str]:
+        """PRAGMA quick_check: [] when healthy, else the problem lines.
+
+        quick_check (not full integrity_check) keeps the nightly run cheap;
+        it still catches page-level corruption, which is what SD cards do.
+        """
+        rows = self._query("PRAGMA quick_check")
+        lines = [str(row[0]) for row in rows]
+        return [] if lines == ["ok"] else lines
+
+    def backup_to(self, target_path: str, progress=None) -> int:
+        """Online page-level backup to `target_path`; returns bytes written.
+
+        Runs under the connection lock (the sqlite3 Connection object must
+        not be used from two threads at once); `progress` is called between
+        page batches so the caller can keep watchdog heartbeats flowing.
+        """
+        target = Path(target_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        def _step(_status, _remaining, _total):
+            if progress is not None:
+                progress()
+
+        with self._lock:
+            destination = sqlite3.connect(str(target))
+            try:
+                self._connection.backup(destination, pages=2000, progress=_step)
+            finally:
+                destination.close()
+        return target.stat().st_size
+
     def database_stats(self) -> Dict[str, Any]:
         """Row count and on-disk size (main file + WAL/SHM) for the dashboard."""
         count = self._query("SELECT COUNT(*) AS n FROM measurements")[0]["n"]

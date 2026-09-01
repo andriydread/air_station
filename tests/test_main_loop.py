@@ -532,3 +532,97 @@ def test_low_disk_space_goes_unhealthy_and_recovers(monkeypatch, tmp_path):
         assert monitor.storage_health.state["healthy"] is True
     finally:
         monitor.database.close()
+
+
+# --- Nightly maintenance: integrity check + rotating backup (R12) ---------------
+
+
+def test_prune_task_writes_and_rotates_backups(tmp_path):
+    import os as os_module
+
+    from airmonitor.config import Config
+    from airmonitor.storage import AirMonitorDatabase
+
+    db_path = str(tmp_path / "night.db")
+    config = Config(database_path=db_path, log_file=str(tmp_path / "night.log"))
+    monitor = main_module.AirMonitor(config)
+    heartbeats = []
+    monitor.notifier.heartbeat = lambda: heartbeats.append(1)
+    try:
+        monitor.database.insert_measurement({"co2": 700, "temp": 21.0, "humid": 45.0})
+        monitor.prune_database()
+        assert os_module.path.exists(db_path + ".bak")
+        assert heartbeats  # watchdog fed between maintenance steps
+        monitor.check_disk()  # the 5-min task owns the health verdict
+        assert monitor.storage_health.state["healthy"] is True
+
+        # Second night: previous backup rotates to .bak.1.
+        monitor.database.insert_measurement({"co2": 800, "temp": 21.0, "humid": 45.0})
+        monitor.prune_database()
+        assert os_module.path.exists(db_path + ".bak.1")
+
+        # The newest backup is a standalone, readable copy with both rows.
+        copy = AirMonitorDatabase(db_path + ".bak")
+        try:
+            assert copy.database_stats()["measurements"] == 2
+        finally:
+            copy.close()
+
+        events = [e["event_type"] for e in monitor.database.get_recent_events(limit=50)]
+        assert events.count("backup_written") == 2
+    finally:
+        monitor.database.close()
+
+
+def test_backup_skipped_when_disk_headroom_is_too_small(monkeypatch, tmp_path):
+    from collections import namedtuple
+
+    from airmonitor.config import Config
+
+    Stat = namedtuple("Stat", "f_bavail f_frsize")
+    config = Config(
+        database_path=str(tmp_path / "full.db"), log_file=str(tmp_path / "full.log")
+    )
+    monitor = main_module.AirMonitor(config)
+    try:
+        monitor.database.insert_measurement({"co2": 700})
+        monkeypatch.setattr(main_module.os, "statvfs", lambda _p: Stat(1, 4096))
+        monitor.backup_database()
+        assert not main_module.os.path.exists(str(tmp_path / "full.db") + ".bak")
+        events = [e["event_type"] for e in monitor.database.get_recent_events(limit=20)]
+        assert "backup_skipped" in events
+    finally:
+        monitor.database.close()
+
+
+def test_integrity_failure_is_sticky_until_next_clean_check(monkeypatch, tmp_path):
+    from airmonitor.config import Config
+    from airmonitor.storage import AirMonitorDatabase
+
+    config = Config(
+        database_path=str(tmp_path / "corrupt.db"), log_file=str(tmp_path / "corrupt.log"),
+        min_free_disk_mb=0,  # disk-space branch stays quiet in this test
+    )
+    monitor = main_module.AirMonitor(config)
+    try:
+        monkeypatch.setattr(
+            AirMonitorDatabase, "integrity_check",
+            lambda _self: ["*** in database main *** page 7: btree corruption"],
+        )
+        monitor._check_integrity()
+        assert monitor.storage_health.state["healthy"] is False
+        events = [e["event_type"] for e in monitor.database.get_recent_events(limit=20)]
+        assert "integrity_check_failed" in events
+
+        # The 5-minute disk check must NOT declare the database healthy again.
+        monitor.check_disk()
+        assert monitor.storage_health.state["healthy"] is False
+        assert "Integrity" in monitor.storage_health.state["last_error"]
+
+        # A later clean check clears the sticky flag.
+        monkeypatch.setattr(AirMonitorDatabase, "integrity_check", lambda _self: [])
+        monitor._check_integrity()
+        monitor.check_disk()
+        assert monitor.storage_health.state["healthy"] is True
+    finally:
+        monitor.database.close()
