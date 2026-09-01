@@ -343,7 +343,9 @@ button.button-danger {
 .chart-card { padding: 14px 16px; }
 .chart-card h3 { margin: 0 0 8px; font-size: 15px; }
 .chart-frame { position: relative; }
-.chart-frame svg { width: 100%; height: auto; display: block; }
+/* pan-y: a finger dragging a chart still scrolls the page vertically while
+   horizontal movement drives the tooltip. */
+.chart-frame svg { width: 100%; height: auto; display: block; touch-action: pan-y; }
 .chart-tooltip {
   position: absolute;
   transform: translate(-50%, -100%);
@@ -561,7 +563,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
   pointer-events: none;
   transition: opacity 0.12s ease;
 }
-.hint:hover::after, .hint:focus-visible::after { opacity: 1; }
+.hint:hover::after, .hint:focus-visible::after, .hint.hint-open::after { opacity: 1; }
 /* Keep the hint hugging the title while badges/notes stay right-aligned. */
 .metric-card header .hint, .panel-head .hint { margin-right: auto; }
 
@@ -592,5 +594,22 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 }
 @media (max-width: 560px) {
   .page { padding: 14px 12px 40px; }
-  .metric-hero p { font-size: 28px; }
+  /* Compact header: the phone's own status bar already shows the time, and
+     every pixel above the data costs a scroll. */
+  .topbar { padding: 2px 0 8px; gap: 10px; }
+  .brand h1 { font-size: 20px; }
+  .brand-sub { display: inline; }
+  .status-strip { display: inline-flex; margin-left: 8px; margin-top: 0; }
+  .clock { display: none; }
+  #theme-toggle { margin-left: auto; }
+  /* Two-up heroes with CO2 and Air quality first — all vitals in one
+     screen, the actionable numbers on top. DOM order (screen readers)
+     stays temp/humid/co2/aqi. */
+  .hero-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .hero-grid .metric-hero:nth-child(1) { order: 3; }
+  .hero-grid .metric-hero:nth-child(2) { order: 4; }
+  .hero-grid .metric-hero:nth-child(3) { order: 1; }
+  .hero-grid .metric-hero:nth-child(4) { order: 2; }
+  .metric-hero p { font-size: 24px; }
+  .sparkline { height: 32px; }
 }

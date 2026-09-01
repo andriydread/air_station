@@ -139,8 +139,9 @@ async function submitCommand(command, payload = {}) {
 // ---------------------------------------------------------------------------
 
 let activeTab = 'live';
+const TAB_NAMES = ['live', 'history', 'diagnostics', 'controls'];
 
-function switchTab(name) {
+function switchTab(name, updateHash = true) {
   activeTab = name;
   document.querySelectorAll('.tab-button').forEach((button) => {
     button.classList.toggle('active', button.dataset.tab === name);
@@ -148,6 +149,11 @@ function switchTab(name) {
   document.querySelectorAll('.tab').forEach((section) => {
     section.classList.toggle('active', section.id === `tab-${name}`);
   });
+  // Deep-linkable tabs (#history): pushState makes the phone's back
+  // gesture walk tabs instead of leaving the page.
+  if (updateHash && location.hash !== `#${name}`) {
+    history.pushState(null, '', `#${name}`);
+  }
   if (name === 'history') refreshHistory().catch((e) => toast(e.message, 'error'));
   if (name === 'diagnostics') refreshDiagnostics().catch((e) => toast(e.message, 'error'));
   if (name === 'live') {
@@ -155,6 +161,11 @@ function switchTab(name) {
     refreshSparklines();
   }
 }
+
+window.addEventListener('hashchange', () => {
+  const name = location.hash.slice(1) || 'live';
+  if (TAB_NAMES.includes(name) && name !== activeTab) switchTab(name, false);
+});
 
 // ---------------------------------------------------------------------------
 // Live tab
@@ -571,11 +582,24 @@ function renderLineChart(svgId, rows, key, config) {
   chartState.set(svgId, { coordinates, formatValue: config.formatter, width, height });
 }
 
+function hideChartTooltip(svgId) {
+  const crosshair = document.getElementById(`crosshair-${svgId}`);
+  const focus = document.getElementById(`focus-${svgId}`);
+  const tooltip = document.getElementById(`tooltip-${svgId}`);
+  if (crosshair) crosshair.setAttribute('opacity', '0');
+  if (focus) focus.setAttribute('opacity', '0');
+  if (tooltip) tooltip.style.opacity = '0';
+}
+
+function hideAllChartTooltips() {
+  chartState.forEach((_state, id) => hideChartTooltip(id));
+}
+
 function installChartHover(svgId) {
   const svg = document.getElementById(svgId);
   const tooltip = document.getElementById(`tooltip-${svgId}`);
 
-  svg.addEventListener('mousemove', (event) => {
+  const show = (event) => {
     const state = chartState.get(svgId);
     if (!state || !state.coordinates.length) return;
     const rect = svg.getBoundingClientRect();
@@ -596,16 +620,21 @@ function installChartHover(svgId) {
     tooltip.style.opacity = '1';
     tooltip.style.left = `${(nearest.x / state.width) * rect.width}px`;
     tooltip.style.top = `${(nearest.y / state.height) * rect.height - 10}px`;
-  });
+  };
 
-  svg.addEventListener('mouseleave', () => {
-    const crosshair = document.getElementById(`crosshair-${svgId}`);
-    const focus = document.getElementById(`focus-${svgId}`);
-    if (crosshair) crosshair.setAttribute('opacity', '0');
-    if (focus) focus.setAttribute('opacity', '0');
-    tooltip.style.opacity = '0';
+  // Pointer events instead of mouse events: a tap pins the tooltip (there
+  // is no hover on the primary device — a phone); tap-outside dismisses
+  // via the document listener installed once below.
+  svg.addEventListener('pointermove', (event) => {
+    if (event.pointerType === 'mouse') show(event);
   });
+  svg.addEventListener('pointerdown', show);
+  svg.addEventListener('mouseleave', () => hideChartTooltip(svgId));
 }
+
+document.addEventListener('pointerdown', (event) => {
+  if (!event.target.closest('.chart-frame')) hideAllChartTooltips();
+});
 
 // ---------------------------------------------------------------------------
 // Diagnostics tab
@@ -950,9 +979,22 @@ async function refreshAll() {
 }
 
 function installActions() {
+  // Hints must work by tap too — hover doesn't exist on the primary device.
+  const closeAllHints = () => {
+    document.querySelectorAll('.hint.hint-open').forEach((open) => {
+      open.classList.remove('hint-open');
+    });
+  };
   document.querySelectorAll('.hint[data-hint]').forEach((hint) => {
     hint.setAttribute('aria-label', hint.dataset.hint);
+    hint.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const wasOpen = hint.classList.contains('hint-open');
+      closeAllHints();
+      if (!wasOpen) hint.classList.add('hint-open');
+    });
   });
+  document.addEventListener('click', closeAllHints);
 
   document.querySelectorAll('.tab-button').forEach((button) => {
     button.addEventListener('click', () => switchTab(button.dataset.tab));
@@ -1058,6 +1100,11 @@ function installRefreshLoop() {
     }
     if (activeTab === 'diagnostics') refreshDiagnostics().catch(() => { /* quiet */ });
   }, 60000);
+  // Phones background the tab and browsers throttle intervals; coming back
+  // must show now, not a minute ago.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshAll().catch(() => {});
+  });
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -1067,8 +1114,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   upgradeSelects();
   installActions();
   installRefreshLoop();
-  reloadPreview();
-  refreshSparklines();
+  const initialTab = location.hash.slice(1);
+  if (TAB_NAMES.includes(initialTab) && initialTab !== 'live') {
+    switchTab(initialTab, false);
+  } else {
+    reloadPreview();
+    refreshSparklines();
+  }
   try {
     await refreshSummary();
   } catch (error) {
