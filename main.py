@@ -33,6 +33,7 @@ import busio
 import requests
 
 from airmonitor.commands import CommandProcessor
+from airmonitor import lifecycle
 from airmonitor.config import Config
 from airmonitor.logging_utils import EventLog, configure_logging
 from airmonitor.network import probe_network
@@ -180,6 +181,11 @@ class AirMonitor:
         # Collector-only startup step: the dashboard opens this database too,
         # and must never reap commands the collector is mid-executing.
         self.database.fail_stale_running_commands()
+        # The previous instance's last status document, captured before this
+        # instance publishes its own: it tells the start event whether the
+        # previous run shut down cleanly (see lifecycle.describe_start).
+        self._previous_status = self.database.get_state("collector_status")
+        self.start_context: Dict[str, Any] = {}
         self.events = EventLog(LOGGER, self.database)
         self.readings = LatestReadings(config.measurement_max_age, self.events)
         self.buffer = SampleBuffer()
@@ -231,6 +237,10 @@ class AirMonitor:
         self.last_display_snapshot: Optional[Dict[str, Any]] = None
         self._last_display_write = None  # (mode, snapshot minus timestamp)
         self.running = True
+        # Why the loop ended: a signal name, "fatal error: ..." — None while
+        # running. Published in the status document so the NEXT start can
+        # say how the previous run ended.
+        self.stop_reason: Optional[str] = None
         self.started_at = utc_now_iso()
         self.started_monotonic = time.monotonic()
         self.notifier = SystemdNotifier()
@@ -246,7 +256,12 @@ class AirMonitor:
 
     def install_signal_handlers(self) -> None:
         def stop(signum, _frame):
-            LOGGER.info("Received signal %s, stopping", signum)
+            try:
+                name = signal.Signals(signum).name
+            except ValueError:
+                name = f"signal {signum}"
+            LOGGER.info("Received %s, stopping", name)
+            self.stop_reason = name
             self.running = False
 
         signal.signal(signal.SIGTERM, stop)
@@ -254,7 +269,12 @@ class AirMonitor:
 
     def shutdown(self) -> None:
         self.notifier.stopping()
-        self.events.log(logging.INFO, "collector", "shutdown", "Shutting down hardware")
+        if self.stop_reason is None:
+            self.stop_reason = "shutdown without signal"
+        self.events.log(
+            logging.INFO, "collector", "shutdown",
+            f"Shutting down hardware ({self.stop_reason})", {"reason": self.stop_reason},
+        )
         self.running = False
         self.publish_status()
         for worker in self._workers:
@@ -710,7 +730,9 @@ class AirMonitor:
     def _status_payload(self) -> Dict[str, Any]:
         return {
             "running": self.running,
+            "stop_reason": self.stop_reason,
             "started_at": self.started_at,
+            "start_context": self.start_context,
             # Minute granularity so an otherwise-unchanged status document
             # deduplicates in set_state instead of rewriting every publish.
             "uptime_seconds": int(time.monotonic() - self.started_monotonic) // 60 * 60,
@@ -776,6 +798,9 @@ class AirMonitor:
         self.config.validate()
         try:
             self._run()
+        except BaseException as exc:
+            self.stop_reason = f"fatal error: {exc!r}"
+            raise
         finally:
             # A crash anywhere — setup included — still stops the sensors
             # and closes the database. shutdown() tolerates half-built state.
@@ -813,7 +838,7 @@ class AirMonitor:
         for worker in self._workers:
             worker.start()
 
-        self.events.log(logging.INFO, "collector", "started", "Air monitor started")
+        self._log_started()
         self.notifier.ready()
         last_heartbeat = 0.0
         while self.running:
@@ -826,6 +851,28 @@ class AirMonitor:
                 self.notifier.heartbeat()
                 last_heartbeat = now
             time.sleep(0.2)
+
+    def _log_started(self) -> None:
+        """One `started` event that says WHY: reboot or restart, clean or killed.
+
+        Reads the previous instance's status document and boot id BEFORE
+        this instance's first publish_status() would have overwritten them
+        — which is why the stored boot id is written here, after the
+        classification, and setup() only publishes into the status key.
+        """
+        previous_boot = self.database.get_state("collector_boot")
+        boot_id = lifecycle.read_boot_id()
+        context = lifecycle.describe_start(
+            boot_id=boot_id,
+            previous_boot_id=((previous_boot or {}).get("value") or {}).get("boot_id"),
+            system_uptime=lifecycle.read_system_uptime(),
+            previous_status=self._previous_status,
+            recent_commands=self.database.get_recent_commands(limit=10),
+            unit_info=lifecycle.systemd_unit_info(),
+        )
+        self.events.log(context["level"], "collector", "started", context["message"], context["details"])
+        self.database.set_state("collector_boot", {"boot_id": boot_id, "seen_at": utc_now_iso()})
+        self.start_context = context["details"]
 
     def _display_tick(self) -> None:
         """Partial refresh normally; a full refresh every full_update_interval."""

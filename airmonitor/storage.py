@@ -646,6 +646,7 @@ class AirMonitorDatabase:
                 "result": _from_json(row["result"]),
                 "created_at": _to_iso(row["created_at"]),
                 "updated_at": _to_iso(row["updated_at"]),
+                "updated_at_ts": row["updated_at"],
             }
             for row in rows
         ]

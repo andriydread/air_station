@@ -698,3 +698,89 @@ def test_sps30_status_task_marks_sensor_unhealthy(monkeypatch, tmp_path):
         assert monitor._display_status()["sensors"] is False  # glyph on the e-paper
     finally:
         monitor.database.close()
+
+
+# --- Lifecycle events ------------------------------------------------------------
+
+
+def _lifecycle_monitor(monkeypatch, tmp_path, boot_id):
+    from airmonitor.config import Config
+
+    monkeypatch.setattr(main_module.lifecycle, "read_boot_id", lambda: boot_id)
+    monkeypatch.setattr(main_module.lifecycle, "read_system_uptime", lambda: 42.0)
+    monkeypatch.setattr(main_module.lifecycle, "systemd_unit_info", lambda: {"n_restarts": 0})
+    config = Config(database_path=str(tmp_path / "l.db"), log_file=str(tmp_path / "l.log"))
+    return main_module.AirMonitor(config)
+
+
+def _started_events(monitor):
+    return [
+        e for e in monitor.database.get_recent_events(limit=50, source="collector")
+        if e["event_type"] == "started"
+    ]
+
+
+def test_start_event_classifies_reboot_and_unclean_stop(monkeypatch, tmp_path):
+    # Run 1: first start on record.
+    first = _lifecycle_monitor(monkeypatch, tmp_path, "boot-A")
+    first._log_started()
+    first.publish_status()  # leaves running=True behind, like a killed process
+    event = _started_events(first)[0]
+    assert "first start on record" in event["message"]
+    first.database.close()
+
+    # Run 2: same boot id, previous status still says running -> killed.
+    second = _lifecycle_monitor(monkeypatch, tmp_path, "boot-A")
+    second._log_started()
+    event = _started_events(second)[0]
+    assert event["level"] == "warning"
+    assert "restarted without a reboot" in event["message"]
+    assert event["details"]["previous_clean"] is False
+    assert event["details"]["rebooted"] is False
+    # Clean shutdown records the reason for the next start to quote.
+    second.stop_reason = "SIGTERM"
+    second.shutdown()
+    shutdown_event = [
+        e for e in AirMonitorDatabaseForTests(tmp_path).events() if e["event_type"] == "shutdown"
+    ][0]
+    assert "SIGTERM" in shutdown_event["message"]
+
+    # Run 3: new boot id, previous stop was clean -> orderly reboot.
+    third = _lifecycle_monitor(monkeypatch, tmp_path, "boot-B")
+    third._log_started()
+    event = _started_events(third)[0]
+    assert event["level"] == "info"
+    assert "after a Pi reboot" in event["message"]
+    assert "stopped cleanly on SIGTERM" in event["message"]
+    assert event["details"]["trigger"] == "orderly reboot"
+    assert third._status_payload()["start_context"]["rebooted"] is True
+    third.database.close()
+
+
+class AirMonitorDatabaseForTests:
+    """Fresh read-only peek at the test database between collector instances."""
+
+    def __init__(self, tmp_path):
+        from airmonitor.storage import AirMonitorDatabase
+
+        self.db = AirMonitorDatabase(str(tmp_path / "l.db"))
+
+    def events(self):
+        try:
+            return self.db.get_recent_events(limit=50)
+        finally:
+            self.db.close()
+
+
+def test_fatal_error_becomes_the_stop_reason(monkeypatch, tmp_path):
+    import pytest
+
+    monitor = _lifecycle_monitor(monkeypatch, tmp_path, "boot-A")
+
+    def exploding_setup():
+        raise RuntimeError("bus on fire")
+
+    monkeypatch.setattr(monitor, "setup", exploding_setup)
+    with pytest.raises(RuntimeError):
+        monitor.run()
+    assert monitor.stop_reason.startswith("fatal error: RuntimeError('bus on fire')")
