@@ -709,6 +709,43 @@ class AirMonitorDatabase:
             for row in rows
         ]
 
+    def query_events_range(
+        self, start_ts: int, end_ts: int, limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """Events inside a window, oldest first (text export interleaving)."""
+        rows = self._query(
+            "SELECT * FROM events WHERE created_at >= ? AND created_at <= ? "
+            "ORDER BY created_at ASC, id ASC LIMIT ?",
+            (start_ts, end_ts, limit),
+        )
+        return [
+            {
+                "id": row["id"],
+                "level": row["level"],
+                "source": row["source"],
+                "event_type": row["event_type"],
+                "message": row["message"],
+                "details": _from_json(row["details"], {}),
+                "created_at_ts": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def query_flagged_range(
+        self, start_ts: int, end_ts: int, limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """Flagged samples inside a window, oldest first."""
+        rows = self._query(
+            "SELECT id, recorded_at, flags FROM measurements "
+            "WHERE flags IS NOT NULL AND recorded_at >= ? AND recorded_at <= ? "
+            "ORDER BY recorded_at ASC, id ASC LIMIT ?",
+            (start_ts, end_ts, limit),
+        )
+        return [
+            {"id": row["id"], "recorded_at_ts": row["recorded_at"], "flags": _from_json(row["flags"], {})}
+            for row in rows
+        ]
+
     # --- Dashboard summary --------------------------------------------------
 
     def integrity_check(self) -> List[str]:

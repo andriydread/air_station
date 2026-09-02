@@ -7,7 +7,7 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
@@ -56,6 +56,114 @@ def choose_bucket_seconds(hours: float) -> int:
 # Ranges past raw retention are served from the hourly rollups (R8), which
 # never get pruned — 5 years is a UI sanity bound, not a data limit.
 MAX_RANGE_SECONDS = 5 * 365 * 86400
+
+# Text export: bucket ladder and the row budget it is chosen against. The
+# output is meant to be pasted into a chat/prompt, so ~150 lines is the
+# point, not completeness (the CSV export is for that).
+TEXT_EXPORT_BUCKETS = (60, 300, 600, 900, 1800, 3600, 3 * 3600, 6 * 3600, 86400)
+TEXT_EXPORT_MAX_ROWS = 150
+TEXT_EXPORT_DEFAULT_METRICS = ("co2", "temp", "humid", "pm25")
+METRIC_UNITS = {
+    "co2": "ppm", "temp": "°C", "humid": "%", "pm1": "µg/m³", "pm25": "µg/m³",
+    "pm4": "µg/m³", "pm10": "µg/m³", "tps": "µm",
+}
+METRIC_DIGITS = {"co2": 0, "temp": 1, "humid": 0, "pm1": 1, "pm25": 1, "pm4": 1, "pm10": 1, "tps": 2}
+
+
+def choose_text_bucket_seconds(range_seconds: int) -> int:
+    for bucket in TEXT_EXPORT_BUCKETS:
+        if range_seconds / bucket <= TEXT_EXPORT_MAX_ROWS:
+            return bucket
+    return TEXT_EXPORT_BUCKETS[-1]
+
+
+def parse_metrics(value: Any) -> Tuple[str, ...]:
+    if not value:
+        return TEXT_EXPORT_DEFAULT_METRICS
+    metrics = tuple(part.strip() for part in str(value).split(",") if part.strip())
+    unknown = [m for m in metrics if m not in METRIC_FIELDS]
+    if unknown:
+        raise ValueError(f"unknown metrics: {', '.join(unknown)}")
+    return metrics or TEXT_EXPORT_DEFAULT_METRICS
+
+
+def _format_value(metric: str, value: Any) -> str:
+    if value is None:
+        return "-"
+    return f"{float(value):.{METRIC_DIGITS.get(metric, 1)}f}"
+
+
+def render_text_export(
+    *,
+    start: int,
+    end: int,
+    bucket_seconds: int,
+    metrics: Tuple[str, ...],
+    rows: List[Dict[str, Any]],
+    events: List[Dict[str, Any]],
+    flagged: List[Dict[str, Any]],
+    now: Optional[float] = None,
+) -> str:
+    """A compact, human/LLM-readable dump: bucket rows with station events
+    and flagged samples interleaved by time, in the Pi's local time.
+
+    Events shown: everything the collector said about itself (starts,
+    shutdowns) plus every warning/error — the context a CO2 spike needs.
+    """
+    local = datetime.fromtimestamp(end if now is None else now).astimezone()
+    offset = local.strftime("%z")
+    offset = f"UTC{offset[:3]}:{offset[3:]}" if offset else "local time"
+    multi_day = (end - start) > 86400
+    stamp_format = "%m-%d %H:%M" if multi_day else "%H:%M"
+
+    def stamp(ts: int) -> str:
+        return datetime.fromtimestamp(ts).strftime(stamp_format)
+
+    if bucket_seconds >= 3600:
+        cadence = f"{bucket_seconds // 3600}-hour averages"
+    else:
+        cadence = f"{bucket_seconds // 60}-min averages" if bucket_seconds >= 60 else f"{bucket_seconds}s buckets"
+    lines = [
+        f"# air_station export · {datetime.fromtimestamp(start).strftime('%Y-%m-%d %H:%M')} → "
+        f"{datetime.fromtimestamp(end).strftime('%Y-%m-%d %H:%M')} ({offset})",
+        f"# {cadence} of 10 s samples · " + ", ".join(f"{m} ({METRIC_UNITS.get(m, '')})" for m in metrics),
+        "# '!' lines are station events (starts/stops, warnings, errors); "
+        "'~' lines are samples the quality guards flagged (raw value kept, not averaged)",
+    ]
+    widths = {m: max(len(m), 6) for m in metrics}
+    header = f"{'time':<{len(stamp(start))}}  " + "  ".join(f"{m:>{widths[m]}}" for m in metrics)
+    lines.append(header)
+
+    entries: List[Tuple[int, int, str]] = []  # (ts, order, text); order keeps events before the bucket row
+    for event in events:
+        if not (event["level"] in ("warning", "error") or event["source"] == "collector"):
+            continue
+        entries.append((
+            event["created_at_ts"], 0,
+            f"! {event['source']}: {event['message']}",
+        ))
+    for item in flagged:
+        parts = []
+        for metric, flag in item["flags"].items():
+            if metrics and metric not in metrics:
+                continue
+            value = flag.get("value")
+            parts.append(f"{metric} {_format_value(metric, value)} ({flag.get('reason', 'flagged')})")
+        if parts:
+            entries.append((item["recorded_at_ts"], 1, "~ " + "; ".join(parts)))
+    for row in rows:
+        ts = row.get("timestamp_ts")
+        if ts is None:
+            continue
+        entries.append((
+            ts, 2, "  ".join(f"{_format_value(m, row.get(m)):>{widths[m]}}" for m in metrics),
+        ))
+    entries.sort(key=lambda entry: (entry[0], entry[1]))
+    for ts, _order, text in entries:
+        lines.append(f"{stamp(ts)}  {text}")
+    if not rows:
+        lines.append("(no samples in this range)")
+    return "\n".join(lines) + "\n"
 
 
 def parse_timestamp(value: str, field_name: str) -> int:
@@ -299,15 +407,15 @@ def create_app() -> Flask:
         summary["database"] = cached_database_stats()
         return jsonify(summary)
 
-    @app.get("/api/history")
-    def api_history() -> Any:
-        start, end = resolve_range(request.args)
-        bucket_seconds = choose_bucket_seconds((end - start) / 3600)
-        # Hour-or-coarser buckets read the rollup table (cheaper, and the only
-        # source once the range outlives raw retention); fine buckets stay raw
-        # — unless the window starts before the raw horizon, where only the
-        # rollups still hold data (a short range 6 months back must not come
-        # up empty just because it is short).
+    def history_rows(start: int, end: int, bucket_seconds: int):
+        """Bucketed rows + stats; picks raw vs rollup source per B19/R8 rules.
+
+        Hour-or-coarser buckets read the rollup table (cheaper, and the only
+        source once the range outlives raw retention); fine buckets stay raw
+        — unless the window starts before the raw horizon, where only the
+        rollups still hold data (a short range 6 months back must not come
+        up empty just because it is short).
+        """
         raw_horizon = (
             int(time.time()) - config.keep_measurements_days * 86400
             if config.keep_measurements_days > 0 else None
@@ -320,6 +428,14 @@ def create_app() -> Flask:
         else:
             rows = database.query_history_range(start, end, bucket_seconds)
             stats = database.query_stats(start, end)
+        return rows, stats, bucket_seconds
+
+    @app.get("/api/history")
+    def api_history() -> Any:
+        start, end = resolve_range(request.args)
+        rows, stats, bucket_seconds = history_rows(
+            start, end, choose_bucket_seconds((end - start) / 3600)
+        )
         for row in rows:
             row["aqi"] = row_aqi(row)
         return jsonify(
@@ -357,6 +473,30 @@ def create_app() -> Flask:
             mimetype="text/csv",
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
+
+    @app.get("/api/export.txt")
+    def api_export_txt() -> Any:
+        """Paste-sized plain text: bucketed values with events interleaved.
+
+        Exists so the operator can hand a slice of history (with the
+        reboots, warnings and flagged samples that explain it) to a person
+        or a chat model without wrangling a CSV. `?metrics=co2` narrows the
+        columns, `?bucket=300` overrides the automatic bucket.
+        """
+        start, end = resolve_range(request.args)
+        metrics = parse_metrics(request.args.get("metrics"))
+        if request.args.get("bucket") is not None:
+            bucket_seconds = max(10, parse_int(request.args.get("bucket"), "bucket"))
+        else:
+            bucket_seconds = choose_text_bucket_seconds(end - start)
+        rows, _stats, bucket_seconds = history_rows(start, end, bucket_seconds)
+        text = render_text_export(
+            start=start, end=end, bucket_seconds=bucket_seconds, metrics=metrics,
+            rows=rows,
+            events=database.query_events_range(start, end, limit=200),
+            flagged=database.query_flagged_range(start, end, limit=200),
+        )
+        return Response(text, mimetype="text/plain; charset=utf-8")
 
     @app.get("/api/flags")
     def api_flags() -> Any:

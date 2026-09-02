@@ -661,6 +661,45 @@ async function refreshHistory() {
   renderAllCharts(lastHistoryRows);
   renderStats(data.stats || {}, data.from_ts, data.to_ts);
   document.getElementById('export-csv').href = `/api/export.csv?${rangeQuery()}`;
+  document.getElementById('open-text').href = `/api/export.txt?${rangeQuery()}`;
+}
+
+// Copy the selected range as the paste-friendly text export. The async
+// Clipboard API only exists in secure contexts (HTTPS or localhost) and the
+// dashboard is plain HTTP on the LAN, so fall back to the legacy
+// selection+execCommand path, and to opening the text when even that fails.
+async function copyRangeAsText() {
+  const url = `/api/export.txt?${rangeQuery()}`;
+  let response;
+  try {
+    response = await fetch(url);
+  } catch (_error) {
+    throw new Error('Station unreachable');
+  }
+  if (!response.ok) throw new Error(`Export failed (${response.status})`);
+  const text = await response.text();
+  const lines = text.split('\n').filter((line) => line && !line.startsWith('#')).length - 1;
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    toast(`Copied ${lines} lines to the clipboard`, 'info');
+    return;
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.top = '-1000px';
+  document.body.appendChild(area);
+  area.select();
+  let copied = false;
+  try { copied = document.execCommand('copy'); } catch (_error) { copied = false; }
+  document.body.removeChild(area);
+  if (copied) {
+    toast(`Copied ${lines} lines to the clipboard`, 'info');
+  } else {
+    window.open(url, '_blank', 'noopener');
+    toast('Clipboard blocked by the browser — opened the text instead; select all and copy.', 'info');
+  }
 }
 
 function renderStats(stats, fromTs, toTs) {
@@ -1424,6 +1463,14 @@ function installActions() {
       button.classList.add('active');
       refreshHistory().catch((e) => toast(e.message, 'error'));
     });
+  });
+
+  document.getElementById('copy-text').addEventListener('click', (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    copyRangeAsText()
+      .catch((e) => toast(e.message, 'error'))
+      .finally(() => { button.disabled = false; });
   });
 
   document.getElementById('custom-range-form').addEventListener('submit', (event) => {

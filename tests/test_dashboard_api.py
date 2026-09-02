@@ -279,3 +279,58 @@ def test_host_allowlist_blocks_foreign_hosts(monkeypatch, tmp_path):
 def test_host_allowlist_disabled_by_default(client):
     response = client.get("/api/health", headers={"Host": "anything.example.com"})
     assert response.status_code == 200
+
+
+# --- Text export (paste-friendly) ----------------------------------------------
+
+
+def test_export_txt_interleaves_events_and_flags(client):
+    import time as _time
+
+    from airmonitor.storage import AirMonitorDatabase
+    from dashboard.app import Config as _Config
+
+    db = AirMonitorDatabase(_Config.from_env().database_path)
+    now = int(_time.time())
+    with db._lock:
+        db._connection.execute(
+            "INSERT INTO measurements (recorded_at, co2, temp, flags) VALUES (?, ?, ?, ?)",
+            (now - 1200, None, 22.5, '{"co2": {"value": 1400, "reason": "warm-up: scd41 started 50s short of settling"}}'),
+        )
+        db._connection.execute(
+            "INSERT INTO measurements (recorded_at, co2, temp) VALUES (?, ?, ?)", (now - 600, 612, 22.7)
+        )
+        db._connection.execute(
+            "INSERT INTO events (level, source, event_type, message, details, created_at) "
+            "VALUES ('info', 'collector', 'started', 'Air monitor started after a Pi reboot (system up 48s)', '{}', ?)",
+            (now - 1300,),
+        )
+        db._connection.execute(
+            "INSERT INTO events (level, source, event_type, message, details, created_at) "
+            "VALUES ('info', 'display', 'state_change', 'quiet info that must NOT appear', '{}', ?)",
+            (now - 1250,),
+        )
+    db.close()
+
+    response = client.get("/api/export.txt?hours=1&metrics=co2,temp")
+    assert response.status_code == 200
+    assert response.mimetype == "text/plain"
+    text = response.get_data(as_text=True)
+    lines = text.splitlines()
+    assert lines[0].startswith("# air_station export ·")
+    assert "co2 (ppm), temp (°C)" in lines[1]
+    assert "! collector: Air monitor started after a Pi reboot" in text
+    assert "quiet info" not in text
+    assert "~ co2 1400 (warm-up: scd41 started 50s short of settling)" in text
+    body = [line for line in lines if not line.startswith("#")]
+    assert body[0].split()[1:] == ["co2", "temp"]  # header row
+    # order: start event, then flagged sample, then the settled row
+    assert text.index("! collector") < text.index("~ co2 1400") < text.index("612")
+    # 1h -> 60 s buckets (<= 150 rows); a 24h range steps up to 10 min
+    assert client.get("/api/export.txt?hours=24").get_data(as_text=True).splitlines()[1].startswith("# 10-min averages")
+
+
+def test_export_txt_rejects_unknown_metric_and_honors_bucket(client):
+    assert client.get("/api/export.txt?metrics=co2,volts").status_code == 400
+    text = client.get("/api/export.txt?hours=6&bucket=1800").get_data(as_text=True)
+    assert "# 30-min averages" in text

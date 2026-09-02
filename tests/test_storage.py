@@ -366,3 +366,22 @@ def test_backup_is_a_faithful_readable_copy(database, tmp_path):
         assert copy.integrity_check() == []
     finally:
         copy.close()
+
+
+def test_range_queries_for_events_and_flags(database):
+    now = int(__import__("time").time())
+    database.insert_event("warning", "scd41", "auto_reinit", "old", {})
+    with database._lock:
+        database._connection.execute("UPDATE events SET created_at = ?", (now - 7200,))
+    database.insert_event("info", "collector", "started", "new", {"rebooted": True})
+    database.insert_measurement({"temp": 21.0}, flags={"co2": {"value": 1300, "reason": "warm-up"}})
+    database.insert_measurement({"temp": 21.0, "co2": 600})
+
+    events = database.query_events_range(now - 600, now + 1)
+    assert [e["event_type"] for e in events] == ["started"]
+    assert events[0]["details"] == {"rebooted": True}
+    assert database.query_events_range(now - 8000, now + 1)[0]["event_type"] == "auto_reinit"
+
+    flagged = database.query_flagged_range(now - 600, now + 1)
+    assert len(flagged) == 1
+    assert flagged[0]["flags"]["co2"]["value"] == 1300

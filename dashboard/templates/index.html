@@ -137,6 +137,8 @@
           <label>To <input type="datetime-local" id="range-to"></label>
           <button type="submit">Apply</button>
           <a id="export-csv" class="ghost-button" href="/api/export.csv?hours=24" download>Export CSV</a>
+          <button id="copy-text" class="ghost-button" type="button" title="Copy this range as a compact text table (with station events) — ready to paste into a chat or a prompt">Copy as text</button>
+          <a id="open-text" class="ghost-button" href="/api/export.txt?hours=24" target="_blank" rel="noopener">Open as text</a>
         </form>
       </section>
 
