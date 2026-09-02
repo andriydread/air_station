@@ -9,6 +9,10 @@ import math
 from typing import Any, Optional
 
 DEFAULT_MIN_VALID_CO2_PPM = 350
+# The SCD4x output range tops out at 40'000 ppm (datasheet, Table 1); a
+# reading above it is a corrupt transfer (0xFFFF = 65535 is the classic
+# garbage word), never air.
+MAX_VALID_CO2_PPM = 40000
 VALID_TEMPERATURE = (-40.0, 85.0)
 VALID_HUMIDITY = (0.0, 100.0)
 
@@ -29,7 +33,7 @@ def clean_value(
         return None
     if field == "co2":
         number = int(round(number))
-        return number if number >= min_valid_co2_ppm else None
+        return number if min_valid_co2_ppm <= number <= MAX_VALID_CO2_PPM else None
     number = round(number, 2)
     if field == "temp":
         return number if VALID_TEMPERATURE[0] <= number <= VALID_TEMPERATURE[1] else None

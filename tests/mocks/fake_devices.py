@@ -19,6 +19,7 @@ class FakeScd41Device:
         self.temperature = 23.0
         self.relative_humidity = 40.0
         self.altitude = 0
+        self.temperature_offset = 4.0
         self.self_calibration_enabled = False
         self.raise_on_read: Optional[Exception] = None
         self.calibration_result = 12  # 0xFFFF simulates a rejected calibration
@@ -94,6 +95,10 @@ class FakeSps30Device:
         self.raise_on_data_ready: Optional[Exception] = None
         self.raise_on_read: Optional[Exception] = None
         self.auto_cleaning_interval = 604800
+        self.firmware_version = (2, 2)
+        # Device Status Register as the driver decodes it; tests flip bits.
+        self.status = {"raw": 0, "speed_warning": False, "laser_error": False, "fan_error": False}
+        self.raise_on_status: Optional[Exception] = None
         self.wakeup_calls = 0
         self.start_calls = 0
         self.stop_calls = 0
@@ -129,6 +134,11 @@ class FakeSps30Device:
         if self.raise_on_read is not None:
             raise self.raise_on_read
         return dict(self.values)
+
+    def read_device_status(self) -> Dict[str, object]:
+        if self.raise_on_status is not None:
+            raise self.raise_on_status
+        return dict(self.status)
 
 
 class ScriptedI2CDevice:

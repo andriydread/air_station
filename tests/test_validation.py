@@ -50,3 +50,12 @@ def test_non_finite_values_are_never_believable():
         assert clean_value(field, nan) is None
         assert clean_value(field, inf) is None
         assert clean_value(field, -inf) is None
+
+
+def test_co2_ceiling_is_the_sensor_output_range():
+    from airmonitor.validation import MAX_VALID_CO2_PPM, clean_value
+
+    assert MAX_VALID_CO2_PPM == 40000
+    assert clean_value("co2", 40000) == 40000
+    assert clean_value("co2", 40001) is None
+    assert clean_value("co2", 65535) is None  # 0xFFFF: a corrupt word, not air

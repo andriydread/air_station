@@ -484,3 +484,114 @@ def test_scd41_data_ready_raising_counts_as_read_failure(monkeypatch, events):
     device.raise_on_data_ready = None
     assert wrapper.read() is not None
     assert wrapper.failure_streak == 0
+
+
+# --- Datasheet pass (2026-09-02) ---------------------------------------------
+
+
+def test_scd41_temperature_offset_set_before_measurement(monkeypatch, events):
+    device = FakeScd41Device()
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
+    sensors.Scd41(object(), Config(scd41_temp_offset=2.5), events)
+    assert device.temperature_offset == 2.5
+
+
+def test_scd41_reading_above_output_range_is_invalid(monkeypatch, events):
+    device = FakeScd41Device()
+    device.co2_values = [65535.0, 40001.0, 40000.0]  # 0xFFFF garbage, then the edge
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
+    wrapper = sensors.Scd41(object(), Config(), events)
+    assert wrapper.read() is None
+    assert wrapper.read() is None
+    assert wrapper.invalid_streak == 2
+    assert wrapper.read() == 40000.0
+    assert wrapper.invalid_streak == 0
+
+
+def test_scd41_reinit_waits_the_datasheet_settle_time(monkeypatch, events):
+    """Table 7: up to 1000 ms soft-reset time after reinit before the sensor
+    answers again. The Adafruit driver only waits 20 ms."""
+    device = FakeScd41Device()
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
+    sleeps = []
+    monkeypatch.setattr(sensors.time, "sleep", sleeps.append)
+    wrapper = sensors.Scd41(object(), Config(), events)
+    wrapper.reinitialize()
+    assert device.reinit_calls == 1
+    assert max(sleeps) >= 1.0
+    # settle sleep must sit between reinit and the config writes (start_calls
+    # went 1 -> 2, so the restart happened after the waits)
+    assert device.start_calls == 2
+
+
+def test_scd41_warmup_window_follows_every_start(monkeypatch, events):
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(sensors.time, "monotonic", lambda: clock["now"])
+    device = FakeScd41Device()
+    monkeypatch.setattr(sensors.adafruit_scd4x, "SCD4X", lambda _i2c: device)
+    wrapper = sensors.Scd41(object(), Config(scd41_warmup_seconds=60), events)
+    assert wrapper.warmup_remaining() == 60.0
+    clock["now"] += 59
+    assert wrapper.warmup_remaining() == 1.0
+    clock["now"] += 1
+    assert wrapper.warmup_remaining() == 0.0
+    # a forced calibration restarts measurement -> warm-up again
+    wrapper.force_calibration(420, persist=False)
+    assert wrapper.warmup_remaining() == 60.0
+    # disabled guard
+    wrapper.config = Config(scd41_warmup_seconds=0)
+    assert wrapper.warmup_remaining() == 0.0
+
+
+def test_sps30_warmup_window(monkeypatch, events):
+    clock = {"now": 500.0}
+    monkeypatch.setattr(sensors.time, "monotonic", lambda: clock["now"])
+    device = FakeSps30Device()
+    monkeypatch.setattr(sensors, "SPS30", lambda _i2c: device)
+    wrapper = sensors.Sps30(object(), Config(sps30_warmup_seconds=30), events)
+    assert wrapper.warmup_remaining() == 30.0
+    clock["now"] += 30
+    assert wrapper.warmup_remaining() == 0.0
+
+
+def test_sps30_status_register_reports_fan_failure_once(monkeypatch, events):
+    device = FakeSps30Device()
+    monkeypatch.setattr(sensors, "SPS30", lambda _i2c: device)
+    wrapper = sensors.Sps30(object(), Config(), events)
+    assert wrapper.check_status()["fan_error"] is False
+    assert wrapper.health.state["healthy"] is True
+    assert "device_status" not in events.types("sps30")  # healthy first read: quiet
+
+    device.status = {**device.status, "fan_error": True, "raw": 1 << 4}
+    wrapper.check_status()
+    wrapper.check_status()  # unchanged -> no second event
+    assert wrapper.health.state["healthy"] is False
+    assert "fan failure" in wrapper.health.state["last_error"]
+    assert events.types("sps30").count("device_status") == 1
+
+    device.status = {**device.status, "fan_error": False, "raw": 0}
+    wrapper.check_status()
+    assert events.types("sps30").count("device_status") == 2  # the "clear again" INFO
+    assert wrapper.health.state["healthy"] is False  # health returns via the next good read
+    assert wrapper.read() is not None
+    assert wrapper.health.state["healthy"] is True
+
+
+def test_sps30_status_register_skipped_on_old_firmware(monkeypatch, events):
+    device = FakeSps30Device()
+    device.firmware_version = (2, 1)
+    monkeypatch.setattr(sensors, "SPS30", lambda _i2c: device)
+    wrapper = sensors.Sps30(object(), Config(), events)
+    assert wrapper.check_status() is None
+    assert wrapper.check_status() is None
+    assert events.types("sps30").count("status_unsupported") == 1
+
+
+def test_sps30_status_read_failure_is_not_a_sensor_failure(monkeypatch, events):
+    device = FakeSps30Device()
+    device.raise_on_status = OSError("Remote I/O error")
+    monkeypatch.setattr(sensors, "SPS30", lambda _i2c: device)
+    wrapper = sensors.Sps30(object(), Config(), events)
+    assert wrapper.check_status() is None
+    assert wrapper.health.state["healthy"] is True
+    assert wrapper.failure_streak == 0

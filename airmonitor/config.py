@@ -73,6 +73,18 @@ class Config:
     # Sensor altitude for pressure compensation; the SCD41's CO2 math is
     # measurably off without it. Default: Lviv (~296 m).
     scd41_altitude_m: int = 296
+    # The SCD41's on-chip RH/T offset (datasheet 3.6.1): factory default is
+    # 4.0 C and Sensirion says it must be tuned inside the final device in
+    # thermal equilibrium (offset_new = T_scd41 - T_reference + offset_old).
+    # It does NOT affect CO2 accuracy; it only matters for the SHT41 <-> SCD41
+    # cross-check, which compares the two temperatures.
+    scd41_temp_offset: float = 4.0
+    # Readings taken this soon after the SCD41 starts (or restarts)
+    # measuring are stored as flagged "warm-up" samples, not as data: the
+    # photoacoustic cell needs to reach thermal equilibrium first (the
+    # datasheet has the master discard the first readings after power-up).
+    # 0 disables the guard.
+    scd41_warmup_seconds: int = 60
 
     # SHT41 mounting correction: added to every reading. Set negative if the
     # sensor sits close enough to the Pi to pick up its self-heating.
@@ -95,6 +107,10 @@ class Config:
 
     # SPS30 (particulate matter)
     sps30_manual_clean_cooldown: int = 1800  # min seconds between fan cleanings
+    # Datasheet Table 1: after Start Measurement the SPS30 needs 8-30 s
+    # (longest at low, i.e. indoor, concentrations) before its output is
+    # stable. Readings inside this window are flagged "warm-up". 0 disables.
+    sps30_warmup_seconds: int = 30
 
     # Data retention (0 disables pruning)
     keep_measurements_days: int = 90
@@ -142,6 +158,8 @@ class Config:
             ),
             scd41_asc_enabled=_env_bool("AIRMONITOR_SCD41_ASC_ENABLED", cls.scd41_asc_enabled),
             scd41_altitude_m=_env_int("AIRMONITOR_SCD41_ALTITUDE_M", cls.scd41_altitude_m),
+            scd41_temp_offset=_env_float("AIRMONITOR_SCD41_TEMP_OFFSET", cls.scd41_temp_offset),
+            scd41_warmup_seconds=_env_int("AIRMONITOR_SCD41_WARMUP_SECONDS", cls.scd41_warmup_seconds),
             sht41_temp_offset=_env_float("AIRMONITOR_SHT41_TEMP_OFFSET", cls.sht41_temp_offset),
             min_valid_co2_ppm=_env_int("AIRMONITOR_MIN_VALID_CO2_PPM", cls.min_valid_co2_ppm),
             scd41_reinit_after_invalid=_env_int("AIRMONITOR_SCD41_REINIT_AFTER_INVALID", cls.scd41_reinit_after_invalid),
@@ -158,6 +176,7 @@ class Config:
             sps30_manual_clean_cooldown=_env_int(
                 "AIRMONITOR_SPS30_MIN_SECONDS_BETWEEN_MANUAL_CLEANS", cls.sps30_manual_clean_cooldown
             ),
+            sps30_warmup_seconds=_env_int("AIRMONITOR_SPS30_WARMUP_SECONDS", cls.sps30_warmup_seconds),
             min_free_disk_mb=_env_int("AIRMONITOR_MIN_FREE_DISK_MB", cls.min_free_disk_mb),
             keep_measurements_days=_env_int("AIRMONITOR_KEEP_MEASUREMENTS_DAYS", cls.keep_measurements_days),
             keep_events_days=_env_int("AIRMONITOR_KEEP_EVENTS_DAYS", cls.keep_events_days),
@@ -181,6 +200,12 @@ class Config:
         for name, value in must_be_positive.items():
             if value <= 0:
                 raise ValueError(f"{name} must be greater than 0")
+        for name, value in {
+            "AIRMONITOR_SCD41_WARMUP_SECONDS": self.scd41_warmup_seconds,
+            "AIRMONITOR_SPS30_WARMUP_SECONDS": self.sps30_warmup_seconds,
+        }.items():
+            if value < 0:
+                raise ValueError(f"{name} must be 0 or greater")
         if self.full_update_interval < self.partial_update_interval:
             raise ValueError(
                 "AIRMONITOR_FULL_UPDATE_INTERVAL must be >= AIRMONITOR_PARTIAL_UPDATE_INTERVAL"

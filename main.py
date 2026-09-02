@@ -338,11 +338,15 @@ class AirMonitor:
         """Read every sensor once; store whatever came back."""
         self.ensure_hardware()
         sample: Dict[str, Optional[float]] = {}
+        # Readings taken while a sensor is still warming up after a (re)start
+        # are kept as flagged raw values, not data — and never become the
+        # rate guard's baseline, so the first *settled* reading does.
+        warmup_flags: Dict[str, Any] = {}
 
         if self.scd41 is not None:
             co2 = self.scd41.read()
             if co2 is not None:
-                sample["co2"] = co2
+                self._accept_or_warmup(sample, warmup_flags, {"co2": co2}, self.scd41)
             else:
                 self.readings.report_stale("co2", "scd41")
 
@@ -363,7 +367,7 @@ class AirMonitor:
         if self.sps30 is not None:
             particles = self.sps30.read()
             if particles is not None:
-                sample.update(particles)
+                self._accept_or_warmup(sample, warmup_flags, particles, self.sps30)
             else:
                 self.readings.report_stale("pm25", "sps30")
 
@@ -378,12 +382,28 @@ class AirMonitor:
         # the history — that deserves the same stale alarm as a silent one.
         for metric in flags:
             self.readings.report_stale(metric, "quality")
+        flags.update(warmup_flags)
 
-        if sample:
+        if sample or warmup_flags:
             self.database.insert_measurement(accepted, flags=flags)
         # Only the live values are refreshed per sample; the full status
         # document is published on its own slower cadence (status task).
         self.database.set_state("latest_measurements", self.readings.fresh_snapshot())
+
+    @staticmethod
+    def _accept_or_warmup(sample, warmup_flags, values, sensor) -> None:
+        remaining = sensor.warmup_remaining()
+        if remaining <= 0:
+            sample.update(values)
+            return
+        reason = f"warm-up: {sensor.health.name} started {int(remaining)}s short of settling"
+        for metric, value in values.items():
+            warmup_flags[metric] = {"value": value, "reason": reason}
+
+    def check_sps30_status(self) -> None:
+        """Ask the SPS30 for its own fan/laser verdict (datasheet 4.4)."""
+        if self.sps30 is not None:
+            self.sps30.check_status()
 
     def check_disk(self) -> None:
         """Warn while there is still room to act — a full SD card is the one
@@ -770,6 +790,7 @@ class AirMonitor:
             PeriodicTask("commands", self.config.command_poll_interval, self.process_commands),
             PeriodicTask("status", self.config.status_publish_interval, self.publish_status),
             PeriodicTask("power", 60, self.power.check),
+            PeriodicTask("sps30_status", 60, self.check_sps30_status),
             PeriodicTask("disk", 300, self.check_disk),
             PeriodicTask("storage_prune", 24 * 3600, self.prune_database),
             PeriodicTask("calibration_check", 24 * 3600, self.check_calibration_age),

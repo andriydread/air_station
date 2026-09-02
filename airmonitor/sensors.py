@@ -22,7 +22,7 @@ from typing import Any, Dict, Optional, Tuple
 import adafruit_scd4x
 import adafruit_sht4x
 
-from airmonitor.validation import VALID_HUMIDITY, VALID_TEMPERATURE
+from airmonitor.validation import MAX_VALID_CO2_PPM, VALID_HUMIDITY, VALID_TEMPERATURE
 from lib.sps30_i2c import SPS30
 
 LOGGER = logging.getLogger("airmonitor")
@@ -43,6 +43,21 @@ FAN_CLEAN_BLANK_SECONDS = 15.0
 # way (neither hard errors nor invalid values); after this long without a
 # successful read it gets the same re-init treatment.
 NOT_READY_REINIT_SECONDS = 600.0
+
+# SCD4x datasheet Table 7: up to 1000 ms of "soft reset time" after reinit
+# before the sensor accepts commands again. The Adafruit driver waits only
+# 20 ms, so the first configuration write after reinit used to NAK on a
+# slow sensor and turn a recovery into "Re-initialization failed".
+SCD41_REINIT_SETTLE_SECONDS = 1.0
+
+# SPS30 firmware that supports the Device Status Register (datasheet 6.3.11).
+SPS30_STATUS_MIN_FIRMWARE = (2, 2)
+
+
+def _warmup_remaining(started_at: Optional[float], warmup_seconds: int) -> float:
+    if started_at is None or warmup_seconds <= 0:
+        return 0.0
+    return max(0.0, warmup_seconds - (time.monotonic() - started_at))
 
 
 class ReinitBackoff:
@@ -147,12 +162,20 @@ class Scd41:
             self._try_init()
 
     def _start_measurement(self) -> None:
+        # Both settings must be written in idle mode (datasheet 3.6), i.e.
+        # here, before start_periodic_measurement; they live in RAM only, so
+        # they are re-applied on every start rather than persisted (EEPROM
+        # endures ~2000 writes).
         try:
             self.device.altitude = self.config.scd41_altitude_m
         except Exception:
             # Altitude compensation is an accuracy improvement, never a
             # reason to refuse to measure.
             LOGGER.warning("Failed to set SCD41 altitude", exc_info=True)
+        try:
+            self.device.temperature_offset = self.config.scd41_temp_offset
+        except Exception:
+            LOGGER.warning("Failed to set SCD41 temperature offset", exc_info=True)
         self.device.self_calibration_enabled = self.asc_enabled
         self.asc_enabled = bool(self.device.self_calibration_enabled)
         self.device.start_periodic_measurement()
@@ -174,7 +197,7 @@ class Scd41:
             # The transaction itself worked, so the bus/device are alive —
             # even when the value turns out to be implausible.
             self.failure_streak = 0
-            if co2 < self.config.min_valid_co2_ppm:
+            if not (self.config.min_valid_co2_ppm <= co2 <= MAX_VALID_CO2_PPM):
                 self._handle_invalid_reading(co2)
                 return None
             self.invalid_streak = 0
@@ -279,7 +302,7 @@ class Scd41:
             self.device.stop_periodic_measurement()
             time.sleep(1.0)
             self.device.reinit()
-            time.sleep(0.1)
+            time.sleep(SCD41_REINIT_SETTLE_SECONDS)
             self._start_measurement()
         except Exception as exc:
             LOGGER.exception("SCD41 re-initialization failed")
@@ -297,6 +320,15 @@ class Scd41:
         if self.measurement_started_at is None:
             return None
         return int(time.monotonic() - self.measurement_started_at)
+
+    def warmup_remaining(self) -> float:
+        """Seconds until readings count as settled after a (re)start; 0 when done.
+
+        Applies after every start_periodic_measurement — boot, auto re-init,
+        forced calibration, ASC change — because each one restarts the
+        photoacoustic cell from idle.
+        """
+        return _warmup_remaining(self.measurement_started_at, self.config.scd41_warmup_seconds)
 
     def calibration_readiness(self) -> Dict[str, Any]:
         """Live inputs for the dashboard's calibration checklist (never raises).
@@ -502,9 +534,14 @@ class Sps30:
         self.device = None
         self.auto_cleaning_interval: Optional[int] = None
         self.last_manual_clean_at: Optional[float] = None
+        self.measurement_started_at: Optional[float] = None
         self._blank_until: Optional[float] = None
         self._last_data_at: Optional[float] = None
         self.failure_streak = 0
+        # Last decoded Device Status Register (fan / laser / speed), or None
+        # when the firmware predates it. Error bits go to health + events.
+        self.device_status: Optional[Dict[str, Any]] = None
+        self._status_unsupported_logged = False
         self._backoff = ReinitBackoff()
         self._try_init()
 
@@ -514,7 +551,10 @@ class Sps30:
             device.wakeup()
             device.start_measurement()
             self.device = device
-            self._last_data_at = time.monotonic()
+            now = time.monotonic()
+            self._last_data_at = now
+            self.measurement_started_at = now
+            self.device_status = None
             self.auto_cleaning_interval = device.auto_cleaning_interval
             self.failure_streak = 0
             self.health.ok()
@@ -599,6 +639,64 @@ class Sps30:
             )
             self.device = None
             self._try_init()
+
+    def warmup_remaining(self) -> float:
+        """Seconds until the fan/laser output is stable after a start; 0 when done."""
+        return _warmup_remaining(self.measurement_started_at, self.config.sps30_warmup_seconds)
+
+    def check_status(self) -> Optional[Dict[str, Any]]:
+        """Read the Device Status Register: the sensor's own fan/laser verdict.
+
+        A mechanically blocked fan or a failing laser is otherwise invisible
+        — the sensor keeps answering with plausible-looking numbers. FW < 2.2
+        has no register; that is logged once and the check becomes a no-op.
+        """
+        if self.device is None:
+            return None
+        firmware = getattr(self.device, "firmware_version", None)
+        if firmware is not None and tuple(firmware) < SPS30_STATUS_MIN_FIRMWARE:
+            if not self._status_unsupported_logged:
+                self._status_unsupported_logged = True
+                self.events.log(
+                    logging.INFO, "sps30", "status_unsupported",
+                    f"SPS30 firmware {firmware[0]}.{firmware[1]} has no device status "
+                    "register; fan/laser self-diagnosis unavailable",
+                )
+            return None
+        try:
+            status = self.device.read_device_status()
+        except Exception as exc:
+            # A failed diagnostic read is not a failed sensor; the read path
+            # owns hard-error accounting.
+            LOGGER.warning("Failed to read SPS30 device status: %s", exc)
+            return None
+        previous = self.device_status
+        self.device_status = status
+        self.health.state["device_status"] = dict(status)
+        problems = []
+        if status.get("fan_error"):
+            problems.append("fan failure (0 RPM: blocked or broken)")
+        if status.get("laser_error"):
+            problems.append("laser current out of range")
+        if status.get("speed_warning"):
+            problems.append("fan speed out of range (supply or fan wear)")
+        changed = previous is None or any(
+            previous.get(key) != status.get(key)
+            for key in ("fan_error", "laser_error", "speed_warning")
+        )
+        if problems:
+            self.health.failed("SPS30 reports: " + "; ".join(problems))
+            if changed:
+                self.events.log(
+                    logging.WARNING, "sps30", "device_status",
+                    "SPS30 self-diagnosis: " + "; ".join(problems), dict(status),
+                )
+        elif previous is not None and changed:
+            self.events.log(
+                logging.INFO, "sps30", "device_status", "SPS30 self-diagnosis clear again",
+                dict(status),
+            )
+        return status
 
     def force_clean(self) -> None:
         """Start a manual fan cleaning (rate-limited)."""

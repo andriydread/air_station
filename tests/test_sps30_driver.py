@@ -102,3 +102,18 @@ def test_wakeup_raises_on_a_dead_bus(sps30):
     wire.raise_on_write = OSError("no ack")  # every write fails: sensor absent
     with pytest.raises(OSError):
         device.wakeup()
+
+
+def test_device_status_register_decodes_documented_bits(sps30):
+    device, scripted = sps30
+    register = (1 << 21) | (1 << 4)  # SPEED warning + FAN error; reserved bits untouched
+    scripted.responses.append(encode_words(pack(">I", register)))
+    status = device.read_device_status()
+    assert scripted.written[-1] == bytes([0xD2, 0x06])
+    assert status == {
+        "raw": register, "speed_warning": True, "laser_error": False, "fan_error": True,
+    }
+    # reserved bits set (they "can be both 0 and 1") must not read as problems
+    scripted.responses.append(encode_words(pack(">I", 0xFFFFFFFF & ~((1 << 21) | (1 << 5) | (1 << 4)))))
+    status = device.read_device_status()
+    assert not (status["speed_warning"] or status["laser_error"] or status["fan_error"])

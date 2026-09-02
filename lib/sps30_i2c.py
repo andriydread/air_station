@@ -32,7 +32,13 @@ class SPS30:
     _CMD_FAN_CLEANING = 0x5607
     _CMD_AUTO_CLEANING_INTERVAL = 0x8004
     _CMD_VERSION = 0xD100
+    _CMD_DEVICE_STATUS = 0xD206  # firmware >= 2.2
     _CMD_RESET = 0xD304
+
+    # Device Status Register bits (datasheet 4.4); everything else is reserved.
+    _STATUS_SPEED_WARNING = 1 << 21
+    _STATUS_LASER_ERROR = 1 << 5
+    _STATUS_FAN_ERROR = 1 << 4
 
     _FLOATING_POINT_MODE = 0x0300
     _MEASUREMENT_RESPONSE_BYTES = 60
@@ -169,6 +175,24 @@ class SPS30:
         words = self._decode_words(response)
         version = words[0]
         return ((version >> 8) & 0xFF, version & 0xFF)
+
+    def read_device_status(self) -> Dict[str, object]:
+        """Decode the 32-bit Device Status Register (FW >= 2.2, else NAK/garbage).
+
+        FAN is sticky until a reset; SPEED and LASER clear themselves once
+        the condition passes. Reserved bits are masked off, not interpreted.
+        """
+        response = self._command(
+            self._CMD_DEVICE_STATUS, response_bytes=6, response_delay=0.02
+        )
+        words = self._decode_words(response)
+        register = (words[0] << 16) | words[1]
+        return {
+            "raw": register,
+            "speed_warning": bool(register & self._STATUS_SPEED_WARNING),
+            "laser_error": bool(register & self._STATUS_LASER_ERROR),
+            "fan_error": bool(register & self._STATUS_FAN_ERROR),
+        }
 
     def read(self) -> Dict[str, float]:
         response = self._command(

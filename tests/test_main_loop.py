@@ -116,6 +116,7 @@ def test_flagged_stream_raises_stale_alarm(monkeypatch, tmp_path):
         database_path=str(tmp_path / "s.db"),
         log_file=str(tmp_path / "s.log"),
         measurement_max_age=45,
+        scd41_warmup_seconds=0,  # this test is about the rate guard, not warm-up
     )
     monitor = main_module.AirMonitor(config)
     try:
@@ -124,8 +125,9 @@ def test_flagged_stream_raises_stale_alarm(monkeypatch, tmp_path):
 
         for i in range(5):
             clock["now"] += 10
-            # Alternate wildly so the rate guard flags every co2 sample.
-            monitor.scd41.device.CO2 = 60000.0 if i % 2 == 0 else 600.0
+            # Alternate wildly (but inside the sensor's 40'000 ppm output
+            # range) so the rate guard flags every co2 sample.
+            monitor.scd41.device.CO2 = 30000.0 if i % 2 == 0 else 600.0
             monitor.collect_sample()
 
         stale = [
@@ -624,5 +626,75 @@ def test_integrity_failure_is_sticky_until_next_clean_check(monkeypatch, tmp_pat
         monitor._check_integrity()
         monitor.check_disk()
         assert monitor.storage_health.state["healthy"] is True
+    finally:
+        monitor.database.close()
+
+
+# --- Warm-up flagging (datasheet pass 2026-09-02) ------------------------------
+
+
+def test_warmup_readings_are_flagged_not_recorded(monkeypatch, tmp_path):
+    """Right after a (re)start the SCD41/SPS30 numbers are kept as flagged raw
+    values: not in the metric columns, not the rate guard's baseline."""
+    from airmonitor.config import Config
+    import airmonitor.sensors as sensors_module
+    from tests.mocks.fake_devices import FakeSps30Device
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(main_module.time, "monotonic", lambda: clock["now"])
+    assert sensors_module.time is main_module.time  # one clock for all modules
+    # conftest's import-time I2C stub can't answer the CRC-checked SPS30
+    # driver; give the wrapper a scriptable device instead.
+    monkeypatch.setattr(sensors_module, "SPS30", lambda _i2c: FakeSps30Device())
+    config = Config(
+        database_path=str(tmp_path / "w.db"), log_file=str(tmp_path / "w.log"),
+        scd41_warmup_seconds=60, sps30_warmup_seconds=30,
+    )
+    monitor = main_module.AirMonitor(config)
+    try:
+        monitor._init_i2c_and_sensors()  # started at t=1000
+        monitor.scd41.device.CO2 = 1400.0  # the classic post-boot artefact
+        clock["now"] += 10
+        monitor.collect_sample()
+        latest = monitor.database.get_latest_measurement()
+        assert latest["co2"] is None and latest["temp"] is not None  # SHT41 has no warm-up
+        assert latest["flags"]["co2"]["value"] == 1400.0
+        assert "warm-up" in latest["flags"]["co2"]["reason"]
+        assert latest["pm25"] is None and latest["flags"]["pm25"]["value"] == 2.5
+        assert monitor.readings.values.get("co2") is None
+        assert not monitor.database.get_recent_events(limit=50, source="quality")
+
+        clock["now"] += 25  # t+35: SPS30 settled, SCD41 still warming
+        monitor.collect_sample()
+        latest = monitor.database.get_latest_measurement()
+        assert latest["pm25"] == 2.5 and latest["co2"] is None
+
+        clock["now"] += 30  # t+65: SCD41 settled; first real value = 460
+        monitor.scd41.device.CO2 = 460.0
+        monitor.collect_sample()
+        latest = monitor.database.get_latest_measurement()
+        # 1400 -> 460 would have been a rate-guard flag had 1400 been the baseline
+        assert latest["co2"] == 460 and latest["flags"] is None
+        assert not monitor.database.get_recent_events(limit=50, source="quality")
+    finally:
+        monitor.database.close()
+
+
+def test_sps30_status_task_marks_sensor_unhealthy(monkeypatch, tmp_path):
+    from airmonitor.config import Config
+    import airmonitor.sensors as sensors_module
+    from tests.mocks.fake_devices import FakeSps30Device
+
+    monkeypatch.setattr(sensors_module, "SPS30", lambda _i2c: FakeSps30Device())
+    config = Config(database_path=str(tmp_path / "f.db"), log_file=str(tmp_path / "f.log"))
+    monitor = main_module.AirMonitor(config)
+    try:
+        monitor._init_i2c_and_sensors()
+        monitor.sps30.device.status = {"raw": 1 << 5, "speed_warning": False, "laser_error": True, "fan_error": False}
+        monitor.check_sps30_status()
+        assert monitor.sps30.health.state["healthy"] is False
+        payload = monitor._status_payload()
+        assert payload["sensors"]["sps30"]["device_status"]["laser_error"] is True
+        assert monitor._display_status()["sensors"] is False  # glyph on the e-paper
     finally:
         monitor.database.close()
