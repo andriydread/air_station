@@ -1,296 +1,211 @@
 # Air Station
 
-A self-contained air-quality monitor built on a Raspberry Pi Zero 2 W. It
-measures CO2, temperature, humidity, and particulate matter, shows the
-current state on a low-power e-paper display, and serves a web dashboard
-with live values, history charts, diagnostics, and full remote control.
+A home air-quality monitor on a Raspberry Pi Zero 2 W. It measures CO2,
+temperature, humidity and particulate matter, shows them on an e-paper
+panel, and serves a dashboard on the home network with live values,
+history charts, diagnostics and controls. It is built to run unattended
+for months: every part that can fail heals itself, and everything that
+happens is written down.
+
+This README explains what the project *is* and how it is put together —
+for the owner coming back after six months, and for a coding assistant that
+needs the architecture and the rules before touching anything. Installing
+and operating it is the Makefile's job: `make help` on the Pi lists the
+commands. Sensor details (calibration, warm-up, offsets, getting data off
+the Pi) are in `docs/sensors.md`.
 
 ## Hardware
 
 | Part | Bus | Role |
 |---|---|---|
-| Sensirion SCD41 | I2C | CO2 (ppm), altitude-compensated |
+| Sensirion SCD41 | I2C | CO2 (ppm), altitude-compensated, photoacoustic |
 | Sensirion SHT41 | I2C | Temperature, relative humidity |
-| Sensirion SPS30 | I2C (0x69) | Particulate matter: PM1 / PM2.5 / PM4 / PM10 + typical particle size |
-| WeAct 3.7" e-paper, UC8253C | SPI | Local display, 416×240 (240×416 panel rotated 90°) |
-| LX-2BUPS UPS + 1×18650 3.5Ah | — | Battery backup / brown-out protection |
+| Sensirion SPS30 | I2C (0x69) | PM1 / PM2.5 / PM4 / PM10 + typical particle size |
+| WeAct 3.7" e-paper, UC8253C | SPI0.0, GPIO RST=17 DC=25 BUSY=24 | 416×240 local display (portrait panel rotated 90°) |
+| LX-2BUPS UPS + 1×18650 | — | Battery backup; no telemetry line, so power is watched via `vcgencmd` |
 
-Display wiring (BCM): RST=17, DC=25, BUSY=24, SPI0 CE0. Power rail is
-buffered with 2×470µF electrolytic + 2×103 ceramic capacitors; the UPS
-output carries another 470µF.
+## How it is put together
 
-## How it works
-
-Two systemd services share one SQLite database (WAL mode) at
-`data/airmonitor.db`:
-
-- **airmonitor** (`main.py`) — the collector. The main loop reads all
-  sensors every 10s, runs data-quality guards, stores the sample, and
-  executes dashboard commands. Slow subsystems live on worker threads so
-  they can never stall sampling: the e-paper renderer (partial refresh
-  every 60s, deep full refresh every 5 min), the Open-Meteo weather fetch
-  (30 min), and the Wi-Fi probe (30s).
-- **airmonitor-web** (`dashboard/`) — dashboard at `http://<pi>:8080`
-  (served by waitress). Tabs: **Live** (metric cards with per-metric
-  freshness badges, forecast, a pixel-exact preview of the e-paper
-  screen), **History** (charts with presets or any custom date range,
-  min/avg/max statistics, CSV and paste-friendly text export), **Diagnostics** (filterable event
-  log, flagged samples, recent commands, connectivity + power detail),
-  **Controls** (display refresh, SPS30 fan cleaning, SCD41 calibration,
-  history deletion, service restarts and Pi reboot). Actions are queued
-  as command rows in SQLite; the collector claims, executes, and stores
-  the result — the web process never touches the hardware.
-
-## Reliability
-
-Built for unattended operation; every layer heals itself:
-
-- **Sensor recovery** — a sensor (or the whole I2C bus, or the display)
-  that fails at boot or mid-run is re-initialized automatically with
-  exponential backoff. A sensor stuck returning garbage is restarted
-  after a streak of bad readings.
-- **Data trust** — plausibility limits live in one module
-  (`airmonitor/validation.py`); physically impossible jumps are stored
-  as *flagged* raw values (visible in Diagnostics) instead of polluting
-  charts; the SCD41's own temperature/humidity are cross-checked against
-  the SHT41 so a silently drifting sensor raises an event; the SCD41 is
-  altitude-compensated (`AIRMONITOR_SCD41_ALTITUDE_M`).
-- **Wi-Fi self-healing** — after consecutive failed connectivity probes
-  the collector bounces the interface, then restarts the networking
-  service (passwordless sudo for exactly those commands via
-  `systemd/airmonitor-sudoers`). Wi-Fi power save is disabled by a
-  oneshot unit — the classic Zero 2 W hang cause.
-- **Watchdogs** — the collector heartbeats systemd (`Type=notify`,
-  `WatchdogSec=90`): a wedged process is restarted, not just a crashed
-  one. `make init` additionally arms the SoC hardware watchdog so a hard
-  kernel freeze reboots the Pi within 15s.
-- **Power visibility** — `vcgencmd get_throttled` is polled every minute;
-  undervoltage/throttling flags become events and a status pill.
-- **SD-card care** — unchanged state is never rewritten, and the command
-  queue is polled without write transactions; the database lives through
-  deploys (`data/` is git-ignored, so no deploy can touch it).
-- **Database self-defense** — the nightly maintenance task runs a SQLite
-  integrity check (corruption becomes an error event and an unhealthy
-  storage state instead of silent data loss) and writes a rotating online
-  backup next to the live file (`airmonitor.db.bak` + one previous
-  generation), skipped automatically when disk headroom is tight. Free
-  disk space is watched continuously and warned about below
-  `AIRMONITOR_MIN_FREE_DISK_MB`. If the database ever does go bad, one
-  command on the Pi restores it: `make recovery` (stops the services,
-  swaps in the backup, keeps the broken file for inspection, restarts).
-
-## Project layout
+Two programs run as two systemd services. They never talk to each other
+directly; they share one SQLite file (`data/airmonitor.db`, WAL mode).
 
 ```
-main.py            collector entry point: sampling loop + worker threads
-airmonitor/        core package
-  config.py          all settings (env-overridable, sensible defaults)
-  sensors.py         SCD41 / SHT41 / SPS30 wrappers, health, auto-recovery
-  quality.py         spike flagging + SHT41/SCD41 cross-check
-  validation.py      the single source of plausibility limits
-  commands.py        executes dashboard-queued commands (incl. system actions)
-  workers.py         display worker + periodic workers
-  network.py         Wi-Fi / internet probe (/sys, /proc, TCP check)
-  wifi_recovery.py   escalating Wi-Fi recovery ladder
-  power.py           vcgencmd undervoltage/throttle monitoring
-  watchdog.py        sd_notify heartbeats for the systemd watchdog
-  storage.py         SQLite: measurements(+flags), state, commands, events
-  logging_utils.py   rotating-file logging + persisted event log
-lib/               low-level drivers (SPS30 I2C with CRC, UC8253C SPI)
-utils/             e-paper rendering, weather fetch, EPA AQI math,
-                   standalone SCD41 recalibration script
-assets/            icons and fonts for the e-paper UI
-dashboard/         Flask app + vanilla JS/CSS frontend (waitress-served)
-systemd/           service units, sudoers grants, watchdog provisioning
-tests/             hardware-free test suite (mocked sensors; runs anywhere)
+ airmonitor.service (main.py, "the collector")          airmonitor-web.service (dashboard/app.py)
+ ┌──────────────────────────────────────────────┐        ┌─────────────────────────────────────┐
+ │ main loop, 0.2 s tick over small timed jobs: │        │ Flask behind waitress on :8080       │
+ │   sample sensors      every 10 s             │        │   reads state / measurements / events│
+ │   run dashboard cmds  every 2 s              │        │   writes ONLY rows into `commands`   │
+ │   publish status doc  every 30 s             │        │   renders the e-paper preview PNG    │
+ │   power bits (vcgencmd) 60 s · disk 5 min    │        │ one HTML page + one JS file that     │
+ │   e-paper frame       every 60 s (full 5 min)│        │ polls /api/summary every 10 s        │
+ │   nightly: rollup → prune → backup           │        └──────────────────┬──────────────────┘
+ │ threads: display render · weather 30 min ·   │                           │
+ │          Wi-Fi probe 30 s (+ recovery ladder)│                           │
+ │ heartbeat to systemd every 10 s              │                           │
+ └───────────────────────┬──────────────────────┘                           │
+                         ▼                                                   ▼
+        data/airmonitor.db ── tables: measurements (10 s rows, 90 d) · measurements_hourly (forever)
+                                      state (JSON docs by key) · commands (queue) · events (log, 14 d)
+        data/logs/collector.log, dashboard.log
 ```
 
-## Setup and daily use (Makefile)
+**The collector** (`main.py`, class `AirMonitor`) reads the sensors through
+wrappers in `airmonitor/sensors.py`, runs the data-quality guards
+(`airmonitor/quality.py`, `validation.py`), stores a row, and every minute
+averages the last samples into an e-paper frame (`utils/display.py`
+draws it, `lib/uc8253c.py` sends it). Slow things (a 15 s full e-paper
+refresh, the weather fetch, the network probe) run on worker threads
+(`airmonitor/workers.py`) so a sample is never late. Every 30 s it writes a
+status document with the health of every subsystem into the `state` table.
 
-All day-to-day commands run **on the Pi** from `~/air_station`
-(one-time `git clone` first). The routine is: `git pull`, then
-`make deploy`.
+**The dashboard** (`dashboard/`) only reads that database and shows four
+tabs: **Live** (current values, forecast, e-paper preview), **History**
+(charts, statistics, CSV / text export), **Diagnostics** (events, flagged
+samples, connectivity, housekeeping), **Controls** (redraw display, fan
+clean, CO2 calibration, service restart, reboot, delete history). A button
+press becomes a row in `commands`; the collector executes it within 2 s and
+writes the result back. The web process never touches hardware.
 
-**First time / migrating from a pre-git install** (an `~/air_station`
-that wasn't cloned — e.g. the old rsync era — can't `git pull`; replace
-it, keeping the database):
+**Self-healing, layer by layer:** a sensor, the I2C bus or the display that
+fails is re-created with exponential backoff; a sensor stuck returning
+garbage or silence is re-initialised; six failed internet probes bounce the
+Wi-Fi interface (Wi-Fi power save, the classic Zero 2 W hang, is disabled
+at boot); the collector heartbeats systemd (`Type=notify`,
+`WatchdogSec=90`) so a frozen process is restarted; the SoC hardware
+watchdog reboots a frozen kernel; undervoltage/throttling is polled and
+logged; the database gets a nightly integrity check, hourly rollups, pruning
+and a rotating backup (`make recovery` restores it).
 
-```bash
-sudo systemctl stop airmonitor airmonitor-web 2>/dev/null || true
-mv ~/air_station/data ~/air_station_data          # keep the database
-rm -rf ~/air_station
-git clone https://github.com/andriydread/air_station.git ~/air_station
-mv ~/air_station_data ~/air_station/data
-cd ~/air_station && make init
-sudo reboot                                       # arms the hardware watchdog
-```
+**Everything is logged twice:** every noteworthy event goes through
+`EventLog` to the rotating log file *and* to the `events` table, which the
+Diagnostics tab shows. Health changes, re-inits, flagged samples, command
+results, Wi-Fi outages, power bits, starts (with the reason: reboot vs
+restart, clean vs killed) and shutdowns all land there.
 
-Skip the two `mv` lines to start with an empty database instead.
+## Data model and its invariants
 
-```bash
-make init           # first time: fresh venv, requirements, services, watchdog
-                    # (reboot once afterwards to arm the hardware watchdog)
-make deploy         # after a git pull: requirements + new/updated service
-                    # files, restart everything, quick health readout
-make restart        # restart the app services
-make delete-all     # remove services + venv + caches (asks before data)
-make delete-venv    # delete the virtualenv
-make delete-service # stop, disable and remove service files + sudoers
-make delete-data    # delete ALL stored data — requires confirmation
-make push-data DEST=user@host   # upload database + logs to the dev server
-```
+- `measurements`: one row per 10 s sample; eight metric columns plus a
+  `flags` JSON column. A reading the quality guards reject (implausible
+  jump, or taken during sensor warm-up) is stored in `flags` with its raw
+  value and reason, and its metric column is NULL — so charts and averages
+  stay clean while nothing is lost.
+- `measurements_hourly`: one min/avg/max/count row per hour, folded nightly
+  from raw rows; never pruned. Ranges beyond raw retention (90 days) and
+  coarse buckets are served from here.
+- `state`: JSON documents by key — `latest_measurements` (live values + per
+  metric age), `collector_status` (every subsystem's health, uptime,
+  calibration readiness), `latest_weather`, `latest_display_snapshot`,
+  `scd41_last_calibration`, `collector_boot`. Unchanged documents are not
+  rewritten (SD-card care).
+- `commands`: `pending → running → succeeded | failed` with a JSON result.
+- `events`: level, source, event_type, message, details; pruned at 14 days.
+- **Schema changes are additive only** (`ALTER TABLE ADD COLUMN`,
+  `CREATE IF NOT EXISTS`, see `_migrate_schema`): a database on the Pi must
+  keep working after every `git pull`.
+- Only the collector may fail leftover `running` commands at startup; the
+  dashboard never touches commands the collector may be executing.
+- Plausibility limits live in exactly one place: `airmonitor/validation.py`.
 
-`deploy` never touches `data/` (the database) — only `delete-data` can,
-and it asks first.
+## Rules for anyone (or any assistant) editing this code
 
-The `agent-*` targets (`make help` lists them) belong to the coding agent
-on the dev server: tests, dev venv, cleanup. The dev server cannot reach
-the Pi (home LAN), so real data travels the other way — `make push-data`
-from the Pi when readings need tuning.
-
-## Development off the Pi
-
-The collector needs real hardware, but everything else runs anywhere —
-the test suite fakes all of it (sensors, GPIO, SPI):
-
-```bash
-make agent-venv          # local virtualenv with test dependencies
-make agent-test          # full suite: 130+ tests, no Pi needed
-python -m dashboard.app  # dashboard against a local/pulled data/airmonitor.db
-```
+- **No hardware here, no hardware there.** Everything is verified with
+  `make agent-test` (225 mocked tests, runs anywhere) and then on the Pi by
+  the owner with `git pull && make deploy`. Running `main.py` off the Pi
+  proves nothing; the `board`/`busio`/`RPi.GPIO`/`adafruit_*` imports are
+  faked by `tests/conftest.py` for tests only.
+- **Two audiences in the Makefile.** Plain targets run on the Pi as user
+  `pi` (guarded by `_pi`); `agent-*` targets are for the development machine.
+  Never add an unprefixed target meant for the dev machine.
+- **Commands are fixed strings.** System actions (`systemctl restart …`,
+  `reboot`) are spawned as literal strings with a 2 s delay; nothing from a
+  dashboard payload is ever interpolated into a shell command. Destructive
+  endpoints require an explicit server-side confirmation field.
+- **Every hardware call goes through a health tracker and a backoff.** New
+  device code follows `SensorHealth` + `ReinitBackoff` + `ensure()`; it
+  never raises out of `read()`.
+- **`dashboard.app` has no import side effects.** The app is built by
+  `create_app()` (or `python -m dashboard.app`); never add a module-level
+  `app`.
+- **The drivers in `lib/` are not to be rewritten.** They are hand-written
+  because no library exists for the UC8253C and the SPS30 pip options are
+  UART-only; both are CRC/timing-checked against the datasheets and tested.
+- **Frontend is vanilla JS + hand-rolled SVG, no dependencies.** Every
+  `innerHTML` sink escapes. AQI and categories are computed in the backend
+  only (`utils/aqi.py`).
+- **Cadences that other code depends on:** sample 10 s, `measurement_max_age`
+  45 s, status publish 30 s, display 60 s / full 300 s, systemd watchdog
+  90 s. Change one, check the others.
 
 ## Configuration
 
-Every setting has a default in `airmonitor/config.py` and an
-`AIRMONITOR_*` environment override (set them in the systemd units).
-The ones that matter most:
+Every setting has a default in `airmonitor/config.py` and an `AIRMONITOR_*`
+environment override (set in `systemd/*.service`). The ones a person
+actually changes:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AIRMONITOR_SAMPLE_INTERVAL` | 10 | seconds between sensor reads |
-| `AIRMONITOR_PARTIAL_UPDATE_INTERVAL` | 60 | e-paper partial refresh |
-| `AIRMONITOR_FULL_UPDATE_INTERVAL` | 300 | e-paper full (anti-ghosting) refresh |
 | `AIRMONITOR_WEATHER_LAT` / `_LON` | Lviv | forecast location |
-| `AIRMONITOR_SCD41_ALTITUDE_M` | 296 | sensor altitude for CO2 compensation |
-| `AIRMONITOR_SCD41_TEMP_OFFSET` | 4.0 | SCD41's own RH/T offset (factory 4.0; tune in place, see Sensor care) |
-| `AIRMONITOR_SCD41_WARMUP_SECONDS` | 60 | CO2 readings this soon after a sensor (re)start are flagged "warm-up" (0 = off) |
-| `AIRMONITOR_SPS30_WARMUP_SECONDS` | 30 | same for particulates after the fan starts (0 = off) |
-| `AIRMONITOR_SHT41_TEMP_OFFSET` | 0.0 | added to every temp reading (negative if self-heated) |
-| `AIRMONITOR_MIN_VALID_CO2_PPM` | 350 | CO2 readings below this are glitches |
-| `AIRMONITOR_SCD41_ASC_ENABLED` | false | SCD41 automatic self-calibration |
-| `AIRMONITOR_SCD41_REINIT_AFTER_INVALID` | 30 | bad readings in a row before sensor auto-restart |
-| `AIRMONITOR_SCD41_CALIBRATION_REMINDER_DAYS` | 180 | warn when the last forced calibration is older (0 = off) |
-| `AIRMONITOR_WIFI_RECOVERY_AFTER_FAILURES` | 6 | failed probes per recovery action (0 = off) |
-| `AIRMONITOR_KEEP_MEASUREMENTS_DAYS` | 90 | history retention (0 = forever) |
-| `AIRMONITOR_KEEP_EVENTS_DAYS` | 14 | event-log retention |
-| `AIRMONITOR_MIN_FREE_DISK_MB` | 200 | low-disk warning threshold (0 = off) |
-| `AIRMONITOR_ALLOWED_HOSTS` | *(empty)* | dashboard answers only these hostnames/IPs, comma-separated (DNS-rebinding guard; empty = any) |
-| `AIRMONITOR_DATABASE_PATH` | `data/airmonitor.db` | SQLite location |
+| `AIRMONITOR_SCD41_ALTITUDE_M` | 296 | sensor altitude for CO2 pressure compensation |
+| `AIRMONITOR_SHT41_TEMP_OFFSET` | 0.0 | added to every temperature (negative if the Pi heats the sensor) |
+| `AIRMONITOR_SCD41_ASC_ENABLED` | false | the CO2 sensor's automatic self-calibration (off: needs weekly fresh air) |
+| `AIRMONITOR_KEEP_MEASUREMENTS_DAYS` | 90 | raw-row retention (hourly rollups are kept forever regardless) |
+| `AIRMONITOR_DATABASE_PATH` | `data/airmonitor.db` | SQLite location (relative to the repo root) |
 
-## Sensor care
+Everything else (intervals, thresholds, calibration limits, warm-up windows,
+paths) is listed in `config.py` with a comment each. Paths are relative to
+the working directory, so run things from the repo root.
 
-What the station does (and deliberately doesn't do) to keep the sensors
-truthful and healthy:
+## Where things live
 
-- **Burn-in: not required, warm-up: yes.** None of these sensors are
-  metal-oxide (MOX) types; photoacoustic (SCD41), capacitive (SHT41) and
-  optical (SPS30) elements need no conditioning period. They do need a
-  moment after every start: the SPS30 datasheet quotes 8–30 s until the
-  fan/laser output is stable, and the SCD41's photoacoustic cell has to
-  reach thermal equilibrium (Sensirion has the master discard the first
-  readings after power-up). Readings inside `AIRMONITOR_SCD41_WARMUP_SECONDS`
-  / `AIRMONITOR_SPS30_WARMUP_SECONDS` of a start are stored as **flagged**
-  samples (raw value kept, not averaged, visible in Diagnostics and the
-  text export) and never become the rate guard's baseline. Out-of-range
-  words (below `AIRMONITOR_MIN_VALID_CO2_PPM` or above the sensor's
-  40'000 ppm output range, e.g. a corrupt 0xFFFF) are rejected outright.
-- **SCD41 calibration — the important one.** ASC (automatic
-  self-calibration) is **off by default** on purpose: ASC assumes the
-  sensor sees fresh ~400 ppm air at least weekly, and in a continuously
-  occupied room it slowly drags the baseline wrong. The trade-off: with
-  ASC off, NDIR drift is corrected only by **forced recalibration (FRC)**
-  — do one after installation and then a few times a year, in fresh
-  outdoor air (target 420 ppm), via the Controls tab. The collector
-  refuses an unsafe FRC (minimum runtime, sample count, reading
-  stability, distance from target all enforced) and reminds you with a
-  `calibration_due` event when the last FRC is older than
-  `AIRMONITOR_SCD41_CALIBRATION_REMINDER_DAYS`. If the station ever moves
-  somewhere regularly ventilated, flipping ASC on from Controls is valid
-  — the reminder then silences itself.
-- **SCD41 environment compensation**: altitude and the RH/T offset are
-  written to the sensor (in idle mode, as the datasheet requires) before
-  every measurement start — CO2 math is measurably wrong without the
-  altitude. The offset (`AIRMONITOR_SCD41_TEMP_OFFSET`, factory 4.0 °C)
-  does not touch CO2 accuracy; it only makes the SCD41's own temperature
-  comparable to the SHT41's for the cross-check. To tune it: with the
-  station in thermal equilibrium, `new = T_scd41 − T_reference + old`.
-  Neither value is persisted to the sensor's EEPROM (rated ~2000 writes);
-  the collector re-applies them on every start instead.
-- **SCD41 recovery follows the datasheet timings**: after `reinit` the
-  sensor gets the full 1 s soft-reset time before configuration is
-  written (the Adafruit driver waits 20 ms, which could turn a recovery
-  into "re-initialization failed"). If a software reinit ever fails to
-  unstick the sensor, the datasheet's next step is a power cycle — the
-  station cannot do that itself.
-- **SHT41**: factory-calibrated, no user calibration exists. The real
-  enemy is self-heating from the Pi; measure against a reference
-  thermometer and set `AIRMONITOR_SHT41_TEMP_OFFSET` (negative) to
-  correct the mounting. Its readings are cross-checked against the
-  SCD41's internal sensors — sustained disagreement raises a
-  `sensor_disagreement` event, catching silent drift no single sensor
-  can self-report.
-- **SPS30 self-diagnosis**: every minute the collector reads the sensor's
-  Device Status Register (firmware ≥ 2.2): a blocked/broken fan, a laser
-  current fault or an out-of-range fan speed marks the SPS30 unhealthy
-  (dashboard pill, e-paper glyph) with a `device_status` event — the
-  sensor's own verdict, not a guess from the numbers. Older firmware logs
-  one `status_unsupported` note and skips the check.
-- **SPS30 fan hygiene**: the sensor's built-in automatic fan cleaning
-  runs weekly (its power-on default; adjustable from Controls). A manual
-  clean is available too — rate-limited to once per 30 min, and readings
-  are blanked for 15s while the fan runs at full speed so cleaning junk
-  never enters the history. Sensirion's stated lifetime assumes the
-  weekly cleaning stays enabled; don't set the interval to 0 without a
-  reason.
-- **Safe shutdown**: on service stop the SCD41's periodic measurement is
-  stopped and the SPS30 is stopped *and put to sleep* (fan off) — power
-  cycles and reboots never catch the fan spinning or leave a sensor
-  mid-command. Consequence: every restart is a cold start for both
-  sensors, hence the warm-up flags above.
-- **Every start is explained.** The collector's `started` event says
-  whether the Pi rebooted (kernel boot id), how long the station was
-  silent, whether the previous run shut down cleanly or was killed
-  (watchdog, crash, power loss) and what triggered it (a dashboard
-  reboot/restart command, the systemd watchdog, a deploy). `shutdown`
-  events carry the signal. When a reading looks odd, the text export
-  (below) shows these lines next to the numbers.
+```
+main.py              the collector: setup, loop, timed jobs, status doc, shutdown
+airmonitor/          collector package
+  config.py            settings (+ env overrides, validation)
+  sensors.py           SCD41 / SHT41 / SPS30 wrappers, health, auto-recovery, calibration safety
+  quality.py           rate guard (spike flagging) + SHT41/SCD41 cross-check
+  validation.py        plausibility limits — the single source
+  storage.py           all SQL: schema, migrations, rollups, state, commands, events, backup
+  commands.py          executes dashboard commands (incl. system actions via sudo)
+  workers.py           display worker thread + periodic worker threads
+  network.py           Wi-Fi / internet probe · wifi_recovery.py  escalating recovery ladder
+  power.py             vcgencmd undervoltage/throttle bits · watchdog.py  sd_notify heartbeats
+  lifecycle.py         explains each start (reboot vs restart, clean vs killed)
+  logging_utils.py     rotating log + EventLog (log line + events row)
+lib/                 hand-written drivers: sps30_i2c.py (I2C + CRC), uc8253c.py (e-paper SPI)
+utils/               display.py (the e-paper picture, also the preview), weather.py (Open-Meteo), aqi.py (EPA math)
+dashboard/           app.py (Flask routes) · templates/index.html · static/dashboard.js|.css
+systemd/             the two service units, Wi-Fi power-save unit, sudoers grants, hardware-watchdog setup
+assets/              e-paper font and weather icons
+tests/               mocked test suite (conftest fakes the hardware modules)
+docs/sensors.md      sensor care, calibration, warm-up, getting data out
+datasheets/          Sensirion PDFs for SCD4x, SHT4x, SPS30
+```
 
-## Getting data out
+## When something looks wrong
 
-- **CSV** (`Export CSV` on the History tab, or `/api/export.csv?hours=24`):
-  every raw 10 s sample in the range, flags included — for spreadsheets.
-- **Text** (`Copy as text` / `Open as text`, or `/api/export.txt`): a
-  paste-sized table (≈150 rows, bucket chosen automatically) with station
-  events and flagged samples interleaved by time — made for handing a
-  slice of history to a person or a chat model. Options:
-  `?hours=6`, `?from=…&to=…`, `?metrics=co2,temp`, `?bucket=300`.
-  From a laptop straight into the clipboard:
+1. **Diagnostics → Events.** Filter by the sensor's source. Health changes,
+   re-inits, flagged samples, Wi-Fi outages and power bits are all there.
+2. **History → Copy as text.** A paste-sized table for the range with the
+   station's own events (`!` lines) and rejected samples (`~` lines)
+   interleaved by time — the quickest way to correlate a spike with a
+   restart or a Wi-Fi drop, and to hand the data to someone (or something)
+   for a second opinion. `/api/export.csv` has every raw row.
+3. **On the Pi:** `journalctl -u airmonitor -n 200`, and
+   `data/logs/collector.log`.
+4. **Controls** can redraw the display, restart either service or reboot;
+   **`make recovery`** restores last night's database backup.
 
-  ```
-  curl -s "http://pizero.local:8080/api/export.txt?hours=6&metrics=co2" | pbcopy            # macOS
-  curl -s "http://pizero.local:8080/api/export.txt?hours=6&metrics=co2" | xclip -sel clip   # Linux
-  curl.exe -s "http://pizero.local:8080/api/export.txt?hours=6&metrics=co2" | clip          # Windows
-  ```
+The dashboard has no authentication. It is meant for a trusted home LAN;
+do not expose port 8080 to the internet.
 
-## Maintenance notes
+## Developing off the Pi
 
-- **SCD41 recalibration**: from the dashboard Controls tab (preconditions
-  enforced, see Sensor care), or interactively with
-  `python utils/recalibrate_SCD41.py` on the Pi in fresh outdoor air.
-- **When data looks wrong**: check Diagnostics first — the event log
-  (sensor state changes, invalid readings, network drops, power flags,
-  command results) and the flagged-samples panel say what the station
-  itself thinks happened.
-- **After changing systemd files or sudoers**: nothing special —
-  `make deploy` always refreshes units + sudoers along with the code, so
-  the `Type=notify` watchdog unit and its matching collector land together.
+```bash
+make agent-venv          # local virtualenv with test dependencies (no hardware libs)
+make agent-test          # the whole suite, ~9 s
+python -m dashboard.app  # dashboard against a local/pulled data/airmonitor.db
+```
+
+Real data reaches a development machine only when the owner runs
+`make push-data DEST=user@host` on the Pi. Visual checks of the dashboard
+are done with a headless browser against a seeded database.
