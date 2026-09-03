@@ -164,6 +164,39 @@ class Sensor:
         }
 
 
+# --- SHT41 ------------------------------------------------------------------------
+
+class Sht41(Sensor):
+    """Temperature and humidity: high precision, heater off, no warm-up."""
+
+    name = "sht41"
+    warmup_seconds = SHT41_WARMUP
+
+    def __init__(self, i2c, config, log):
+        super().__init__(log)
+        self.i2c = i2c
+        self.offset = float(config.sensors.sht41_temp_offset_c)
+
+    def _open(self):
+        import adafruit_sht4x  # only the collector has the library
+
+        device = adafruit_sht4x.SHT4x(self.i2c)
+        device.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
+        serial = getattr(device, "serial_number", None)
+        if serial is not None:
+            self.health.id = f"{int(serial):08x}" if isinstance(serial, int) else str(serial)
+        return device
+
+    def read(self, now: float) -> Optional[Dict[str, float]]:
+        """{"temp", "humid"} with the configured offset applied; errors propagate."""
+        if self.device is None:
+            return None
+        return {
+            "temp": float(self.device.temperature) + self.offset,
+            "humid": float(self.device.relative_humidity),
+        }
+
+
 # --- SCD41 ------------------------------------------------------------------------
 
 SCD41_DATA_READY_WAIT = 6.0      # the sensor produces a value every 5 s
