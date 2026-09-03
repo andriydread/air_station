@@ -50,6 +50,7 @@ class Station:
         self.runner = FakeRunner()
         self.runner.results["vcgencmd"] = FakeRunner.Completed(stdout="throttled=0x0\n")
         self.runner.results["iw"] = FakeRunner.Completed(stdout="\ttx bitrate: 43.3 MBit/s\n")
+        self.runner.results["timedatectl"] = FakeRunner.Completed(stdout="yes\n")
         self.spawned = []
         (tmp_path / "route").write_text(ROUTE)
         (tmp_path / "thermal").write_text("48250\n")
@@ -193,3 +194,27 @@ def test_sigterm_stops_cleanly_and_sleeps_the_panel(station):
     assert reason == "SIGTERM"
     assert station.drivers[0].slept == 1 and station.drivers[0].closed
     assert station.db.recent_events()[0]["type"] == "shutdown"
+
+
+def test_manager_waits_for_ntp_before_its_first_frame(station):
+    """Q136: no RTC — the manager waits (≤ 60 s) for the clock like the collector does."""
+    station.seed_rows(minutes=3, ahead_minutes=8)
+    answers = iter(["no"] * 3 + ["yes"] * 1000)  # synced after three polls (2 s apart)
+    station.runner.results["timedatectl"] = lambda argv: FakeRunner.Completed(stdout=next(answers) + "\n")
+    station.run(70)
+    started = station.db.latest_event("started", app="manager")
+    assert started["details"]["ntp_synced"] is True
+    assert started["ts"] >= START + 6  # the started event comes after the wait
+    assert "clock_unsynced" not in [e["type"] for e in station.db.recent_events()]
+    assert station.drivers[0].modes[0] == "full"
+
+
+def test_manager_paints_anyway_when_ntp_never_syncs(station):
+    station.seed_rows(minutes=3, ahead_minutes=8)
+    station.runner.results["timedatectl"] = FakeRunner.Completed(stdout="no\n")
+    station.run(70)
+    types = [e["type"] for e in station.db.recent_events()]
+    assert "clock_unsynced" in types and "started" in types
+    started = station.db.latest_event("started", app="manager")
+    assert started["details"]["ntp_synced"] is False and started["ts"] >= START + 60
+    assert station.db.get_state("display_data") is not None  # a frame was still painted

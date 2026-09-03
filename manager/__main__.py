@@ -51,7 +51,9 @@ class Manager:
         self.log = log
         self.notifier = notifier or SystemdNotifier(address="")
         self.opener = opener
-        self.started_at = clock.now()
+        self.runner = runner
+        self.started_at = clock.now()  # reset after the NTP wait in start()
+        self.ntp_synced: Optional[bool] = None
         self.panel = Panel(log, driver_factory=panel_factory, monotonic=clock.monotonic)
         self.wifi = WifiWatch(log, runner=runner, connector=connector, route_path=route_path,
                               sleeper=clock.sleep, monotonic=clock.monotonic)
@@ -76,13 +78,20 @@ class Manager:
         failed = self.db.fail_running(APP, "manager restarted")
         if failed:
             self.log.info("app", "stale_commands_failed", count=failed)
+        # No RTC: wait for NTP like the collector does (Q136), so the first frame,
+        # the weather blocks and the vitals carry the right time the first time.
+        self.ntp_synced = clock.wait_for_ntp(runner=self.runner)
+        if not self.ntp_synced:
+            self.log.event("warning", "app", "clock_unsynced",
+                           "system time not confirmed by NTP; painting anyway")
+        self.started_at = clock.now()
         stored = self.db.get_state("last_weather")
         if stored and isinstance(stored.get("value"), dict) and stored["value"].get("hourly"):
             self.weather_doc = stored["value"]  # the first frame uses the stored forecast
             self.weather_state.update(ok=None, fetched_at=self.weather_doc.get("fetched_at"),
                                       pressure_hpa=self.weather_doc.get("pressure_hpa"))
         self.log.event("info", "app", "started", "manager started",
-                       stored_weather=self.weather_doc is not None)
+                       stored_weather=self.weather_doc is not None, ntp_synced=self.ntp_synced)
         self.publish_status()
 
     def stop(self, reason: str) -> None:
@@ -209,6 +218,7 @@ def main(argv=None) -> int:
         runner.results["vcgencmd"] = FakeRunner.Completed(stdout="throttled=0x0\n")
         runner.results["iw"] = FakeRunner.Completed(stdout="\ttx bitrate: 43.3 MBit/s\n")
         runner.results["sudo"] = FakeRunner.Completed()
+        runner.results["timedatectl"] = FakeRunner.Completed(stdout="yes\n")
         kwargs["runner"] = runner
         kwargs["spawner"] = lambda argv, **_k: log.info("app", "fake_spawn", argv=" ".join(argv))
         import contextlib

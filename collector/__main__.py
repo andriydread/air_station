@@ -57,6 +57,7 @@ class Collector:
         if not self.ntp_synced:
             self.log.event("warning", "app", "clock_unsynced",
                            "system time not confirmed by NTP; writing anyway")
+        self.started_at = clock.now()  # uptime counts from a trusted clock, not the boot-time guess
         bus = self.i2c_factory()
         scd41 = Scd41(bus, self.config, self.log, sleep=clock.sleep, monotonic=clock.monotonic)
         sht41 = Sht41(bus, self.config, self.log)
