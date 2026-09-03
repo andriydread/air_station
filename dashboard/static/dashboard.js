@@ -1031,3 +1031,141 @@ installers.push(() => {
     refreshHistory().catch((e) => toast(e.message, 'error'));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Vitals tab: the machine's health, one row a minute from the manager
+// ---------------------------------------------------------------------------
+
+let vitalsRange = { hours: 24 };
+let lastVitals = null;
+let vitalsRequestToken = 0;
+
+const vitalsCharts = {
+  'chart-cpu': {
+    series: [{ key: 'cpu_temp', color: '#b85c38' }],
+    format: (row) => `${fmt(row.cpu_temp, 1)} °C`,
+    bounds: (v) => ({ min: 0, max: Math.max(80, Math.ceil(Math.max(...v) + 5)) }),
+    guides: [{ at: 75, label: 'hot' }],
+  },
+  'chart-load': {
+    series: [{ key: 'load', color: '#5b4b8a' }],
+    format: (row) => `load ${fmt(row.load, 2)}`,
+    bounds: (v) => dynamicFromZero(v, 1),
+  },
+  'chart-mem': {
+    series: [{ key: 'mem_free', color: '#2b6f9e' }],
+    format: (row) => `${fmt(row.mem_free, 0)} MB free`,
+    bounds: (v) => dynamicFromZero(v, 100),
+    guides: [{ at: 50, label: 'low' }],
+  },
+  'chart-disk': {
+    series: [{ key: 'disk_free', color: '#1f5c4a' }, { key: 'db_size', color: '#1f5c4a', ...SECONDARY }],
+    format: (row) => `${formatMb(row.disk_free)} free · database ${formatMb(row.db_size)}`,
+    bounds: (v) => dynamicFromZero(v, 1000),
+  },
+  'chart-wifi': {
+    series: [{ key: 'wifi_rssi', color: '#9e6f00' }, { key: 'wan_ms', color: '#9e6f00', ...SECONDARY }],
+    format: (row) => `${fmt(row.wifi_rssi, 0)} dBm · router ${fmt(row.lan_ms, 0)} ms · internet ${fmt(row.wan_ms, 0)} ms`,
+    bounds: (v) => ({ min: Math.min(-100, Math.floor(Math.min(...v) - 5)), max: Math.max(50, Math.ceil(Math.max(...v) + 10)) }),
+  },
+  'chart-lag': {
+    series: [{ key: 'collector_lag', color: '#6f4a2a' }],
+    format: (row) => `collector ${fmt(row.collector_lag, 0)} s behind`,
+    bounds: (v) => dynamicFromZero(v, 30),
+    guides: [{ at: 60, label: 'silent' }],
+  },
+};
+
+function signalQuality(dbm) {
+  if (dbm == null) return '';
+  if (dbm >= -60) return 'good';
+  if (dbm >= -70) return 'ok';
+  if (dbm >= -80) return 'weak';
+  return 'very weak';
+}
+
+function throttledIntervals(rows, bucketSeconds) {
+  // Minutes with any power flag set, merged into intervals for shading.
+  const intervals = [];
+  let current = null;
+  for (const row of rows) {
+    if (row.throttled) {
+      if (current && row.ts - current[1] <= bucketSeconds) {
+        current[1] = row.ts + bucketSeconds;
+      } else {
+        current = [row.ts, row.ts + bucketSeconds];
+        intervals.push(current);
+      }
+    }
+  }
+  return intervals;
+}
+
+function renderVitalsNow(latest) {
+  const list = document.getElementById('vitals-now');
+  if (!latest) {
+    list.innerHTML = '<div class="empty-state">No vitals yet.</div>';
+    return;
+  }
+  const power = latest.throttled_now?.length ? latest.throttled_now.join(', ') : 'ok';
+  const sinceBoot = latest.throttled_since_boot?.length ? latest.throttled_since_boot.join(', ') : 'none';
+  const lines = [
+    ['CPU', latest.cpu_temp == null ? DASH : `${latest.cpu_temp.toFixed(1)} °C`],
+    ['Load', latest.load == null ? DASH : latest.load.toFixed(2)],
+    ['Memory free', latest.mem_free == null ? DASH : `${latest.mem_free} MB`],
+    ['Disk free', formatMb(latest.disk_free)],
+    ['Database', formatMb(latest.db_size)],
+    ['Wi-Fi signal', latest.wifi_rssi == null ? DASH : `${latest.wifi_rssi} dBm · ${signalQuality(latest.wifi_rssi)}`],
+    ['Link speed', latest.wifi_link == null ? DASH : `${latest.wifi_link} Mbit/s`],
+    ['Latency router / internet', `${fmt(latest.lan_ms, 0)} / ${fmt(latest.wan_ms, 0)} ms`],
+    ['Power now', power],
+    ['Power since boot', sinceBoot],
+    ['Uptime', formatDuration(latest.uptime)],
+    ['Collector lag', latest.collector_lag == null ? DASH : `${latest.collector_lag} s`],
+    ['Recorded', formatRelative(latest.recorded_at)],
+  ];
+  list.innerHTML = lines.map(([label, value]) =>
+    `<p><span>${escapeHtml(label)}</span><strong${label === 'Power now' && power !== 'ok' ? ' class="health-bad"' : ''}>${escapeHtml(value)}</strong></p>`
+  ).join('');
+}
+
+async function refreshVitals() {
+  const token = ++vitalsRequestToken;
+  const to = Math.floor(serverNow());
+  const from = to - vitalsRange.hours * 3600;
+  const data = await fetchJson(`/api/vitals?from=${from}&to=${to}`);
+  if (token !== vitalsRequestToken) return;
+  lastVitals = data;
+  renderVitalsCharts(data);
+  renderVitalsNow(data.latest);
+}
+
+function renderVitalsCharts(data) {
+  const options = {
+    xMin: data.from, xMax: data.to, group: 'vitals',
+    shade: throttledIntervals(data.rows || [], data.bucket_seconds || 60),
+  };
+  for (const [svgId, config] of Object.entries(vitalsCharts)) {
+    renderLineChart(svgId, data.rows || [], config, data.bucket_seconds || 60, options);
+  }
+}
+
+tabRefreshers.vitals = refreshVitals;
+changeHooks.vitals.push(async () => {
+  if (activeTab === 'vitals') await refreshVitals();
+});
+document.addEventListener('theme-changed', () => {
+  if (lastVitals && activeTab === 'vitals') renderVitalsCharts(lastVitals);
+});
+
+installers.push(() => {
+  Object.keys(vitalsCharts).forEach(installChartHover);
+  document.querySelectorAll('#vitals-presets button').forEach((button) => {
+    button.addEventListener('click', () => {
+      vitalsRange = { hours: Number(button.dataset.hours) };
+      document.querySelectorAll('#vitals-presets button').forEach((item) => item.classList.remove('active'));
+      button.classList.add('active');
+      refreshVitals().catch((e) => toast(e.message, 'error'));
+    });
+  });
+});
