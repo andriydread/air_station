@@ -590,6 +590,66 @@ class Database:
         return count
 
 
+    # --- maintenance ----------------------------------------------------------------
+
+    def prune(self, now: int, retention) -> Dict[str, int]:
+        """Delete rows older than their retention (days); hourly rows are never pruned.
+
+        ``retention`` is the config's ``Retention`` (raw, vitals, events, commands).
+        """
+        day = 86400
+        return {
+            "raw": self.write("DELETE FROM raw_measurements WHERE recorded_at < ?",
+                              (now - retention.raw * day,))[0],
+            "vitals": self.prune_vitals(now - retention.vitals * day),
+            "events": self.prune_events(now - retention.events * day),
+            "commands": self.prune_commands(now - retention.commands * day),
+        }
+
+    def checkpoint(self) -> Dict[str, int]:
+        """Fold the WAL side file into the main file and truncate it."""
+        with self._lock:
+            row = self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        return {"busy": int(row[0]), "log_pages": int(row[1]), "checkpointed": int(row[2])}
+
+    def backup_to(self, target: str | Path, progress: Optional[Callable[[], None]] = None) -> int:
+        """Consistent online copy of the whole database; returns bytes written.
+
+        ``progress`` is called between page batches so a caller can keep its
+        watchdog heartbeat flowing during a long copy.
+        """
+        target = Path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partial = target.with_name(target.name + ".partial")
+
+        def _step(_status, _remaining, _total):
+            if progress is not None:
+                progress()
+
+        with self._lock:
+            destination = sqlite3.connect(str(partial))
+            try:
+                self._connection.backup(destination, pages=2000, progress=_step)
+            finally:
+                destination.close()
+        partial.replace(target)
+        return target.stat().st_size
+
+    def delete_history(self) -> Dict[str, int]:
+        """The dashboard's Delete history: measurements and vitals go, the story stays."""
+        counts = {
+            "raw": self.query_one("SELECT COUNT(*) AS n FROM raw_measurements")["n"],
+            "hourly": self.query_one("SELECT COUNT(*) AS n FROM hourly_measurements")["n"],
+            "vitals": self.query_one("SELECT COUNT(*) AS n FROM vitals")["n"],
+        }
+        self.write_many([
+            ("DELETE FROM raw_measurements", ()),
+            ("DELETE FROM hourly_measurements", ()),
+            ("DELETE FROM vitals", ()),
+        ])
+        return {key: int(value) for key, value in counts.items()}
+
+
 def round_metric(metric: str, value: Any) -> Any:
     """CO2 is a whole ppm, particle size keeps 3 decimals, the rest 2."""
     if value is None:
