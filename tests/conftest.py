@@ -223,6 +223,29 @@ def db(tmp_config):
     database.close()
 
 
+@pytest.fixture
+def log(tmp_config, db):
+    """A strict collector logger writing events into the test database."""
+    from shared.events import Log
+
+    logger = Log("collector", tmp_config, db=db, strict=True)
+    yield logger
+    logger.close()
+
+
+@pytest.fixture
+def fake_clock(monkeypatch):
+    """FakeClock patched into shared.clock (now / monotonic / sleep)."""
+    from shared import clock
+    from tests.mocks.fake_devices import FakeClock
+
+    fake = FakeClock(start=1_788_436_800.0)  # 2026-09-03 12:00:00 UTC
+    monkeypatch.setattr(clock, "now", fake.now)
+    monkeypatch.setattr(clock, "monotonic", fake.monotonic)
+    monkeypatch.setattr(clock, "sleep", fake.sleep)
+    return fake
+
+
 @pytest.fixture(autouse=True)
 def _reset_fake_gpio():
     """Scripted GPIO state must never leak between tests."""
