@@ -162,3 +162,170 @@ class Sensor:
             "reinit_count": self.reinit_count,
             "id": self.health.id,
         }
+
+
+# --- SCD41 ------------------------------------------------------------------------
+
+SCD41_DATA_READY_WAIT = 6.0      # the sensor produces a value every 5 s
+SCD41_DATA_READY_POLL = 0.5
+SCD41_REINIT_SETTLE = 1.0        # datasheet: up to 1000 ms after reinit before commands
+PRESSURE_MIN_DELTA_HPA = 1.0
+CAL_MIN_RUNTIME = 180            # seconds the sensor must run before a forced calibration
+CAL_MIN_SAMPLES = 3
+CAL_MAX_SPREAD = 30              # ppm between the highest and lowest recent reading
+CAL_MAX_DELTA = 200              # ppm between the recent average and the target
+CAL_WINDOW = 300                 # seconds of recent readings considered
+CAL_REJECTED = 0xFFFF
+
+
+class CalibrationRefused(RuntimeError):
+    """A forced calibration was not attempted because a safety check failed."""
+
+
+class Scd41(Sensor):
+    name = "scd41"
+    warmup_seconds = SCD41_WARMUP
+
+    def __init__(self, i2c, config, log, sleep=time.sleep, monotonic=time.monotonic):
+        super().__init__(log)
+        self.i2c = i2c
+        self.config = config
+        self.sleep = sleep
+        self.monotonic = monotonic
+        self.asc = bool(config.sensors.asc)
+        self.pressure_hpa: Optional[float] = None
+        self.recent: list = []  # (ts, ppm) of accepted readings inside CAL_WINDOW
+
+    def _open(self):
+        import adafruit_scd4x  # imported here: only the collector has the library
+
+        device = adafruit_scd4x.SCD4X(self.i2c)
+        try:
+            device.stop_periodic_measurement()  # a previous run may have left it measuring
+        except Exception:
+            pass
+        device.reinit()
+        self.sleep(SCD41_REINIT_SETTLE)
+        serial = getattr(device, "serial_number", None)
+        if serial is not None:
+            try:
+                self.health.id = "".join(f"{int(word):04x}" for word in serial)
+            except (TypeError, ValueError):
+                self.health.id = str(serial)
+        self._configure_and_start(device)
+        return device
+
+    def _configure_and_start(self, device) -> None:
+        # Settings live in RAM only (no EEPROM wear) and must be written in
+        # idle mode, i.e. before start_periodic_measurement.
+        device.altitude = int(self.config.location.altitude_m)
+        device.temperature_offset = float(self.config.sensors.scd41_temp_offset_c)
+        device.self_calibration_enabled = bool(self.config.sensors.asc)
+        self.asc = bool(device.self_calibration_enabled)
+        if self.pressure_hpa is not None:
+            device.set_ambient_pressure(int(round(self.pressure_hpa)))
+        device.start_periodic_measurement()
+        self.recent.clear()
+
+    def _close(self, device) -> None:
+        device.stop_periodic_measurement()
+
+    def read(self, now: float, deadline_s: float = SCD41_DATA_READY_WAIT) -> Optional[Dict[str, float]]:
+        """Wait up to ``deadline_s`` for a fresh value; None when none came.
+
+        Returns the raw numbers as the sensor gave them — CO2 plus the SCD41's
+        own temperature and humidity. I2C errors propagate to the sampler.
+        """
+        if self.device is None:
+            return None
+        started = self.monotonic()
+        while True:
+            if self.device.data_ready:
+                return {
+                    "co2": float(self.device.CO2),
+                    "co2_temp": float(self.device.temperature),
+                    "co2_humid": float(self.device.relative_humidity),
+                }
+            if self.monotonic() - started >= deadline_s:
+                return None
+            self.sleep(SCD41_DATA_READY_POLL)
+
+    def record_valid(self, now: float, co2: float) -> None:
+        self.recent.append((now, float(co2)))
+        self.recent = [(ts, ppm) for ts, ppm in self.recent if now - ts <= CAL_WINDOW]
+
+    def set_ambient_pressure(self, hpa: float) -> bool:
+        """Pass the live air pressure on when it moved by ≥ 1 hPa; True when sent."""
+        if hpa is None:
+            return False
+        if self.pressure_hpa is not None and abs(hpa - self.pressure_hpa) < PRESSURE_MIN_DELTA_HPA:
+            return False
+        if self.device is not None:
+            self.device.set_ambient_pressure(int(round(hpa)))
+        self.pressure_hpa = float(hpa)
+        return True
+
+    def runtime_seconds(self, now: float) -> int:
+        if self.device is None or self.warmup_started_at is None:
+            return 0
+        return int(now - self.warmup_started_at)
+
+    def calibration_readiness(self, now: float) -> Dict[str, Any]:
+        samples = [ppm for ts, ppm in self.recent if now - ts <= CAL_WINDOW]
+        average = sum(samples) / len(samples) if samples else None
+        spread = max(samples) - min(samples) if samples else None
+        return {
+            "runtime_seconds": self.runtime_seconds(now),
+            "sample_count": len(samples),
+            "average_co2": round(average, 1) if average is not None else None,
+            "spread_co2": round(spread, 1) if spread is not None else None,
+        }
+
+    def check_preconditions(self, now: float, target_ppm: int, allow_large_offset: bool = False) -> Dict[str, Any]:
+        if self.device is None:
+            raise CalibrationRefused("SCD41 is not initialised")
+        runtime = self.runtime_seconds(now)
+        if runtime < CAL_MIN_RUNTIME:
+            raise CalibrationRefused(
+                f"SCD41 must run for {CAL_MIN_RUNTIME} s before calibration; current runtime is {runtime} s")
+        samples = [ppm for ts, ppm in self.recent if now - ts <= CAL_WINDOW]
+        if len(samples) < CAL_MIN_SAMPLES:
+            raise CalibrationRefused(
+                f"Not enough recent valid samples: need {CAL_MIN_SAMPLES}, have {len(samples)}")
+        spread = max(samples) - min(samples)
+        if spread > CAL_MAX_SPREAD:
+            raise CalibrationRefused(
+                f"Readings not stable enough: spread is {spread:.1f} ppm, limit is {CAL_MAX_SPREAD} ppm")
+        average = sum(samples) / len(samples)
+        delta = abs(average - target_ppm)
+        if delta > CAL_MAX_DELTA and not allow_large_offset:
+            raise CalibrationRefused(
+                f"Readings average {average:.1f} ppm, more than {CAL_MAX_DELTA} ppm from target "
+                f"{target_ppm} ppm. If the air here is NOT at the target level, ventilate the room "
+                "or move the station to fresh outdoor air (~420 ppm), wait ~10 minutes, then retry. "
+                "Only if the sensor itself has drifted far off, retry with the drift override enabled.")
+        return {
+            "runtime_seconds": runtime, "sample_count": len(samples),
+            "average_co2": round(average, 1), "spread_co2": round(spread, 1),
+            "reference_delta_ppm": round(delta, 1), "large_offset_allowed": allow_large_offset,
+        }
+
+    def force_calibration(self, now: float, target_ppm: int, allow_large_offset: bool = False,
+                          persist: bool = False) -> Dict[str, Any]:
+        """Forced recalibration after the safety checks; restarts measurement (new warm-up)."""
+        checks = self.check_preconditions(now, target_ppm, allow_large_offset)
+        device = self.device
+        device.stop_periodic_measurement()
+        self.sleep(1.0)
+        try:
+            correction = device.force_calibration(int(target_ppm))
+            if correction == CAL_REJECTED:
+                raise RuntimeError("SCD41 rejected the forced calibration command (0xFFFF)")
+            if persist:
+                device.persist_settings()
+        finally:
+            self._configure_and_start(device)
+            self.warmup_started_at = now
+            self.last_data_at = now
+        return {"correction_ppm": int(correction), "target_ppm": int(target_ppm),
+                "persisted": bool(persist), **checks}
