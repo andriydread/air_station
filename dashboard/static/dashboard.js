@@ -1604,6 +1604,11 @@ async function runButton(button) {
 }
 
 tabRefreshers.controls = async () => {
+  const now = Math.floor(serverNow());
+  try {
+    const vitals = await fetchJson(`/api/vitals?from=${now - 600}&to=${now}`);
+    recentVitalsLatest = vitals.latest || recentVitalsLatest;
+  } catch (_error) { /* the disk line stays a dash */ }
   renderControls(lastLive);
   renderCommandNotes(commandsCache);
 };
