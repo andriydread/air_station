@@ -238,6 +238,113 @@ class Database:
         }
 
 
+    # --- hourly rollups --------------------------------------------------------
+
+    CATCHUP_MAX_HOURS = 24 * 100  # one call never scans more than 100 days
+
+    def rollup_hour(self, hour_ts: int) -> int:
+        """Fold the raw rows of [hour_ts, hour_ts+3600) into one hourly row.
+
+        Returns the number of raw rows (samples); 0 means nothing was written —
+        an hour with no measurements gets no row.
+        """
+        hour_ts = int(hour_ts) // 3600 * 3600
+        selects = ", ".join(
+            f"MIN({m}) AS {m}_min, MAX({m}) AS {m}_max, AVG({m}) AS {m}_avg" for m in METRICS
+        )
+        row = self.query_one(
+            f"SELECT COUNT(*) AS n, {selects} FROM raw_measurements "
+            "WHERE recorded_at >= ? AND recorded_at < ?",
+            (hour_ts, hour_ts + 3600),
+        )
+        samples = int(row["n"] or 0)
+        if samples == 0:
+            return 0
+        columns = ["hour", "samples"]
+        params: List[Any] = [hour_ts, samples]
+        for m in METRICS:
+            for stat in ("min", "max", "avg"):
+                columns.append(f"{m}_{stat}")
+                params.append(round_metric(m, row[f"{m}_{stat}"]))
+        marks = ", ".join("?" for _ in columns)
+        self.write(
+            f"INSERT OR REPLACE INTO hourly_measurements ({', '.join(columns)}) VALUES ({marks})",
+            params,
+        )
+        return samples
+
+    def last_rolled_hour(self) -> Optional[int]:
+        return self.query_one("SELECT MAX(hour) AS h FROM hourly_measurements")["h"]
+
+    def rollup_catchup(self, now: int) -> Dict[str, Any]:
+        """Roll up every finished hour not rolled yet, oldest first.
+
+        Starts after the newest hourly row (or at the oldest raw row on a fresh
+        database), stops before the current hour. Hours later than ``now``
+        (clock skew) are never rolled; their count is reported as
+        ``skipped_future`` so the caller can log it. ``remaining`` > 0 means
+        the range was capped and another call is needed.
+        """
+        current_hour = int(now) // 3600 * 3600
+        result: Dict[str, Any] = {"rolled": 0, "skipped_future": 0, "remaining": 0, "hours": []}
+        oldest = self.raw_oldest_at()
+        if oldest is None:
+            return result
+        last = self.last_rolled_hour()
+        start = (oldest // 3600 * 3600) if last is None else last + 3600
+        future = self.query_one(
+            "SELECT COUNT(DISTINCT recorded_at / 3600) AS n FROM raw_measurements WHERE recorded_at >= ?",
+            (current_hour + 3600,),
+        )
+        result["skipped_future"] = int(future["n"] or 0)
+        if start >= current_hour:
+            return result
+        end = min(current_hour, start + self.CATCHUP_MAX_HOURS * 3600)
+        hours = self.query(
+            "SELECT DISTINCT (recorded_at / 3600) * 3600 AS h FROM raw_measurements "
+            "WHERE recorded_at >= ? AND recorded_at < ? ORDER BY h",
+            (start, end),
+        )
+        for row in hours:
+            if self.rollup_hour(int(row["h"])) > 0:
+                result["rolled"] += 1
+                result["hours"].append(int(row["h"]))
+        if end < current_hour:
+            result["remaining"] = (current_hour - end) // 3600
+        return result
+
+    def hourly_between(self, start: int, end: int) -> List[Dict[str, Any]]:
+        rows = self.query(
+            "SELECT * FROM hourly_measurements WHERE hour >= ? AND hour < ? ORDER BY hour",
+            (start, end),
+        )
+        return [dict(row) for row in rows]
+
+    def hourly_stats(self, start: int, end: int) -> Dict[str, Dict[str, Any]]:
+        """Like raw_stats but from hourly rows; avg is sample-weighted."""
+        selects = ", ".join(
+            f"MIN({m}_min) AS {m}_min, MAX({m}_max) AS {m}_max, "
+            f"SUM(CASE WHEN {m}_avg IS NOT NULL THEN {m}_avg * samples END) AS {m}_sum, "
+            f"SUM(CASE WHEN {m}_avg IS NOT NULL THEN samples END) AS {m}_n"
+            for m in METRICS
+        )
+        row = self.query_one(
+            f"SELECT {selects} FROM hourly_measurements WHERE hour >= ? AND hour < ?",
+            (start, end),
+        )
+        stats = {}
+        for m in METRICS:
+            n = int(row[f"{m}_n"] or 0)
+            avg = (row[f"{m}_sum"] / n) if n else None
+            stats[m] = {
+                "min": round_metric(m, row[f"{m}_min"]),
+                "max": round_metric(m, row[f"{m}_max"]),
+                "avg": round_metric(m, avg),
+                "n": n,
+            }
+        return stats
+
+
 def round_metric(metric: str, value: Any) -> Any:
     """CO2 is a whole ppm, particle size keeps 3 decimals, the rest 2."""
     if value is None:
