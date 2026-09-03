@@ -187,6 +187,119 @@ def vitals() -> Any:
     return jsonify({"from": start, "to": end, "bucket_seconds": bucket, "rows": rows, "latest": latest})
 
 
+def _int_arg(args, name: str, default: int, low: int, high: int) -> int:
+    raw = args.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a whole number") from None
+    return max(low, min(high, value))
+
+
+@api.get("/events")
+def events() -> Any:
+    from flask import request
+
+    db = _rt()["db"]
+    args = request.args
+    since_id = _int_arg(args, "since_id", 0, 0, 2**62) or None
+    rows = db.recent_events(
+        limit=_int_arg(args, "limit", 100, 1, 1000),
+        app=args.get("app") or None, level=args.get("level") or None, source=args.get("source") or None,
+        since_id=since_id,
+    )
+    return jsonify({"events": rows, "newest_id": db.newest_event_id()})
+
+
+@api.get("/commands")
+def commands() -> Any:
+    from flask import request
+
+    db = _rt()["db"]
+    return jsonify({"commands": db.recent_commands(limit=_int_arg(request.args, "limit", 20, 1, 200)),
+                    "newest_id": db.newest_command_id()})
+
+
+@api.get("/restarts")
+def restarts() -> Any:
+    from flask import request
+
+    db = _rt()["db"]
+    hours = _int_arg(request.args, "hours", 24, 1, 24 * 365)
+    since = int(clock.now()) - hours * 3600
+    return jsonify({"hours": hours, **{app: db.count_events("started", since, app=app)
+                                       for app in ("collector", "manager", "dashboard")}})
+
+
+# --- the six buttons ------------------------------------------------------------------
+
+def _bool(payload: Dict[str, Any], key: str, default: bool = False) -> bool:
+    value = payload.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.lower() in ("true", "1", "yes", "on"):
+        return True
+    if isinstance(value, str) and value.lower() in ("false", "0", "no", "off", ""):
+        return False
+    raise ValueError(f"{key} must be true or false")
+
+
+def _validate_calibrate(payload: Dict[str, Any], config) -> Dict[str, Any]:
+    target = payload.get("target_ppm", config.sensors.calibration_target_ppm)
+    try:
+        target = int(target)
+    except (TypeError, ValueError):
+        raise ValueError("target_ppm must be a whole number") from None
+    if not 400 <= target <= 2000:
+        raise ValueError("target_ppm must be between 400 and 2000")
+    return {"target_ppm": target, "allow_large_offset": _bool(payload, "allow_large_offset"),
+            "persist": _bool(payload, "persist")}
+
+
+def _validate_empty(_payload: Dict[str, Any], _config) -> Dict[str, Any]:
+    return {}
+
+
+def _validate_confirmed(payload: Dict[str, Any], _config) -> Dict[str, Any]:
+    if _bool(payload, "confirmed") is not True:
+        raise ValueError("this command needs confirmed=true")
+    return {"confirmed": True}
+
+
+COMMANDS = {
+    "scd41_calibrate": ("collector", _validate_calibrate),
+    "sps30_fan_clean": ("collector", _validate_empty),
+    "restart_collector": ("manager", _validate_empty),
+    "restart_dashboard": ("manager", _validate_empty),
+    "reboot": ("manager", _validate_confirmed),
+    "delete_history": ("manager", _validate_confirmed),
+}
+
+
+@api.post("/commands")
+def create_command() -> Any:
+    from flask import request
+
+    rt = _rt()
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ValueError("request body must be a JSON object")
+    type_ = str(body.get("type", "")).strip()
+    payload = body.get("payload") or {}
+    if type_ not in COMMANDS:
+        raise ValueError(f"unsupported command: {type_ or '(empty)'}")
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be a JSON object")
+    to_whom, validate = COMMANDS[type_]
+    clean = validate(payload, rt["config"])
+    command_id = rt["db"].queue_command(type_, "dashboard", to_whom, clean)
+    rt["log"].event("info", "web", "command_created", f"{type_} queued for the {to_whom}",
+                    id=command_id, type=type_, to_whom=to_whom, payload=clean, ip=request.remote_addr)
+    return jsonify({"id": command_id, "type": type_, "to_whom": to_whom, "status": "pending"}), 202
+
+
 @api.get("/live")
 def live() -> Any:
     rt = _rt()
