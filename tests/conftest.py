@@ -199,6 +199,30 @@ _install_fake_hardware()
 import pytest  # noqa: E402  (after the fakes exist)
 
 
+@pytest.fixture
+def tmp_config(tmp_path):
+    """The shipped config with database and logs redirected under tmp_path."""
+    import tomllib
+
+    from shared.config import DEFAULT_PATH, Config
+
+    with open(DEFAULT_PATH, "rb") as handle:
+        raw = tomllib.load(handle)
+    raw["paths"]["database"] = str(tmp_path / "data" / "airstation.db")
+    raw["paths"]["logs"] = str(tmp_path / "data" / "logs")
+    raw["logging"]["level"] = "debug"
+    return Config.from_dict(raw, repo_root=REPO_ROOT, source=tmp_path / "config.toml")
+
+
+@pytest.fixture
+def db(tmp_config):
+    from shared.db import Database
+
+    database = Database(tmp_config.paths.database)
+    yield database
+    database.close()
+
+
 @pytest.fixture(autouse=True)
 def _reset_fake_gpio():
     """Scripted GPIO state must never leak between tests."""
