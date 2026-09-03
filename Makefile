@@ -23,9 +23,13 @@ help: ## Show this help
 # OPERATOR COMMANDS (on the Pi)
 # ==============================================================================
 
-_pi:  # refuse to run the Pi commands anywhere else
+_pi:  # refuse to run the Pi commands anywhere else, as root, or in a checkout the user cannot write
 	@[ -d /etc/systemd/system ] && [ -e /dev/i2c-1 ] || \
 		{ echo "This command runs ON the Pi (systemd + /dev/i2c-1). On the dev server use the agent-* commands."; exit 1; }
+	@[ "$$(id -u)" != 0 ] || \
+		{ echo "Run make as your own user, without sudo — it calls sudo itself where root is needed (otherwise the units would run as root)."; exit 1; }
+	@[ -w . ] || \
+		{ echo "This checkout is not writable by $(USER_NAME). Fix: sudo chown -R $(USER_NAME): $(REPO)   then run make again."; exit 1; }
 
 _hardware: _pi  # I2C and SPI are enabled by hand (raspi-config) before make init
 	@[ -e /dev/i2c-1 ] && [ -e /dev/spidev0.0 ] || \

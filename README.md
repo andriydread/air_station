@@ -135,7 +135,11 @@ Everything not in this file is a constant next to the code that uses it.
    git clone <this repository> ~/air_station
    cd ~/air_station
    ```
-4. **Install:** `make init`. It checks the two device files, installs the apt
+   Clone as your own user, never with `sudo`: the units run as the user who
+   runs `make init`, and a checkout owned by root breaks the later `git pull`.
+   If that already happened: `sudo chown -R $USER: <the checkout>`.
+4. **Install:** `make init` (no `sudo` in front; it asks for it where needed).
+   It checks the two device files, installs the apt
    packages, creates `.venv`, installs the requirements (the first install on
    a fresh card may compile for a while — that is expected), creates
    `data/logs`, renders the three unit files and the sudoers file with your
