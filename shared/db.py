@@ -345,6 +345,44 @@ class Database:
         return stats
 
 
+    # --- state documents -------------------------------------------------------
+
+    ALWAYS_WRITE_STATE = ("display_data",)  # its updated_at is the Live tab's freshness
+
+    def set_state(self, key: str, doc: Any) -> bool:
+        """Store a small JSON document under ``key``; returns True when written.
+
+        Unchanged documents are skipped (thousands of identical status writes
+        a day would only wear the SD card) — except the keys in
+        ``ALWAYS_WRITE_STATE``, whose timestamp must move every time.
+        """
+        serialized = to_json(doc)
+        if key not in self.ALWAYS_WRITE_STATE and self._state_cache.get(key) == serialized:
+            return False
+        self.write(
+            "INSERT INTO state(key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            (key, serialized, self.now()),
+        )
+        self._state_cache[key] = serialized
+        return True
+
+    def get_state(self, key: str) -> Optional[Dict[str, Any]]:
+        row = self.query_one("SELECT value, updated_at FROM state WHERE key = ?", (key,))
+        if row is None:
+            return None
+        return {"value": from_json(row["value"]), "updated_at": int(row["updated_at"])}
+
+    def state_updated_at(self, keys: Sequence[str]) -> Dict[str, Optional[int]]:
+        keys = list(keys)
+        if not keys:
+            return {}
+        marks = ", ".join("?" for _ in keys)
+        rows = self.query(f"SELECT key, updated_at FROM state WHERE key IN ({marks})", keys)
+        found = {row["key"]: int(row["updated_at"]) for row in rows}
+        return {key: found.get(key) for key in keys}
+
+
 def round_metric(metric: str, value: Any) -> Any:
     """CO2 is a whole ppm, particle size keeps 3 decimals, the rest 2."""
     if value is None:
