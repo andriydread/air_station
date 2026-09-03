@@ -13,8 +13,8 @@ REPO       = $(CURDIR)
 RENDER     = sed -e 's|@USER@|$(USER_NAME)|g' -e 's|@REPO@|$(REPO)|g'
 DB         = data/airstation.db
 
-.PHONY: help init deploy restart status logs recovery delete-data _pi _hardware _apt _venv _pip _units _watchdog \
-        agent-venv agent-test agent-demo agent-demo-stop agent-clean
+.PHONY: help init deploy restart status logs export recovery delete-data _pi _hardware _apt _venv _pip _units _watchdog \
+        agent-venv agent-test agent-demo agent-demo-stop agent-import agent-clean
 
 help: ## Show this help
 	@grep -E '^[a-z_-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -81,6 +81,9 @@ logs: _pi ## Follow the journal of the three units and the three app logs (Ctrl-
 	@echo "tail -F data/logs/*.log"
 	@sh -c 'trap "kill 0" INT TERM EXIT; journalctl -f -n 10 -o short -u airstation-collector -u airstation-manager -u airstation-dashboard & tail -n 10 -F data/logs/*.log'
 
+export: _pi ## Pack database copy + logs + journal + system facts into ~/airstation-<stamp>.tar.gz
+	@sh tools/export.sh
+
 recovery: _pi ## Restore the database from last night's backup (asks; FORCE=1 skips)
 	@[ -f $(DB).bak ] || { echo "No backup found ($(DB).bak)."; exit 1; }
 	@[ "$(FORCE)" = "1" ] || { printf "Replace the current database with last night's backup? The current file is kept as airstation.db.broken. [y/N] "; \
@@ -119,6 +122,10 @@ agent-demo: ## Run collector + manager + dashboard here with fake hardware (48 h
 
 agent-demo-stop: ## Stop a demo started in the background
 	@[ -f data/demo/demo.pid ] && kill $$(cat data/demo/demo.pid) && echo "demo stopped" || echo "no demo running"
+
+agent-import: ## Unpack a `make export` archive into from_pi/ and print the row counts (FILE=path)
+	@[ -n "$(FILE)" ] || { echo "Usage: make agent-import FILE=~/airstation-<stamp>.tar.gz"; exit 1; }
+	.venv/bin/python -m tools.import_archive $(FILE)
 
 agent-clean: ## Remove local venv, caches and imported data (dev server)
 	rm -rf .venv from_pi

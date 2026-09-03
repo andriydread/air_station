@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-OPERATOR = ("init", "deploy", "restart", "status", "logs", "recovery", "delete-data")
-AGENT = ("agent-venv", "agent-test", "agent-demo", "agent-demo-stop", "agent-clean")
+OPERATOR = ("init", "deploy", "restart", "status", "logs", "export", "recovery", "delete-data")
+AGENT = ("agent-venv", "agent-test", "agent-demo", "agent-demo-stop", "agent-import", "agent-clean")
 
 
 def make(*args, **kwargs):
