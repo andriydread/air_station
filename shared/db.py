@@ -542,6 +542,54 @@ class Database:
         return {**dict(row), "details": from_json(row["details"], {})}
 
 
+    # --- vitals --------------------------------------------------------------------
+
+    # The documented vcgencmd get_throttled bits: 0-3 "now", 16-19 "since boot".
+    THROTTLED_BITS = (1, 2, 4, 8, 1 << 16, 1 << 17, 1 << 18, 1 << 19)
+
+    def insert_vitals(self, row: Dict[str, Any]) -> None:
+        """One minute of machine health; ``recorded_at`` required, the rest optional."""
+        columns = ("recorded_at", *VITALS_COLUMNS)
+        marks = ", ".join("?" for _ in columns)
+        params = [int(row["recorded_at"]), *(row.get(column) for column in VITALS_COLUMNS)]
+        self.write(f"INSERT OR REPLACE INTO vitals ({', '.join(columns)}) VALUES ({marks})", params)
+
+    def latest_vitals(self) -> Optional[Dict[str, Any]]:
+        row = self.query_one("SELECT * FROM vitals ORDER BY recorded_at DESC LIMIT 1")
+        return dict(row) if row is not None else None
+
+    def vitals_between(self, start: int, end: int) -> List[Dict[str, Any]]:
+        rows = self.query(
+            "SELECT * FROM vitals WHERE recorded_at >= ? AND recorded_at < ? ORDER BY recorded_at",
+            (start, end),
+        )
+        return [dict(row) for row in rows]
+
+    def vitals_bucketed(self, start: int, end: int, bucket_s: int) -> List[Dict[str, Any]]:
+        """Per-bucket averages; ``throttled`` is the OR of the rows' bits (a set bit survives)."""
+        bucket_s = max(1, int(bucket_s))
+        averaged = [c for c in VITALS_COLUMNS if c != "throttled"]
+        selects = ", ".join(f"AVG({c}) AS {c}" for c in averaged)
+        or_bits = " + ".join(f"MAX(throttled & {bit})" for bit in self.THROTTLED_BITS)
+        rows = self.query(
+            f"SELECT (recorded_at / ?) * ? AS ts, {selects}, ({or_bits}) AS throttled FROM vitals "
+            "WHERE recorded_at >= ? AND recorded_at < ? GROUP BY ts ORDER BY ts",
+            (bucket_s, bucket_s, start, end),
+        )
+        out = []
+        for row in rows:
+            item: Dict[str, Any] = {"ts": int(row["ts"])}
+            for c in averaged:
+                item[c] = None if row[c] is None else round(float(row[c]), 2)
+            item["throttled"] = None if row["throttled"] is None else int(row["throttled"])
+            out.append(item)
+        return out
+
+    def prune_vitals(self, before_ts: int) -> int:
+        count, _ = self.write("DELETE FROM vitals WHERE recorded_at < ?", (before_ts,))
+        return count
+
+
 def round_metric(metric: str, value: Any) -> Any:
     """CO2 is a whole ppm, particle size keeps 3 decimals, the rest 2."""
     if value is None:
