@@ -1,100 +1,100 @@
-# Sensors and data — reference
+# Sensors — how the collector cares for them
 
-Details moved out of the README so the README can stay short. Everything here is
-about keeping the three Sensirion sensors truthful and healthy, and about getting
-data off the Pi. Source datasheets live in `datasheets/`.
+Everything here is about keeping the three Sensirion sensors truthful and
+healthy. The numbers are constants next to the code (`collector/sensors.py`,
+`collector/filters.py`); the four knobs a person may turn are in
+`config.toml` under `[sensors]`. Source datasheets live in `datasheets/`.
 
-## Sensor care (what the collector does for the hardware)
+## Warm-up, not burn-in
 
-What the station does (and deliberately doesn't do) to keep the sensors
-truthful and healthy:
+None of these sensors are metal-oxide types; the photoacoustic SCD41, the
+capacitive SHT41 and the optical SPS30 need no conditioning period. They do
+need a moment after every start: the SPS30 datasheet quotes 8–30 s until the
+fan and laser are stable, and the SCD41's cell has to reach thermal
+equilibrium. So after any start or re-init the collector waits **60 s for
+the SCD41 and 30 s for the SPS30** (the SHT41 needs nothing): the cells stay
+empty, one `warming_up` event is logged per sensor, and nothing counts
+against the sensor. The bad-read streak and the silence timer start when the
+warm-up ends. The panel shows "Warming up…" meanwhile.
 
-- **Burn-in: not required, warm-up: yes.** None of these sensors are
-  metal-oxide (MOX) types; photoacoustic (SCD41), capacitive (SHT41) and
-  optical (SPS30) elements need no conditioning period. They do need a
-  moment after every start: the SPS30 datasheet quotes 8–30 s until the
-  fan/laser output is stable, and the SCD41's photoacoustic cell has to
-  reach thermal equilibrium (Sensirion has the master discard the first
-  readings after power-up). Readings inside `AIRMONITOR_SCD41_WARMUP_SECONDS`
-  / `AIRMONITOR_SPS30_WARMUP_SECONDS` of a start are stored as **flagged**
-  samples (raw value kept, not averaged, visible in Diagnostics and the
-  text export) and never become the rate guard's baseline. Out-of-range
-  words (below `AIRMONITOR_MIN_VALID_CO2_PPM` or above the sensor's
-  40'000 ppm output range, e.g. a corrupt 0xFFFF) are rejected outright.
-- **SCD41 calibration — the important one.** ASC (automatic
-  self-calibration) is **off by default** on purpose: ASC assumes the
-  sensor sees fresh ~400 ppm air at least weekly, and in a continuously
-  occupied room it slowly drags the baseline wrong. The trade-off: with
-  ASC off, NDIR drift is corrected only by **forced recalibration (FRC)**
-  — do one after installation and then a few times a year, in fresh
-  outdoor air (target 420 ppm), via the Controls tab. The collector
-  refuses an unsafe FRC (minimum runtime, sample count, reading
-  stability, distance from target all enforced) and reminds you with a
-  `calibration_due` event when the last FRC is older than
-  `AIRMONITOR_SCD41_CALIBRATION_REMINDER_DAYS`. If the station ever moves
-  somewhere regularly ventilated, flipping ASC on from Controls is valid
-  — the reminder then silences itself.
-- **SCD41 environment compensation**: altitude and the RH/T offset are
-  written to the sensor (in idle mode, as the datasheet requires) before
-  every measurement start — CO2 math is measurably wrong without the
-  altitude. The offset (`AIRMONITOR_SCD41_TEMP_OFFSET`, factory 4.0 °C)
-  does not touch CO2 accuracy; it only makes the SCD41's own temperature
-  comparable to the SHT41's for the cross-check. To tune it: with the
-  station in thermal equilibrium, `new = T_scd41 − T_reference + old`.
-  Neither value is persisted to the sensor's EEPROM (rated ~2000 writes);
-  the collector re-applies them on every start instead.
-- **SCD41 recovery follows the datasheet timings**: after `reinit` the
-  sensor gets the full 1 s soft-reset time before configuration is
-  written (the Adafruit driver waits 20 ms, which could turn a recovery
-  into "re-initialization failed"). If a software reinit ever fails to
-  unstick the sensor, the datasheet's next step is a power cycle — the
-  station cannot do that itself.
-- **SHT41**: factory-calibrated, no user calibration exists. The real
-  enemy is self-heating from the Pi; measure against a reference
-  thermometer and set `AIRMONITOR_SHT41_TEMP_OFFSET` (negative) to
-  correct the mounting. Its readings are cross-checked against the
-  SCD41's internal sensors — sustained disagreement raises a
-  `sensor_disagreement` event, catching silent drift no single sensor
-  can self-report.
-- **SPS30 self-diagnosis**: every minute the collector reads the sensor's
-  Device Status Register (firmware ≥ 2.2): a blocked/broken fan, a laser
-  current fault or an out-of-range fan speed marks the SPS30 unhealthy
-  (dashboard pill, e-paper glyph) with a `device_status` event — the
-  sensor's own verdict, not a guess from the numbers. Older firmware logs
-  one `status_unsupported` note and skips the check.
-- **SPS30 fan hygiene**: the sensor's built-in automatic fan cleaning
-  runs weekly (its power-on default; adjustable from Controls). A manual
-  clean is available too — rate-limited to once per 30 min, and readings
-  are blanked for 15s while the fan runs at full speed so cleaning junk
-  never enters the history. Sensirion's stated lifetime assumes the
-  weekly cleaning stays enabled; don't set the interval to 0 without a
-  reason.
-- **Safe shutdown**: on service stop the SCD41's periodic measurement is
-  stopped and the SPS30 is stopped *and put to sleep* (fan off) — power
-  cycles and reboots never catch the fan spinning or leave a sensor
-  mid-command. Consequence: every restart is a cold start for both
-  sensors, hence the warm-up flags above.
-- **Every start is explained.** The collector's `started` event says
-  whether the Pi rebooted (kernel boot id), how long the station was
-  silent, whether the previous run shut down cleanly or was killed
-  (watchdog, crash, power loss) and what triggered it (a dashboard
-  reboot/restart command, the systemd watchdog, a deploy). `shutdown`
-  events carry the signal. When a reading looks odd, the text export
-  (below) shows these lines next to the numbers.
+## What is dropped
 
-## Getting data out
+A value that cannot be air is stored as an empty cell, never as a number:
+corrupt words (the SPS30's CRC, non-finite floats), negatives, temperatures
+outside −40…85 °C, humidity outside 0…100 %, CO2 below 350 ppm (not indoor
+air) or above the sensor's 40 000 ppm output range (a corrupt 0xFFFF). The
+first drop of a streak logs a `value_dropped` event, then every sixth. Six
+bad readings in a row, or two minutes without any reading, re-initialise
+that sensor (`sensor_reinit`) with a growing delay from 30 s to 5 min; the
+I2C bus itself is re-opened only when all sensors fail together.
 
-- **CSV** (`Export CSV` on the History tab, or `/api/export.csv?hours=24`):
-  every raw 10 s sample in the range, flags included — for spreadsheets.
-- **Text** (`Copy as text` / `Open as text`, or `/api/export.txt`): a
-  paste-sized table (≈150 rows, bucket chosen automatically) with station
-  events and flagged samples interleaved by time — made for handing a
-  slice of history to a person or a chat model. Options:
-  `?hours=6`, `?from=…&to=…`, `?metrics=co2,temp`, `?bucket=300`.
-  From a laptop straight into the clipboard:
+## SCD41 — the CO2 sensor
 
-  ```
-  curl -s "http://pizero.local:8080/api/export.txt?hours=6&metrics=co2" | pbcopy            # macOS
-  curl -s "http://pizero.local:8080/api/export.txt?hours=6&metrics=co2" | xclip -sel clip   # Linux
-  curl.exe -s "http://pizero.local:8080/api/export.txt?hours=6&metrics=co2" | clip          # Windows
-  ```
+- **Calibration is the important part.** Automatic self-calibration
+  (`sensors.asc`) is **off** on purpose: it assumes the sensor sees fresh
+  ~400 ppm air at least weekly, and in a continuously occupied room it slowly
+  drags the baseline wrong. With it off, drift is corrected only by a
+  **forced recalibration**: press **Calibrate CO2** on the Controls tab with
+  the station in fresh outdoor air, once after installation and then a few
+  times a year. The target is `sensors.calibration_target_ppm` (420). The
+  collector refuses an unsafe one and logs `calibration_refused`: the sensor
+  must have run 3 min, have at least 3 readings in the last 5 min, spread no
+  more than 30 ppm, and sit within 200 ppm of the target. A successful one
+  logs `calibration_done` with the correction the sensor reported and is
+  stored under `last_calibration`; the Controls tab shows the checklist and
+  the date of the last one. If the station ever moves somewhere regularly
+  ventilated, `sensors.asc = true` is a valid choice.
+- **Environment compensation.** At start the sensor gets
+  `location.altitude_m`; as soon as the manager has a weather fetch, the
+  collector sends the live surface pressure instead (every 30 min, only when
+  it moved by 1 hPa or more). CO2 math is measurably wrong without it.
+- **Temperature offset.** `sensors.scd41_temp_offset_c` (factory 4.0 °C) does
+  not touch CO2 accuracy; it makes the SCD41's own temperature honest. The
+  sensor's temperature and humidity are stored in every raw row (`co2_temp`,
+  `co2_humid`) and charted next to the SHT41's in History, so the bench data
+  says what the offset should be: with the room in equilibrium,
+  `new = T_scd41 − T_sht41 + old`.
+- Nothing is written to the sensor's EEPROM (rated ~2000 writes); settings
+  are re-applied on every start. A re-init gives the sensor the full 1 s
+  soft-reset time before configuration is written; if a software re-init
+  ever fails to unstick it, the datasheet's next step is a power cycle.
+
+## SHT41 — temperature and humidity
+
+Factory-calibrated, no user calibration exists. The real enemy is
+self-heating from the Pi: measure against a reference thermometer and set
+`sensors.sht41_temp_offset_c` (negative) to correct the mounting. The dew
+point on the Live tab is computed from its values.
+
+## SPS30 — particulates
+
+- **What is stored:** mass PM1 / PM2.5 / PM10, number concentrations for
+  0.5 / 1 / 2.5 µm, typical particle size. AQI is computed from PM2.5 only.
+- **Self-diagnosis.** At `debug` level the collector reads the sensor's
+  device status register (firmware ≥ 2.2) after every beat and writes the
+  fan-speed, laser and fan-blocked bits into the debug sample line (`st_*`
+  fields), so the bench log carries the sensor's own verdict next to the
+  numbers it produced.
+- **Fan hygiene.** The sensor's built-in weekly auto-clean is switched off and
+  the collector runs the clean itself, **Sunday 04:00 local time**, so the
+  event sits in the log and the blanked readings never enter the history
+  (readings are dropped for 15 s while the fan runs at full speed). A manual
+  **Clean fan** on the Controls tab does the same, at most once per 10 min.
+  Sensirion's stated lifetime assumes the weekly clean happens; do not remove
+  the schedule without a reason.
+
+## Shutdown and start
+
+On service stop the SCD41's periodic measurement is stopped and the SPS30's
+measurement (and fan) is stopped, so power cycles and reboots never catch
+the fan spinning or leave a sensor mid-command. Every start is therefore a
+cold start for both sensors, hence the warm-up above. The collector's
+`started` event says why it started (boot or restart, clean or killed
+previous run) and its `shutdown` event carries the signal.
+
+## Getting the numbers out
+
+- **CSV:** the History tab's *Export CSV*, or
+  `/api/export.csv?from=<unix>&to=<unix>` — every raw row in the range.
+- **Everything:** `make export` on the Pi (database copy, logs, journal,
+  system facts) — see the README.
