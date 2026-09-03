@@ -166,6 +166,27 @@ def export_csv() -> Any:
     )
 
 
+@api.get("/vitals")
+def vitals() -> Any:
+    from flask import request
+
+    from manager.machine import flag_names
+
+    rt = _rt()
+    db = rt["db"]
+    start, end = parse_range(request.args)
+    bucket = max(60, choose_bucket_seconds(end - start))
+    rows = db.vitals_bucketed(start, end, bucket)
+    for row in rows:
+        row["throttled_now"] = flag_names(row.get("throttled"))
+        row["throttled_since_boot"] = flag_names(row.get("throttled"), since_boot=True)
+    latest = db.latest_vitals()
+    if latest:
+        latest["throttled_now"] = flag_names(latest.get("throttled"))
+        latest["throttled_since_boot"] = flag_names(latest.get("throttled"), since_boot=True)
+    return jsonify({"from": start, "to": end, "bucket_seconds": bucket, "rows": rows, "latest": latest})
+
+
 @api.get("/live")
 def live() -> Any:
     rt = _rt()
