@@ -106,7 +106,7 @@ class FakeSps30Device:
         self._data_ready = True
         self.raise_on_data_ready: Optional[Exception] = None
         self.raise_on_read: Optional[Exception] = None
-        self.auto_cleaning_interval = 604800
+        self._auto_cleaning_interval = 604800
         self.interval_writes: List[int] = []
         self.firmware_version = (2, 2)
         # Device Status Register as the driver decodes it; tests flip bits.
@@ -133,8 +133,16 @@ class FakeSps30Device:
     def force_clean(self):
         self.clean_calls += 1
 
-    def set_auto_cleaning_interval(self, seconds: int) -> None:
+    @property
+    def auto_cleaning_interval(self) -> int:
+        return self._auto_cleaning_interval
+
+    @auto_cleaning_interval.setter
+    def auto_cleaning_interval(self, seconds: int) -> None:
         self.interval_writes.append(seconds)
+        self._auto_cleaning_interval = seconds
+
+    def set_auto_cleaning_interval(self, seconds: int) -> None:
         self.auto_cleaning_interval = seconds
 
     @property

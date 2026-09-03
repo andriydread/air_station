@@ -197,6 +197,108 @@ class Sht41(Sensor):
         }
 
 
+# --- SPS30 ------------------------------------------------------------------------
+
+SPS30_STATUS_MIN_FIRMWARE = (2, 2)   # the Device Status Register exists from FW 2.2
+FAN_CLEAN_BLANK = 15.0               # the fan runs ~10 s at full speed; readings are not air
+FAN_CLEAN_COOLDOWN = 600.0           # a manual clean at most every 10 minutes
+
+# driver key -> raw row column (the driver names the 1 µm count "nc10", the row "nc1")
+SPS30_ROW_KEYS = {"pm1": "pm1", "pm25": "pm25", "pm10": "pm10", "tps": "tps",
+                  "nc05": "nc05", "nc10": "nc1", "nc25": "nc25"}
+SPS30_EXTRA_KEYS = {"pm4": "pm4", "nc40": "nc4", "nc100": "nc10"}  # logged, not stored
+
+
+class Sps30(Sensor):
+    name = "sps30"
+    warmup_seconds = SPS30_WARMUP
+
+    def __init__(self, i2c, config, log, device_factory=None):
+        super().__init__(log)
+        self.i2c = i2c
+        self.config = config
+        self._factory = device_factory
+        self.blank_until: Optional[float] = None
+        self.last_clean_at: Optional[float] = None
+        self.firmware: Optional[tuple] = None
+        self._status_unsupported_logged = False
+
+    def _open(self):
+        if self._factory is None:
+            from drivers.sps30_i2c import SPS30  # the hand-written driver
+            factory = SPS30
+        else:
+            factory = self._factory
+        device = factory(self.i2c)
+        device.wakeup()
+        device.start_measurement()
+        firmware = getattr(device, "firmware_version", None) or device.read_firmware()
+        self.firmware = tuple(firmware) if firmware else None
+        self.health.id = f"{self.firmware[0]}.{self.firmware[1]}" if self.firmware else None
+        # The collector schedules the weekly clean itself (Sunday 04:00); the
+        # sensor's own timer restarts at every power-up and is switched off.
+        try:
+            if int(device.auto_cleaning_interval) != 0:
+                device.auto_cleaning_interval = 0
+                self.log.info(self.name, "autoclean_disabled")
+        except Exception as exc:
+            self.log.warning(self.name, "autoclean_read_failed", error=str(exc))
+        self.blank_until = None
+        return device
+
+    def _close(self, device) -> None:
+        device.stop_measurement()
+
+    def is_blanked(self, now: float) -> bool:
+        if self.blank_until is None:
+            return False
+        if now < self.blank_until:
+            return True
+        self.blank_until = None
+        return False
+
+    def read(self, now: float):
+        """(row values, extra values) or None when no data / blanked; errors propagate."""
+        if self.device is None or self.is_blanked(now):
+            return None
+        if not self.device.data_ready:
+            return None
+        data = self.device.read()
+        row = {column: float(data[key]) for key, column in SPS30_ROW_KEYS.items() if key in data}
+        extra = {column: float(data[key]) for key, column in SPS30_EXTRA_KEYS.items() if key in data}
+        return row, extra
+
+    def force_clean(self, now: float, manual: bool = True) -> Dict[str, Any]:
+        """Start a fan clean; blank the readings for 15 s; one ``fan_clean`` event."""
+        if self.device is None:
+            raise RuntimeError("SPS30 is not initialised")
+        if manual and self.last_clean_at is not None and now - self.last_clean_at < FAN_CLEAN_COOLDOWN:
+            remaining = int(FAN_CLEAN_COOLDOWN - (now - self.last_clean_at))
+            raise RuntimeError(f"Fan cleaning is rate-limited; wait another {remaining} s")
+        self.device.force_clean()
+        self.last_clean_at = now
+        self.blank_until = now + FAN_CLEAN_BLANK
+        self.log.event("info", self.name, "fan_clean", "fan cleaning started",
+                       manual=manual, blank_s=int(FAN_CLEAN_BLANK))
+        return {"blank_s": int(FAN_CLEAN_BLANK), "manual": manual}
+
+    def status_word(self) -> Optional[Dict[str, Any]]:
+        """The sensor's own fan/laser verdict (FW ≥ 2.2); None when unavailable."""
+        if self.device is None:
+            return None
+        if self.firmware is not None and self.firmware < SPS30_STATUS_MIN_FIRMWARE:
+            if not self._status_unsupported_logged:
+                self._status_unsupported_logged = True
+                self.log.info(self.name, "status_register_unsupported",
+                              firmware=f"{self.firmware[0]}.{self.firmware[1]}")
+            return None
+        try:
+            return dict(self.device.read_device_status())
+        except Exception as exc:
+            self.log.warning(self.name, "status_read_failed", error=str(exc))
+            return None
+
+
 # --- SCD41 ------------------------------------------------------------------------
 
 SCD41_DATA_READY_WAIT = 6.0      # the sensor produces a value every 5 s
