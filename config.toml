@@ -1,0 +1,34 @@
+# Air Station settings. Read by all three apps at start — after editing: make restart
+# Everything not in this file is a constant next to the code that uses it.
+
+[location]
+latitude = 49.842957        # city coordinates; used for the weather forecast only
+longitude = 24.031111
+altitude_m = 296            # SCD41 fallback when no weather pressure is known
+
+[sensors]
+scd41_temp_offset_c = 4.0   # the sensor's factory default; tune from bench data
+sht41_temp_offset_c = 0.0
+asc = false                 # SCD41 automatic self-calibration
+calibration_target_ppm = 420
+
+[retention_days]
+raw = 90                    # 10-second rows
+vitals = 30
+events = 30
+commands = 30
+logs = 45                   # one log file per app per day
+# hourly rows are kept forever
+
+[weather]
+block_hours = 3             # width of the three forecast columns
+
+[dashboard]
+port = 8080
+
+[paths]
+database = "data/airstation.db"
+logs = "data/logs"
+
+[logging]
+level = "debug"             # "debug" for the bench period, "info" afterwards
