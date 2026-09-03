@@ -103,10 +103,6 @@ def test_collector_warm_up_shows_the_warming_frame_then_numbers(station):
         warm["left"] = max(0, warm["left"] - 30)
 
     station.refresh_collector_status = warming_status
-    frames = []
-    from shared.render import render
-    real_show = station.panel_factory
-
     station.run(3 * 60)
     docs = station.db.get_state("display_data")["value"]
     assert docs["warming_up"] is False
