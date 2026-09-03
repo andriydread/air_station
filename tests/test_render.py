@@ -87,3 +87,46 @@ def test_stale_weather_paints_dashes_in_all_three_columns():
 def test_png_files_exist_for_the_operator():
     for name in ("render_normal", "render_dashes", "render_warming"):
         assert (OUT / f"{name}.png").exists()
+
+
+def test_icons_are_pasted_for_known_codes_and_boxed_for_unknown():
+    doc = _doc()
+    doc["weather"]["blocks"][2]["wmo"] = 123  # not a WMO code we know
+    image, painted = render(doc, now=NOW)
+    assert "icon:partly_cloudy.png" in painted and "icon:rain.png" in painted
+    assert sum(1 for s in painted if s.startswith("icon:")) == 2
+    _save(image, "render_icons")
+
+
+def test_night_uses_the_moon_only_when_the_file_exists(tmp_path):
+    from shared.render import ICONS_DIR, icon_file
+    assert icon_file(0, is_night=True) == "sun.png"           # no moon.png shipped yet
+    icons = tmp_path / "icons"
+    icons.mkdir()
+    (icons / "moon.png").write_bytes((ICONS_DIR / "sun.png").read_bytes())
+    assert icon_file(0, is_night=True, icons_dir=icons) == "moon.png"
+    assert icon_file(0, is_night=False, icons_dir=icons) == "sun.png"
+    assert icon_file(61, is_night=True, icons_dir=icons) == "rain.png"
+    assert icon_file(None) is None and icon_file(True) is None
+    doc = _doc()
+    doc["weather"]["blocks"][0].update(wmo=0, is_night=True)
+    _, painted = render(doc, now=NOW, icons_dir=icons)
+    assert "icon:moon.png" in painted
+
+
+def test_each_glyph_flag_adds_exactly_one_glyph():
+    _, none = render(_doc(), now=NOW)
+    assert not any(s.startswith("glyph:") for s in none)
+    image, painted = render(_doc(glyphs={"wifi": True, "power": True, "sensor": True}), now=NOW)
+    assert [s for s in painted if s.startswith("glyph:")] == ["glyph:wifi", "glyph:power", "glyph:sensor"]
+    _, one = render(_doc(glyphs={"power": True}), now=NOW)
+    assert [s for s in one if s.startswith("glyph:")] == ["glyph:power"]
+    _save(image, "render_glyphs")
+
+
+def test_silent_collector_forces_dashes_and_the_sensor_glyph():
+    image, painted = render(_doc(collector_silent=True), now=NOW)
+    assert f"AQI: {DASH}" in painted and f"CO2: {DASH}" in painted and f"Temp: {DASH}" in painted
+    assert "Good" not in painted and "glyph:sensor" in painted
+    assert "12–15" in painted  # the forecast is still valid
+    _save(image, "render_silent")
