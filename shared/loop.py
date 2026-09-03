@@ -29,6 +29,11 @@ class Task:
         self.next_due: Optional[float] = None
         self.runs = 0
         self.failures = 0
+        self._retry: Optional[float] = None
+
+    def retry_in(self, seconds: float) -> None:
+        """Called from inside the task: run again after ``seconds`` instead of the interval."""
+        self._retry = float(seconds)
 
     def schedule(self, now: float) -> None:
         if self.first_run_immediately:
@@ -58,6 +63,9 @@ class Task:
             self._reschedule(clock.now())
 
     def _reschedule(self, now: float) -> None:
+        if self._retry is not None:
+            self.next_due, self._retry = now + self._retry, None
+            return
         if self.aligned:
             self.next_due = clock.next_aligned(self.interval, now)
             return

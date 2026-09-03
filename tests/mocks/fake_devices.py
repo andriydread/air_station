@@ -274,6 +274,33 @@ class FakeRunner:
         return result
 
 
+class PngPanelDriver:
+    """A UC8253C stand-in for ``--fake``: every frame becomes a PNG on disk."""
+
+    MODE_FULL = "full"
+    MODE_PARTIAL = "partial"
+
+    def __init__(self, out_dir):
+        from pathlib import Path
+
+        self.out_dir = Path(out_dir)
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.frames = 0
+        self.modes: List[str] = []
+
+    def display_image(self, image, mode="partial", auto_sleep=True):
+        self.frames += 1
+        self.modes.append(mode)
+        image.save(self.out_dir / "panel.png")
+        image.save(self.out_dir / f"panel-{self.frames:04d}-{mode}.png")
+
+    def sleep(self):
+        pass
+
+    def close(self):
+        pass
+
+
 class FakePanel:
     """Stands in for the e-paper: records every frame and its refresh mode."""
 

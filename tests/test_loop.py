@@ -138,3 +138,18 @@ def test_backward_clock_step_rearms_a_task(fake_clock, log):
     fake_clock.jump_wall(-3600)  # NTP pulled the clock back an hour
     _run_for(loop, fake_clock, 11)
     assert len(calls) == 4  # it did not wait an hour for the calendar to catch up
+
+
+def test_retry_in_overrides_the_next_interval_once(fake_clock, log):
+    calls = []
+    task = Task("weather", 1800, lambda: None)
+
+    def flaky():
+        calls.append(clock.now())
+        if len(calls) == 1:
+            task.retry_in(120)
+
+    task.func = flaky
+    _run_for(Loop(log, None, [task]), fake_clock, 2000)
+    gaps = [round(b - a) for a, b in zip(calls, calls[1:])]
+    assert gaps == [120, 1800]
