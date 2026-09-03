@@ -12,14 +12,14 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Air Station">
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}?v={{ commit }}">
 </head>
 <body>
   <div class="page">
     <header class="topbar">
       <div class="brand">
         <h1>Air Station</h1>
-        <p id="sample-age" class="brand-sub">no data yet</p>
+        <p id="updated-age" class="brand-sub">no data yet</p>
         <div class="status-strip" id="status-strip"></div>
       </div>
       <div class="clock">
@@ -32,34 +32,36 @@
     <nav class="tabs">
       <button class="tab-button active" data-tab="live" type="button">Live</button>
       <button class="tab-button" data-tab="history" type="button">History</button>
+      <button class="tab-button" data-tab="vitals" type="button">Vitals</button>
       <button class="tab-button" data-tab="diagnostics" type="button">Diagnostics</button>
       <button class="tab-button" data-tab="controls" type="button">Controls</button>
     </nav>
 
     <!-- ======================= LIVE ======================= -->
     <section id="tab-live" class="tab active">
+      <div id="warming-banner" class="banner" hidden>Warming up… the sensors need up to a minute after a start.</div>
       <div class="hero-grid">
         <article class="metric-card metric-hero">
-          <header><h2>Temperature</h2><span class="badge" id="badge-temp" hidden></span></header>
+          <header><h2>Temperature</h2></header>
           <p id="metric-temp">--</p>
           <small class="hero-range" id="range-temp"></small>
           <svg id="spark-temp" class="sparkline" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true"></svg>
         </article>
         <article class="metric-card metric-hero">
-          <header><h2>Humidity</h2><span class="badge" id="badge-humid" hidden></span></header>
+          <header><h2>Humidity</h2></header>
           <p id="metric-humid">--</p>
           <small class="hero-range" id="range-humid"></small>
           <svg id="spark-humid" class="sparkline" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true"></svg>
         </article>
         <article class="metric-card metric-hero">
-          <header><h2>CO2</h2><button class="hint" data-hint="CO2 concentration. Under ~800 ppm is fresh air; above 1500 ppm it is time to ventilate." type="button">?</button><span class="badge" id="badge-co2" hidden></span></header>
+          <header><h2>CO2</h2><button class="hint" data-hint="CO2 concentration on the UBA indoor-air scale: Good below 1000 ppm, Elevated below 2000 — ventilate, Poor above." type="button">?</button></header>
           <p id="metric-co2">--</p>
           <small id="metric-co2-label">--</small>
           <small class="hero-range" id="range-co2"></small>
           <svg id="spark-co2" class="sparkline" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true"></svg>
         </article>
         <article class="metric-card metric-hero">
-          <header><h2>Air quality</h2><button class="hint" data-hint="US EPA air-quality index computed from the particulate readings. Lower is better; under 50 counts as good." type="button">?</button><span class="badge" id="badge-aqi" hidden></span></header>
+          <header><h2>Air quality</h2><button class="hint" data-hint="US EPA air-quality index from PM2.5 only (PM10 is a calculated value on this sensor). Lower is better; up to 50 is Good." type="button">?</button></header>
           <p id="metric-aqi">--</p>
           <small id="metric-aqi-label">--</small>
           <small class="hero-range" id="range-aqi"></small>
@@ -70,21 +72,21 @@
       <div class="pm-grid">
         <article class="metric-card metric-compact">
           <div class="metric-compact-main">
-            <header><h2>PM2.5</h2><span class="badge" id="badge-pm25" hidden></span></header>
+            <header><h2>PM2.5</h2></header>
             <p id="metric-pm25">--</p>
           </div>
           <p class="metric-note">smoke, soot, bacteria</p>
         </article>
         <article class="metric-card metric-compact">
           <div class="metric-compact-main">
-            <header><h2>PM10</h2><span class="badge" id="badge-pm10" hidden></span></header>
+            <header><h2>PM10</h2><button class="hint" data-hint="Calculated by the sensor from the particle-size distribution (±25 µg/m³) — shown, but it does not drive the AQI." type="button">?</button></header>
             <p id="metric-pm10">--</p>
           </div>
           <p class="metric-note">dust, pollen, mold spores</p>
         </article>
         <article class="metric-card metric-compact">
           <div class="metric-compact-main">
-            <header><h2>Particle size</h2><button class="hint" data-hint="Typical size of the particles in the air right now, from the SPS30. The note translates it to what usually floats at that size." type="button">?</button><span class="badge" id="badge-tps" hidden></span></header>
+            <header><h2>Particle size</h2><button class="hint" data-hint="Typical size of the particles in the air right now, from the SPS30. The note translates it to what usually floats at that size." type="button">?</button></header>
             <p id="metric-tps">--</p>
           </div>
           <p class="metric-note" id="metric-tps-note"></p>
@@ -100,7 +102,7 @@
 
       <div class="live-panels">
         <section class="panel">
-          <div class="panel-head"><h2>Forecast</h2><button class="hint" data-hint="Today's forecast in three windows (morning / afternoon / evening) from Open-Meteo, fetched every 30 minutes." type="button">?</button><p id="weather-updated" class="panel-note">Updated: --</p></div>
+          <div class="panel-head"><h2>Forecast</h2><button class="hint" data-hint="Three rolling 3-hour windows from Open-Meteo, the current one on the left; fetched every 30 minutes." type="button">?</button><p id="weather-updated" class="panel-note">Updated: --</p></div>
           <div class="forecast-grid" id="forecast-grid"></div>
           <div id="today-recap" hidden>
             <p class="panel-note today-recap-title">Today so far</p>
@@ -113,7 +115,7 @@
           </div>
           <p class="panel-note">Exactly what the physical display is showing · 416 × 240 · refreshes every minute.</p>
           <div class="preview-frame"><img id="display-preview" alt="e-paper preview" hidden></div>
-          <p id="preview-note" class="panel-note">No snapshot yet.</p>
+          <p id="preview-note" class="panel-note">No frame yet.</p>
         </section>
       </div>
     </section>
@@ -136,10 +138,9 @@
           <label>From <input type="datetime-local" id="range-from"></label>
           <label>To <input type="datetime-local" id="range-to"></label>
           <button type="submit">Apply</button>
-          <a id="export-csv" class="ghost-button" href="/api/export.csv?hours=24" download>Export CSV</a>
-          <button id="copy-text" class="ghost-button" type="button" title="Copy this range as a compact text table (with station events) — ready to paste into a chat or a prompt">Copy as text</button>
-          <a id="open-text" class="ghost-button" href="/api/export.txt?hours=24" target="_blank" rel="noopener">Open as text</a>
+          <a id="export-csv" class="ghost-button" href="/api/export.csv" download>Export CSV</a>
         </form>
+        <p class="panel-note" id="resolution-note"></p>
       </section>
 
       <section class="panel">
@@ -153,12 +154,40 @@
       </section>
 
       <div class="chart-grid">
-        <article class="chart-card"><h3>Temperature</h3><div class="chart-frame"><svg id="chart-temp" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-temp"></div></div></article>
-        <article class="chart-card"><h3>Humidity</h3><div class="chart-frame"><svg id="chart-humid" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-humid"></div></div></article>
+        <article class="chart-card"><h3>Temperature <small class="chart-legend"><span class="legend-main">SHT41</span> · <span class="legend-secondary">CO2 sensor</span></small></h3><div class="chart-frame"><svg id="chart-temp" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-temp"></div></div></article>
+        <article class="chart-card"><h3>Humidity <small class="chart-legend"><span class="legend-main">SHT41</span> · <span class="legend-secondary">CO2 sensor</span></small></h3><div class="chart-frame"><svg id="chart-humid" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-humid"></div></div></article>
         <article class="chart-card"><h3>CO2</h3><div class="chart-frame"><svg id="chart-co2" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-co2"></div></div></article>
         <article class="chart-card"><h3>AQI</h3><div class="chart-frame"><svg id="chart-aqi" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-aqi"></div></div></article>
         <article class="chart-card"><h3>PM2.5</h3><div class="chart-frame"><svg id="chart-pm25" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-pm25"></div></div></article>
         <article class="chart-card"><h3>PM10</h3><div class="chart-frame"><svg id="chart-pm10" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-pm10"></div></div></article>
+        <article class="chart-card"><h3>Particle counts <small class="chart-legend"><span class="legend-main">0.5 µm</span> · <span class="legend-secondary">1 µm</span> · <span class="legend-tertiary">2.5 µm</span></small></h3><div class="chart-frame"><svg id="chart-nc" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-nc"></div></div></article>
+        <article class="chart-card"><h3>Particle size</h3><div class="chart-frame"><svg id="chart-tps" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-tps"></div></div></article>
+      </div>
+    </section>
+
+    <!-- ======================= VITALS ======================= -->
+    <section id="tab-vitals" class="tab">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Machine</h2>
+          <button class="hint" data-hint="The Pi's own health, one row a minute from the manager: temperature, load, memory, disk, database size, Wi-Fi signal and latencies, power flags, uptime, and how far behind the collector is." type="button">?</button>
+          <div class="range-switch" id="vitals-presets">
+            <button data-hours="1" type="button">1h</button>
+            <button data-hours="6" type="button">6h</button>
+            <button data-hours="24" class="active" type="button">24h</button>
+            <button data-hours="168" type="button">7d</button>
+            <button data-hours="720" type="button">30d</button>
+          </div>
+        </div>
+        <div class="info-list vitals-now" id="vitals-now"></div>
+      </section>
+      <div class="chart-grid">
+        <article class="chart-card"><h3>CPU temperature</h3><div class="chart-frame"><svg id="chart-cpu" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-cpu"></div></div></article>
+        <article class="chart-card"><h3>Load</h3><div class="chart-frame"><svg id="chart-load" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-load"></div></div></article>
+        <article class="chart-card"><h3>Free memory</h3><div class="chart-frame"><svg id="chart-mem" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-mem"></div></div></article>
+        <article class="chart-card"><h3>Free disk <small class="chart-legend"><span class="legend-main">free</span> · <span class="legend-secondary">database size</span></small></h3><div class="chart-frame"><svg id="chart-disk" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-disk"></div></div></article>
+        <article class="chart-card"><h3>Wi-Fi <small class="chart-legend"><span class="legend-main">signal dBm</span> · <span class="legend-secondary">internet ms</span></small></h3><div class="chart-frame"><svg id="chart-wifi" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-wifi"></div></div></article>
+        <article class="chart-card"><h3>Collector lag</h3><div class="chart-frame"><svg id="chart-lag" viewBox="0 0 640 220"></svg><div class="chart-tooltip" id="tooltip-chart-lag"></div></div></article>
       </div>
     </section>
 
@@ -168,8 +197,12 @@
         <section class="panel">
           <div class="panel-head">
             <h2>Events</h2>
-            <button class="hint" data-hint="The station's own log: sensor errors, Wi-Fi drops, commands and self-recoveries." type="button">?</button>
+            <button class="hint" data-hint="The station's own log: sensor errors, Wi-Fi drops, commands and self-recoveries, from all three programs." type="button">?</button>
             <div class="filter-row">
+              <select id="event-app">
+                <option value="">all apps</option>
+                <option>collector</option><option>manager</option><option>dashboard</option>
+              </select>
               <select id="event-level">
                 <option value="">all levels</option>
                 <option value="info">info</option>
@@ -178,10 +211,9 @@
               </select>
               <select id="event-source">
                 <option value="">all sources</option>
-                <option>scd41</option><option>sht41</option><option>sps30</option>
-                <option>display</option><option>network</option><option>power</option>
-                <option>quality</option><option>command</option><option>collector</option>
-                <option>storage</option><option>dashboard</option><option>weather</option>
+                <option>scd41</option><option>sht41</option><option>sps30</option><option>i2c</option>
+                <option>display</option><option>weather</option><option>wifi</option><option>power</option>
+                <option>watch</option><option>storage</option><option>machine</option><option>app</option><option>web</option>
               </select>
               <button id="event-refresh" class="ghost-button" type="button">Refresh</button>
             </div>
@@ -191,35 +223,38 @@
 
         <div class="diag-side">
           <section class="panel">
-            <div class="panel-head"><h2>Station health</h2><button class="hint" data-hint="Every subsystem the collector tracks. Quiet grey means healthy; only problems get color and show their actual error." type="button">?</button></div>
+            <div class="panel-head"><h2>Station health</h2><button class="hint" data-hint="Every subsystem the two programs track. Quiet grey means healthy; only problems get color and show their actual error." type="button">?</button></div>
             <div class="info-list" id="sensor-health-list"></div>
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Flagged samples</h2><p class="panel-note">Readings the quality guard rejected</p></div>
-            <div class="event-list" id="flagged-list"></div>
-          </section>
-          <section class="panel">
-            <div class="panel-head"><h2>Station &amp; connectivity</h2><button class="hint" data-hint="How long the collector has run, its Wi-Fi connection, and the Pi's power flags — undervoltage means the power supply is struggling." type="button">?</button></div>
+            <div class="panel-head"><h2>Station &amp; connectivity</h2><button class="hint" data-hint="How long each program has run, the Wi-Fi link to the router and to the internet, and the Pi's power flags — undervoltage means the power supply is struggling." type="button">?</button></div>
             <div class="info-list">
               <p><span>Collector up</span><strong id="collector-uptime">--</strong></p>
+              <p><span>Manager up</span><strong id="manager-uptime">--</strong></p>
               <p><span>Restarts (24h)</span><strong id="collector-restarts">--</strong></p>
-              <p><span>Interface</span><strong id="network-interface">--</strong></p>
-              <p><span>State</span><strong id="network-status">--</strong></p>
+              <p><span>Start reason</span><strong><span class="rd-chip" title="no source in the redesign — decide later">RD</span></strong></p>
+              <p><span>Router</span><strong id="network-router">--</strong></p>
+              <p><span>Internet</span><strong id="network-internet">--</strong></p>
               <p><span>Signal</span><strong id="network-signal">--</strong></p>
               <p><span>Latency</span><strong id="network-latency">--</strong></p>
-              <p><span>Last success</span><strong id="network-last-success">--</strong></p>
-              <p><span>Last error</span><strong id="network-last-error">--</strong></p>
-              <p><span>Undervoltage</span><strong id="power-undervoltage">--</strong></p>
-              <p><span>Throttled</span><strong id="power-throttled">--</strong></p>
+              <p><span>Last radio bounce</span><strong id="network-bounce">--</strong></p>
+              <p><span>Power now</span><strong id="power-now">--</strong></p>
+              <p><span>Power since boot</span><strong id="power-since-boot">--</strong></p>
             </div>
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Housekeeping</h2><button class="hint" data-hint="The station maintains itself: nightly database backup and prune, periodic fan cleaning. Colored only when something is overdue." type="button">?</button></div>
+            <div class="panel-head"><h2>Housekeeping</h2><button class="hint" data-hint="The station maintains itself: nightly prune and backup at 00:05, hourly rollups, the Sunday 04:00 fan clean. Colored only when something is overdue." type="button">?</button></div>
             <div class="info-list">
               <p><span>Last backup</span><strong id="hk-backup">--</strong></p>
               <p><span>Last data prune</span><strong id="hk-prune">--</strong></p>
-              <p><span>Last manual fan clean</span><strong id="hk-clean">--</strong></p>
+              <p><span>Last hourly rollup</span><strong id="hk-rollup">--</strong></p>
+              <p><span>Last fan clean</span><strong id="hk-clean">--</strong></p>
+              <p><span>Database</span><strong id="hk-db-size">--</strong></p>
             </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Flagged samples</h2><p class="panel-note">Readings the quality guard rejected</p></div>
+            <div class="empty-state"><span class="rd-chip" title="no source in the redesign — decide later">RD</span> The rate guard is gone; dropped values are events now (filter source scd41/sht41/sps30, type value_dropped).</div>
           </section>
           <section class="panel">
             <div class="panel-head"><h2>Recent commands</h2><button class="hint" data-hint="Every button press from Controls lands here with its status and result." type="button">?</button></div>
@@ -233,82 +268,71 @@
     <section id="tab-controls" class="tab">
       <div class="controls-grid">
         <section class="control-card">
-          <h2>SCD41 CO2 <button class="hint" data-hint="CO2 sensor. Forced calibration tells it what the true CO2 is right now — only run it in fresh air (~420 ppm). ASC lets the sensor drift-correct itself instead." type="button">?</button></h2>
+          <h2>SCD41 CO2 <button class="hint" data-hint="CO2 sensor. Forced calibration tells it what the true CO2 is right now — only run it in fresh air (~420 ppm). ASC is a line in config.toml." type="button">?</button></h2>
           <div class="info-list">
             <p><span>Self-calibration (ASC)</span><strong id="scd41-asc-state">--</strong></p>
             <p><span>Last calibration</span><strong id="scd41-last-calibration">--</strong></p>
+            <p><span>Pressure compensation</span><strong id="scd41-pressure">--</strong></p>
           </div>
           <form id="scd41-calibration-form" class="stack-form">
             <label for="target-co2">Forced calibration target, ppm</label>
-            <input id="target-co2" type="number" min="350" max="2000" value="420">
+            <input id="target-co2" type="number" min="400" max="2000" value="420">
             <p class="panel-note">Put the station in fresh air (open window / outside), wait for the checklist, then calibrate.</p>
             <div class="cal-checklist" id="scd41-checklist"></div>
             <label class="checkbox"><input id="scd41-calibration-confirm" type="checkbox"> Sensor is in known stable reference air</label>
             <label class="checkbox"><input id="scd41-calibration-drift" type="checkbox"> Sensor has drifted badly — skip distance-to-target check</label>
             <label class="checkbox"><input id="scd41-calibration-persist" type="checkbox" checked> Persist in sensor</label>
-            <button type="submit" id="scd41-calibration-submit">Run forced calibration</button>
-            <small class="command-note" data-command-note="scd41_force_calibration"></small>
-          </form>
-          <form id="scd41-asc-form" class="stack-form">
-            <label class="checkbox"><input id="scd41-asc-enabled" type="checkbox"> Automatic self-calibration (ASC)</label>
-            <label class="checkbox"><input id="scd41-asc-persist" type="checkbox"> Persist in sensor</label>
-            <button type="submit">Apply ASC setting</button>
+            <button type="submit" id="scd41-calibration-submit" data-command="scd41_calibrate">Run forced calibration</button>
+            <small class="command-note" data-command-note="scd41_calibrate"></small>
           </form>
         </section>
 
         <section class="control-card">
-          <h2>SPS30 particulates <button class="hint" data-hint="Particulate sensor. The fan clean blows accumulated dust out; the interval controls how often that happens automatically." type="button">?</button></h2>
+          <h2>SPS30 particulates <button class="hint" data-hint="Particulate sensor. The fan clean blows accumulated dust out; the collector also runs one every Sunday at 04:00." type="button">?</button></h2>
           <div class="info-list">
-            <p><span>Auto-clean interval</span><strong id="auto-clean-current">--</strong></p>
+            <p><span>Weekly clean</span><strong>Sunday 04:00</strong></p>
+            <p><span>Firmware</span><strong id="sps30-firmware">--</strong></p>
           </div>
           <div class="button-row">
-            <button data-command="sps30_force_clean" type="button">Run fan clean</button>
+            <button data-command="sps30_fan_clean" type="button">Run fan clean</button>
           </div>
-          <small class="command-note" data-command-note="sps30_force_clean"></small>
-          <form id="sps30-auto-clean-form" class="stack-form">
-            <label for="auto-clean-value">Set new interval</label>
-            <div class="input-combo">
-              <input id="auto-clean-value" type="number" min="0" value="7">
-              <select id="auto-clean-unit">
-                <option value="seconds">seconds</option>
-                <option value="minutes">minutes</option>
-                <option value="hours">hours</option>
-                <option value="days" selected>days</option>
-              </select>
-            </div>
-            <button type="submit">Update interval</button>
-          </form>
+          <small class="command-note" data-command-note="sps30_fan_clean"></small>
         </section>
 
         <section class="control-card">
           <h2>System <button class="hint" data-hint="These run on the Pi through the command queue; results appear under Diagnostics → Recent commands." type="button">?</button></h2>
-          <p class="panel-note">Runs on the Pi through the command queue.</p>
+          <p class="panel-note">Runs on the Pi through the command queue (the manager).</p>
           <div class="button-row stack-buttons">
-            <button data-system="system_restart_collector" type="button">Restart collector</button>
-            <button data-system="system_restart_web" type="button">Restart dashboard</button>
-            <button data-system="system_reboot" class="button-danger" type="button">Reboot Pi</button>
+            <button data-command="restart_collector" data-confirm="Restart the collector service? Measurements pause for about a minute (warm-up)." type="button">Restart collector</button>
+            <button data-command="restart_dashboard" data-confirm="Restart the dashboard service? The page will briefly disconnect." type="button">Restart dashboard</button>
+            <button data-command="reboot" data-confirm="REBOOT the Pi? The whole station goes down for about a minute." data-typed="REBOOT" class="button-danger" type="button">Reboot Pi</button>
           </div>
-          <small class="command-note" data-command-note="system_restart_collector"></small>
+          <small class="command-note" data-command-note="restart_collector"></small>
         </section>
 
         <section class="control-card">
-          <h2>Database <button class="hint" data-hint="Where measurements live on the Pi. Delete history permanently wipes all stored readings." type="button">?</button></h2>
+          <h2>Database <button class="hint" data-hint="Where measurements live on the Pi. Delete history permanently wipes all stored readings, hourly summaries and vitals; events and commands stay." type="button">?</button></h2>
           <div class="info-list">
-            <p><span>Path</span><strong id="database-path">--</strong></p>
-            <p><span>Log file</span><strong id="collector-log-file">--</strong></p>
-            <p><span>Measurements</span><strong id="database-entries">--</strong></p>
             <p><span>Size on disk</span><strong id="database-size">--</strong></p>
             <p><span>Free disk space</span><strong id="database-free">--</strong></p>
+            <p><span>Measurements</span><strong><span class="rd-chip" title="no source in the redesign — decide later">RD</span></strong></p>
+            <p><span>Newest row</span><strong id="database-newest">--</strong></p>
           </div>
           <div class="button-row">
-            <button id="delete-history-button" class="button-danger" type="button">Delete history</button>
+            <button data-command="delete_history" data-confirm="Delete ALL stored measurement history (raw rows, hourly summaries, vitals)? This cannot be undone." data-typed="DELETE" class="button-danger" type="button">Delete history</button>
           </div>
+          <small class="command-note" data-command-note="delete_history"></small>
         </section>
       </div>
     </section>
   </div>
 
+  <footer class="version" id="version">
+    <span>Air Station · <span id="version-commit">{{ commit }}</span></span>
+    <span id="version-uptimes"></span>
+  </footer>
+
   <div id="toast" class="toast" hidden></div>
-  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+  <script src="{{ url_for('static', filename='dashboard.js') }}?v={{ commit }}"></script>
 </body>
 </html>
