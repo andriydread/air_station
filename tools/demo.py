@@ -13,7 +13,6 @@ runner is in ``data/demo/demo.pid``.
 
 import argparse
 import os
-import re
 import signal
 import subprocess
 import sys
@@ -27,14 +26,19 @@ PYTHON = sys.executable
 
 def write_demo_config(port: int) -> Path:
     text = (REPO / "config.toml").read_text()
-    text = re.sub(r'^database = .*$', 'database = "data/demo/airstation.db"', text, flags=re.M)
-    text = re.sub(r'^logs = .*$', 'logs = "data/demo/logs"', text, flags=re.M)
-    text = re.sub(r'^port = .*$', f'port = {port}', text, flags=re.M)
+    # exact lines of the shipped file; paths absolute because config paths
+    # resolve against the directory of the config file that was loaded
+    replacements = {
+        'database = "data/airstation.db"': f'database = "{DEMO / "airstation.db"}"',
+        'logs = "data/logs"': f'logs = "{DEMO / "logs"}"',
+        "port = 8080": f"port = {port}",
+    }
+    for old, new in replacements.items():
+        if old not in text:
+            raise SystemExit(f"config.toml no longer contains {old!r}; update tools/demo.py")
+        text = text.replace(old, new)
     DEMO.mkdir(parents=True, exist_ok=True)
     path = DEMO / "config.toml"
-    # config paths resolve against the config file's directory, so make them absolute
-    text = text.replace('"data/demo/airstation.db"', f'"{DEMO / "airstation.db"}"')
-    text = text.replace('"data/demo/logs"', f'"{DEMO / "logs"}"')
     path.write_text(text)
     return path
 
