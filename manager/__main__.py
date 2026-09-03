@@ -210,6 +210,8 @@ def main(argv=None) -> int:
         runner.results["sudo"] = FakeRunner.Completed()
         kwargs["runner"] = runner
         kwargs["spawner"] = lambda argv, **_k: log.info("app", "fake_spawn", argv=" ".join(argv))
+        import contextlib
+        kwargs["connector"] = lambda _address, timeout: contextlib.nullcontext()  # every probe answers
     try:
         run(config, db, log, SystemdNotifier(), **kwargs)
     except Exception:

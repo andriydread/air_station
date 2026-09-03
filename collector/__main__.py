@@ -152,8 +152,8 @@ def main(argv=None) -> int:
     if args.fake:
         from tests.mocks.fake_hardware import install
         install()
-        from tests.mocks.fake_devices import FakeSps30Device
-        sps30_factory = lambda _i2c: FakeSps30Device()  # noqa: E731
+        from tests.mocks.generators import install_generated_devices
+        sps30_factory = install_generated_devices()  # drifting, plausible values
     else:
         sps30_factory = None
     config = Config.load(args.config)
