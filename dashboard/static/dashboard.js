@@ -1496,3 +1496,134 @@ installers.push(() => {
     refreshDiagnostics().catch((e) => toast(e.message, 'error'));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Controls tab: six buttons and the calibration checklist
+// ---------------------------------------------------------------------------
+
+// The collector enforces these (collector/sensors.py CAL_*); mirrored here so
+// the button unlocks exactly when a command would pass.
+const calibrationLimits = { min_runtime: 180, min_samples: 3, max_spread: 30, max_delta: 200 };
+const pendingCommandTypes = new Set();
+
+function renderControls(live) {
+  const collector = live?.collector_status?.value || {};
+  const manager = live?.manager_status?.value || {};
+  const calibration = live?.last_calibration?.value || null;
+  document.getElementById('scd41-asc-state').textContent = collector.asc == null ? DASH : (collector.asc ? 'on (config.toml)' : 'off (config.toml)');
+  document.getElementById('scd41-last-calibration').textContent = calibration
+    ? `${formatTimestamp(calibration.at)} · target ${calibration.target_ppm} ppm · correction ${calibration.correction_ppm} ppm`
+    : 'never';
+  document.getElementById('scd41-pressure').textContent = collector.pressure_hpa == null
+    ? 'altitude only (no weather pressure yet)' : `${collector.pressure_hpa} hPa from the weather`;
+  document.getElementById('sps30-firmware').textContent = collector.sensors?.sps30?.id || DASH;
+  document.getElementById('database-size').textContent = formatMb(manager.storage?.db_mb);
+  document.getElementById('database-free').textContent = formatMb(recentVitalsLatest?.disk_free);
+  document.getElementById('database-newest').textContent = lastChanges?.raw_at ? formatRelative(lastChanges.raw_at) : DASH;
+  renderCalibrationChecklist();
+}
+
+function renderCommandNotes(commands) {
+  pendingCommandTypes.clear();
+  for (const command of commands) {
+    if (command.status !== 'pending' && command.status !== 'running') continue;
+    if (serverNow() - command.created_at <= 120) pendingCommandTypes.add(command.type);
+  }
+  document.querySelectorAll('[data-command-note]').forEach((note) => {
+    const type = note.dataset.commandNote;
+    const button = document.querySelector(`[data-command="${type}"]`);
+    if (pendingCommandTypes.has(type)) {
+      note.textContent = 'running…';
+      note.className = 'command-note';
+      if (button && type !== 'scd41_calibrate') button.disabled = true;
+      return;
+    }
+    if (button && type !== 'scd41_calibrate') button.disabled = false;
+    const latest = commands.find((command) => command.type === type);
+    if (!latest) {
+      note.textContent = '';
+      return;
+    }
+    const error = latest.status === 'fail' && latest.result?.error ? ` — ${latest.result.error}` : '';
+    note.textContent = `Last run: ${formatRelative(latest.updated_at)} · ${latest.status}${error}`;
+    note.className = latest.status === 'fail' ? 'command-note health-bad' : 'command-note';
+    note.title = formatTimestamp(latest.updated_at);
+  });
+  renderCalibrationChecklist();
+}
+
+function renderCalibrationChecklist() {
+  const box = document.getElementById('scd41-checklist');
+  const submit = document.getElementById('scd41-calibration-submit');
+  const cal = lastLive?.collector_status?.value?.calibration;
+  const pending = pendingCommandTypes.has('scd41_calibrate');
+  if (!cal) {
+    box.innerHTML = '<p class="cal-check cal-wait">• Waiting for the collector…</p>';
+    submit.disabled = true;
+    return;
+  }
+  const limits = calibrationLimits;
+  const target = Number(document.getElementById('target-co2').value) || 420;
+  const driftOverride = document.getElementById('scd41-calibration-drift').checked;
+  const confirmed = document.getElementById('scd41-calibration-confirm').checked;
+  const delta = cal.average_co2 == null ? null : Math.abs(cal.average_co2 - target);
+  const checks = [
+    { ok: cal.runtime_seconds >= limits.min_runtime, text: `Warmed up — running ${cal.runtime_seconds}s of ${limits.min_runtime}s` },
+    { ok: cal.sample_count >= limits.min_samples, text: `Enough readings — ${cal.sample_count} of ${limits.min_samples} in the last 5 min` },
+    { ok: cal.spread_co2 != null && cal.spread_co2 <= limits.max_spread,
+      text: cal.spread_co2 == null ? 'Stable readings — no data yet' : `Stable readings — spread ${cal.spread_co2} ppm (limit ${limits.max_spread})` },
+    driftOverride
+      ? { ok: true, text: 'Near target — skipped (drift override)' }
+      : { ok: delta != null && delta <= limits.max_delta,
+          text: delta == null ? `Near ${target} ppm — no data yet` : `Near ${target} ppm — sensor reads ${cal.average_co2} (±${limits.max_delta} allowed)` },
+    { ok: confirmed, text: 'You confirmed the station is in known reference air' },
+  ];
+  box.innerHTML = checks.map((check) =>
+    `<p class="cal-check ${check.ok ? 'cal-ok' : 'cal-wait'}">${check.ok ? '✓' : '•'} ${escapeHtml(check.text)}</p>`
+  ).join('');
+  submit.disabled = !checks.every((check) => check.ok) || pending;
+}
+
+async function runButton(button) {
+  const type = button.dataset.command;
+  if (button.dataset.confirm && !window.confirm(button.dataset.confirm)) return;
+  const payload = {};
+  if (button.dataset.typed) {
+    const typed = window.prompt(`Type ${button.dataset.typed} to confirm`);
+    if (typed !== button.dataset.typed) { toast('Not confirmed.', 'info'); return; }
+    payload.confirmed = true;
+  }
+  button.disabled = true; // a double-tap must not queue two fan cleans
+  try {
+    await submitCommand(type, payload);
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+tabRefreshers.controls = async () => {
+  renderControls(lastLive);
+  renderCommandNotes(commandsCache);
+};
+document.addEventListener('live-updated', () => { if (activeTab === 'controls') renderControls(lastLive); });
+document.addEventListener('commands-updated', (event) => { if (activeTab === 'controls') renderCommandNotes(event.detail || []); });
+
+installers.push(() => {
+  document.querySelectorAll('button[data-command]:not([type="submit"])').forEach((button) => {
+    button.addEventListener('click', () => runButton(button));
+  });
+  ['target-co2', 'scd41-calibration-drift', 'scd41-calibration-confirm'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', renderCalibrationChecklist);
+    document.getElementById(id).addEventListener('change', renderCalibrationChecklist);
+  });
+  document.getElementById('scd41-calibration-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitCommand('scd41_calibrate', {
+      target_ppm: Number(document.getElementById('target-co2').value),
+      allow_large_offset: document.getElementById('scd41-calibration-drift').checked,
+      persist: document.getElementById('scd41-calibration-persist').checked,
+    }).catch((e) => toast(e.message, 'error'));
+  });
+});
