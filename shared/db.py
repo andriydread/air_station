@@ -383,6 +383,86 @@ class Database:
         return {key: found.get(key) for key in keys}
 
 
+    # --- commands ------------------------------------------------------------
+
+    def queue_command(self, type_: str, from_whom: str, to_whom: str,
+                      payload: Optional[Dict[str, Any]] = None) -> int:
+        now = self.now()
+        _, row_id = self.write(
+            "INSERT INTO commands(created_at, updated_at, from_whom, to_whom, type, status, payload) "
+            "VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+            (now, now, from_whom, to_whom, type_, to_json(payload or {})),
+        )
+        return int(row_id)
+
+    def claim_pending(self, to_whom: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Atomically move this app's oldest pending commands to ``running``."""
+        # The queue is almost always empty: a cheap read first avoids a write
+        # transaction every 2 s (real SD-card wear).
+        if self.query_one(
+            "SELECT 1 FROM commands WHERE to_whom = ? AND status = 'pending' LIMIT 1", (to_whom,)
+        ) is None:
+            return []
+        with self.transaction() as conn:
+            rows = conn.execute(
+                "SELECT id, type, payload, from_whom, created_at FROM commands "
+                "WHERE to_whom = ? AND status = 'pending' ORDER BY created_at, id LIMIT ?",
+                (to_whom, limit),
+            ).fetchall()
+            if rows:
+                marks = ", ".join("?" for _ in rows)
+                conn.execute(
+                    f"UPDATE commands SET status = 'running', updated_at = ? WHERE id IN ({marks})",
+                    (self.now(), *[row["id"] for row in rows]),
+                )
+        return [
+            {"id": row["id"], "type": row["type"], "payload": from_json(row["payload"], {}),
+             "from_whom": row["from_whom"], "created_at": row["created_at"]}
+            for row in rows
+        ]
+
+    def complete_command(self, command_id: int, success: bool, result: Any) -> None:
+        self.write(
+            "UPDATE commands SET status = ?, result = ?, updated_at = ? WHERE id = ?",
+            ("success" if success else "fail", to_json(result), self.now(), command_id),
+        )
+
+    def fail_running(self, to_whom: str, reason: str) -> int:
+        """At app start: rows a crash left ``running`` can never finish."""
+        count, _ = self.write(
+            "UPDATE commands SET status = 'fail', result = ?, updated_at = ? "
+            "WHERE to_whom = ? AND status = 'running'",
+            (to_json({"error": reason}), self.now(), to_whom),
+        )
+        return count
+
+    def fail_unclaimed(self, older_than_s: int, now: Optional[int] = None) -> int:
+        """Commands still ``pending`` after ``older_than_s`` were never picked up."""
+        now = self.now() if now is None else int(now)
+        count, _ = self.write(
+            "UPDATE commands SET status = 'fail', result = ?, updated_at = ? "
+            "WHERE status = 'pending' AND created_at <= ?",
+            (to_json({"error": "not picked up"}), now, now - older_than_s),
+        )
+        return count
+
+    def recent_commands(self, limit: int = 20) -> List[Dict[str, Any]]:
+        rows = self.query(
+            "SELECT * FROM commands ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)
+        )
+        return [
+            {**dict(row), "payload": from_json(row["payload"], {}), "result": from_json(row["result"])}
+            for row in rows
+        ]
+
+    def newest_command_id(self) -> int:
+        return int(self.query_one("SELECT COALESCE(MAX(id), 0) AS i FROM commands")["i"])
+
+    def prune_commands(self, before_ts: int) -> int:
+        count, _ = self.write("DELETE FROM commands WHERE created_at < ?", (before_ts,))
+        return count
+
+
 def round_metric(metric: str, value: Any) -> Any:
     """CO2 is a whole ppm, particle size keeps 3 decimals, the rest 2."""
     if value is None:
