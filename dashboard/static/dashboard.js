@@ -1169,3 +1169,330 @@ installers.push(() => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Diagnostics tab: events (from all three programs), commands, health,
+// connectivity, housekeeping
+// ---------------------------------------------------------------------------
+
+let commandsCache = [];
+let recentVitalsLatest = null;
+
+function eventQuery() {
+  const query = new URLSearchParams({ limit: 100 });
+  for (const key of ['app', 'level', 'source']) {
+    const value = document.getElementById(`event-${key}`).value;
+    if (value) query.set(key, value);
+  }
+  return query.toString();
+}
+
+async function refreshDiagnostics() {
+  const now = Math.floor(serverNow());
+  const [events, commands, restarts, storage, cleans, vitals] = await Promise.all([
+    fetchJson(`/api/events?${eventQuery()}`),
+    fetchJson('/api/commands?limit=20'),
+    fetchJson('/api/restarts?hours=24'),
+    fetchJson('/api/events?source=storage&limit=30'),
+    fetchJson('/api/events?source=sps30&limit=50'),
+    fetchJson(`/api/vitals?from=${now - 600}&to=${now}`),
+  ]);
+  renderEvents(events.events || []);
+  commandsCache = commands.commands || [];
+  renderCommands(commandsCache);
+  document.dispatchEvent(new CustomEvent('commands-updated', { detail: commandsCache }));
+  renderRestartCount(restarts);
+  recentVitalsLatest = vitals.latest || null;
+  renderStationHealth(lastLive);
+  renderConnectivity(lastLive);
+  renderHousekeeping(lastLive, storage.events || [], cleans.events || []);
+}
+
+async function refreshCommandsOnly() {
+  const commands = await fetchJson('/api/commands?limit=20');
+  commandsCache = commands.commands || [];
+  if (activeTab === 'diagnostics') renderCommands(commandsCache);
+  document.dispatchEvent(new CustomEvent('commands-updated', { detail: commandsCache }));
+}
+
+function renderEvents(events) {
+  const list = document.getElementById('event-list');
+  list.innerHTML = '';
+  if (!events.length) {
+    list.innerHTML = '<div class="empty-state">No events match.</div>';
+    return;
+  }
+  for (const event of events) {
+    const item = document.createElement('article');
+    item.className = 'event-item';
+    const details = Object.keys(event.details || {}).length
+      ? `<pre>${escapeHtml(prettyJson(event.details))}</pre>` : '';
+    item.innerHTML = `
+      <header>
+        <span>${escapeHtml(event.app)} · ${escapeHtml(event.source)} / ${escapeHtml(event.type)}</span>
+        <span class="event-level event-level-${escapeHtml(event.level)}">${escapeHtml(event.level)}</span>
+      </header>
+      <p>${escapeHtml(event.message)}</p>
+      <p class="event-time" title="${escapeHtml(formatTimestamp(event.ts))}">${escapeHtml(formatRelative(event.ts))}</p>
+      ${details}`;
+    list.appendChild(item);
+  }
+}
+
+function commandTiming(command) {
+  // Whether the Pi actually heard the button: completed rows say how fast,
+  // an old pending row says the addressed program isn't picking commands up.
+  if (command.status === 'pending') {
+    const waiting = serverNow() - command.created_at;
+    return waiting > 15
+      ? ` <span class="health-bad">· not picked up — is the ${escapeHtml(command.to_whom)} running?</span>`
+      : ' · waiting for the Pi…';
+  }
+  if (command.status === 'running') return ' · running…';
+  const took = Math.max(0, Math.round(command.updated_at - command.created_at));
+  return ` · ${took}s`;
+}
+
+function renderCommands(commands) {
+  const list = document.getElementById('command-list');
+  list.innerHTML = '';
+  if (!commands.length) {
+    list.innerHTML = '<div class="empty-state">No commands yet.</div>';
+    return;
+  }
+  for (const command of commands.slice(0, 10)) {
+    const item = document.createElement('article');
+    item.className = 'command-item';
+    const result = command.result ? `<pre>${escapeHtml(prettyJson(command.result))}</pre>` : '';
+    item.innerHTML = `
+      <header>
+        <span>${escapeHtml(command.type)} → ${escapeHtml(command.to_whom)}</span>
+        <span class="command-status-${escapeHtml(command.status)}">${escapeHtml(command.status)}${commandTiming(command)}</span>
+      </header>
+      <p class="event-time" title="${escapeHtml(formatTimestamp(command.created_at))}">${escapeHtml(formatRelative(command.created_at))}</p>
+      ${result}`;
+    list.appendChild(item);
+  }
+}
+
+function renderRestartCount(restarts) {
+  // >1 start in 24 h is the watchdog-crash-loop tell; a single boot is normal.
+  const element = document.getElementById('collector-restarts');
+  const total = (restarts.collector || 0);
+  element.textContent = `collector ${restarts.collector ?? DASH} · manager ${restarts.manager ?? DASH} · dashboard ${restarts.dashboard ?? DASH}`;
+  element.className = total > 1 || (restarts.manager || 0) > 1 ? 'health-bad' : '';
+}
+
+const healthRows = [
+  ['collector', 'scd41', 'SCD41 · CO2'],
+  ['collector', 'sht41', 'SHT41 · temp/RH'],
+  ['collector', 'sps30', 'SPS30 · particulates'],
+  ['collector', 'i2c', 'I2C bus'],
+  ['manager', 'display', 'E-paper'],
+  ['manager', 'weather', 'Weather fetch'],
+  ['manager', 'wifi', 'Wi-Fi'],
+  ['manager', 'power', 'Power'],
+  ['manager', 'storage', 'Storage'],
+];
+
+function healthOf(app, key, live) {
+  if (app === 'collector') {
+    const entry = live?.collector_status?.value?.sensors?.[key];
+    if (!entry) return null;
+    if (entry.available === false) return { ok: false, text: entry.last_error || 'missing' };
+    if (entry.warmup_left > 0) return { ok: true, warn: true, text: `warming up · ${entry.warmup_left}s` };
+    if (entry.healthy === false) return { ok: false, text: entry.last_error || 'unhealthy' };
+    const id = entry.id ? ` · ${entry.id}` : '';
+    const reinits = entry.reinit_count ? ` · ${entry.reinit_count} re-init${entry.reinit_count === 1 ? '' : 's'}` : '';
+    return { ok: true, text: `ok${id}${reinits}` };
+  }
+  const manager = live?.manager_status?.value;
+  if (!manager) return null;
+  if (key === 'display') {
+    const d = manager.display || {};
+    if (!d.available) return { ok: false, text: d.last_error || 'not available' };
+    return d.healthy === false ? { ok: false, text: d.last_error || 'error' } : { ok: true, text: `ok · ${d.frames ?? 0} frames` };
+  }
+  if (key === 'weather') {
+    const w = manager.weather || {};
+    if (w.ok === false) return { ok: false, text: w.error || 'fetch failed' };
+    return { ok: true, text: w.fetched_at ? `ok · ${formatRelative(w.fetched_at)}` : 'not fetched yet' };
+  }
+  if (key === 'wifi') {
+    const w = manager.wifi || {};
+    if (w.router_ok === false) return { ok: false, text: `router unreachable · ${w.router_failures} probes` };
+    if (w.internet_ok === false) return { ok: false, text: 'no internet' };
+    return { ok: true, text: w.router_ok == null ? DASH : 'ok' };
+  }
+  if (key === 'power') {
+    const p = manager.power || {};
+    if (!p.available) return { ok: true, text: 'n/a' };
+    return p.now?.length ? { ok: false, text: p.now.join(', ') } : { ok: true, text: 'ok' };
+  }
+  if (key === 'storage') {
+    const s = manager.storage || {};
+    return { ok: true, text: `${formatMb(s.db_mb)}${s.vitals_write_failures ? ` · ${s.vitals_write_failures} write failures` : ''}` };
+  }
+  return null;
+}
+
+function renderStationHealth(live) {
+  const list = document.getElementById('sensor-health-list');
+  list.innerHTML = '';
+  for (const [app, key, label] of healthRows) {
+    const health = healthOf(app, key, live);
+    const row = document.createElement('p');
+    const text = health ? health.text : DASH;
+    const cls = health && !health.ok ? ' class="health-bad"' : (health?.warn ? ' class="health-warn"' : '');
+    row.innerHTML = `<span>${escapeHtml(label)}</span><strong${cls}>${escapeHtml(text)}</strong>`;
+    list.appendChild(row);
+  }
+}
+
+function renderConnectivity(live) {
+  const collector = live?.collector_status?.value || {};
+  const manager = live?.manager_status?.value || {};
+  const wifi = manager.wifi || {};
+  const power = manager.power || {};
+  const set = (id, text, bad = false) => {
+    const element = document.getElementById(id);
+    element.textContent = text;
+    element.className = bad ? 'health-bad' : '';
+  };
+  set('collector-uptime', collector.uptime == null ? DASH : `${formatDuration(collector.uptime)} (since ${formatTimestamp(collector.started_at)})`);
+  set('manager-uptime', manager.uptime == null ? DASH : `${formatDuration(manager.uptime)} (since ${formatTimestamp(manager.started_at)})`);
+  set('network-router', wifi.router_ok == null ? DASH : (wifi.router_ok ? `reachable · ${wifi.gateway || ''}` : `unreachable · ${wifi.router_failures} probes`), wifi.router_ok === false);
+  set('network-internet', wifi.internet_ok == null ? DASH : (wifi.internet_ok ? 'reachable' : `unreachable · ${wifi.wan_failures} probes`), wifi.internet_ok === false);
+  const rssi = recentVitalsLatest?.wifi_rssi;
+  set('network-signal', rssi == null ? DASH : `${rssi} dBm · ${signalQuality(rssi)}`);
+  set('network-latency', `router ${fmt(wifi.lan_ms, 0)} ms · internet ${fmt(wifi.wan_ms, 0)} ms`);
+  set('network-bounce', wifi.last_bounce_at ? `${formatRelative(wifi.last_bounce_at)} (${wifi.bounces} total)` : 'never');
+  set('power-now', !power.available ? 'n/a' : (power.now?.length ? power.now.join(', ') : 'ok'), power.now?.length > 0);
+  set('power-since-boot', !power.available ? 'n/a' : (power.since_boot?.length ? power.since_boot.join(', ') : 'none'));
+}
+
+function renderHousekeeping(live, storageEvents, sps30Events) {
+  const storage = live?.manager_status?.value?.storage || {};
+  const overdueSeconds = 26 * 3600; // nightly tasks get a 2 h grace period
+  const setLine = (id, ts, canBeOverdue) => {
+    const element = document.getElementById(id);
+    if (!ts) {
+      element.textContent = 'never';
+      element.className = '';
+      return;
+    }
+    const overdue = canBeOverdue && serverNow() - ts > overdueSeconds;
+    element.textContent = formatRelative(ts) + (overdue ? ' · overdue' : '');
+    element.title = formatTimestamp(ts);
+    element.className = overdue ? 'health-bad' : '';
+  };
+  const nightly = storageEvents.find((event) => event.type === 'nightly');
+  setLine('hk-backup', storage.last_backup_at || nightly?.ts || null, true);
+  setLine('hk-prune', storage.last_prune_at || nightly?.ts || null, true);
+  setLine('hk-rollup', storage.last_rollup_hour ? storage.last_rollup_hour + 3600 : null, false);
+  const clean = sps30Events.find((event) => event.type === 'fan_clean');
+  setLine('hk-clean', clean?.ts || null, false);
+  document.getElementById('hk-db-size').textContent = storage.db_mb == null
+    ? DASH : `${formatMb(storage.db_mb)}${storage.last_backup_mb != null ? ` · backup ${formatMb(storage.last_backup_mb)}` : ''}`;
+}
+
+// --- Custom dropdowns --------------------------------------------------------
+// Native <select> popups commit on mouse-release on the operator's system,
+// which made the menus unusable. The native select stays in the DOM as the
+// value store — change listeners and .value reads keep working.
+
+function upgradeSelect(select) {
+  const wrapper = document.createElement('span');
+  wrapper.className = 'dropdown';
+  select.parentNode.insertBefore(wrapper, select);
+  wrapper.appendChild(select);
+  select.tabIndex = -1;
+  select.style.display = 'none';
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'dropdown-toggle';
+  toggle.setAttribute('aria-haspopup', 'listbox');
+  toggle.setAttribute('aria-expanded', 'false');
+  const menu = document.createElement('ul');
+  menu.className = 'dropdown-menu';
+  menu.setAttribute('role', 'listbox');
+  menu.hidden = true;
+  const labelOf = (option) => option.textContent.trim() || option.value;
+  const syncToggle = () => {
+    const selected = select.options[select.selectedIndex];
+    toggle.textContent = selected ? labelOf(selected) : DASH;
+  };
+  let focusIndex = -1;
+  const highlight = () => {
+    menu.querySelectorAll('li').forEach((item, index) => item.classList.toggle('focused', index === focusIndex));
+  };
+  const close = () => {
+    menu.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    focusIndex = -1;
+  };
+  const choose = (index) => {
+    select.selectedIndex = index;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    syncToggle();
+    close();
+  };
+  const open = () => {
+    menu.innerHTML = '';
+    Array.from(select.options).forEach((option, index) => {
+      const item = document.createElement('li');
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', index === select.selectedIndex ? 'true' : 'false');
+      item.textContent = labelOf(option);
+      item.addEventListener('mousedown', (event) => { event.preventDefault(); choose(index); });
+      menu.appendChild(item);
+    });
+    menu.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+    focusIndex = select.selectedIndex;
+    highlight();
+  };
+  toggle.addEventListener('click', () => (menu.hidden ? open() : close()));
+  toggle.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { close(); return; }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (menu.hidden) { open(); return; }
+      focusIndex = Math.min(Math.max(focusIndex + (event.key === 'ArrowDown' ? 1 : -1), 0), select.options.length - 1);
+      highlight();
+      return;
+    }
+    if (event.key === 'Enter' && !menu.hidden) {
+      event.preventDefault();
+      if (focusIndex >= 0) choose(focusIndex);
+    }
+  });
+  toggle.addEventListener('blur', (event) => { if (!wrapper.contains(event.relatedTarget)) close(); });
+  document.addEventListener('click', (event) => { if (!menu.hidden && !wrapper.contains(event.target)) close(); });
+  wrapper.appendChild(toggle);
+  wrapper.appendChild(menu);
+  syncToggle();
+}
+
+tabRefreshers.diagnostics = refreshDiagnostics;
+changeHooks.events.push(async () => {
+  if (activeTab === 'diagnostics') await refreshDiagnostics();
+});
+changeHooks.commands.push(refreshCommandsOnly);
+document.addEventListener('live-updated', () => {
+  if (activeTab === 'diagnostics') {
+    renderStationHealth(lastLive);
+    renderConnectivity(lastLive);
+  }
+});
+
+installers.push(() => {
+  ['event-app', 'event-level', 'event-source'].forEach((id) => {
+    const select = document.getElementById(id);
+    upgradeSelect(select);
+    select.addEventListener('change', () => refreshDiagnostics().catch((e) => toast(e.message, 'error')));
+  });
+  document.getElementById('event-refresh').addEventListener('click', () => {
+    refreshDiagnostics().catch((e) => toast(e.message, 'error'));
+  });
+});
