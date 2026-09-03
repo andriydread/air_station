@@ -13,6 +13,7 @@ from typing import Any, Dict
 from flask import Flask, g, jsonify, render_template, request, send_from_directory
 
 from shared import clock
+from shared.config import REPO_ROOT
 from shared.events import git_commit
 from shared.render import ICONS_DIR
 
@@ -27,7 +28,7 @@ def create_app(config, db, log) -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
     app.extensions["airstation"] = {
         "config": config, "db": db, "log": log,
-        "started_at": int(clock.now()), "commit": git_commit(Path(config.repo_root)),
+        "started_at": int(clock.now()), "commit": git_commit(REPO_ROOT),  # the code's repo, not the config's dir
     }
 
     @app.before_request
