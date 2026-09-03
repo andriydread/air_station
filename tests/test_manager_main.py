@@ -187,7 +187,7 @@ def test_sigterm_stops_cleanly_and_sleeps_the_panel(station):
     from shared.loop import Loop, Task
     loop = Loop(station.log, None, manager.tasks())
     loop.install_signal_handlers()
-    loop.tasks.append(Task("fire", 3, lambda: signal.raise_signal(signal.SIGTERM), first_run_immediately=False))
+    loop.tasks.append(Task("fire", 8, lambda: signal.raise_signal(signal.SIGTERM), first_run_immediately=False))  # after the 5 s first frame
     reason = loop.run()
     manager.stop(reason)
     assert reason == "SIGTERM"

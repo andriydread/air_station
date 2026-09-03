@@ -368,8 +368,9 @@ function renderLive(live) {
       target.textContent = metricFormats[metric](value);
     }
   }
-  document.getElementById('metric-tps-note').textContent = describeTps(values.tps);
-  const dew = dewPoint(values.temp, values.humid);
+  const shown = doc.collector_silent ? {} : values;
+  document.getElementById('metric-tps-note').textContent = describeTps(shown.tps);
+  const dew = dewPoint(shown.temp, shown.humid);
   document.getElementById('metric-dew').textContent = dew == null ? DASH : `${dew.toFixed(1)} °C`;
   document.getElementById('metric-dew-note').textContent = describeDew(dew);
   document.getElementById('metric-aqi').textContent = doc.aqi == null || doc.collector_silent ? DASH : String(doc.aqi);

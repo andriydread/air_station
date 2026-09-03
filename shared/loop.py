@@ -18,7 +18,7 @@ IDLE_SLEEP = 0.2
 
 class Task:
     def __init__(self, name: str, interval: float, func: Callable[[], None],
-                 aligned: bool = False, first_run_immediately: bool = True):
+                 aligned: bool = False, first_run_immediately: bool = True, initial_delay: float = 0.0):
         if interval <= 0:
             raise ValueError("interval must be positive")
         self.name = name
@@ -26,6 +26,7 @@ class Task:
         self.func = func
         self.aligned = aligned
         self.first_run_immediately = first_run_immediately
+        self.initial_delay = float(initial_delay)
         self.next_due: Optional[float] = None
         self.runs = 0
         self.failures = 0
@@ -37,7 +38,7 @@ class Task:
 
     def schedule(self, now: float) -> None:
         if self.first_run_immediately:
-            self.next_due = now
+            self.next_due = now + self.initial_delay
         else:
             self.next_due = clock.next_aligned(self.interval, now) if self.aligned else now + self.interval
 

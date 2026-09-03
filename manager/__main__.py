@@ -37,6 +37,7 @@ COMMAND_POLL = 2
 STATUS_EVERY = 30
 MACHINE_EVERY = 60
 UNCLAIMED_EVERY = 600
+FIRST_FRAME_DELAY = 5  # seconds: lets the collector publish its first status after a common boot
 
 
 class Manager:
@@ -96,10 +97,10 @@ class Manager:
     def tasks(self):
         self.weather_task = Task("weather", weather_mod.WEATHER_EVERY, self.fetch_weather)
         return [
-            Task("minute", MINUTE, self.minute, aligned=True),
+            self.weather_task,  # before the first frame, so it has a forecast
+            Task("minute", MINUTE, self.minute, aligned=True, initial_delay=FIRST_FRAME_DELAY),
             Task("commands", COMMAND_POLL, self.process_commands),
             Task("status", STATUS_EVERY, self.publish_status),
-            self.weather_task,
             Task("probes", PROBE_EVERY, self.probes),
             Task("machine", MACHINE_EVERY, self.machine_tick),
             Task("hourly", 60, self.hourly_tick, aligned=True),

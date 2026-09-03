@@ -8,6 +8,7 @@ The picture itself comes from ``shared/render.py``; this module only pushes
 it over SPI, inline, on the manager's single thread.
 """
 
+import math
 import time
 from typing import Any, Callable, Dict, Optional
 
@@ -93,7 +94,8 @@ class Panel:
         self.force_full = False
         if full:
             self.last_full_at = int(now)
-            self.next_full_at = now + FULL_REFRESH_EVERY
+            # the next full frame on the next 5-minute mark, not 5 min after this one
+            self.next_full_at = (math.floor(now / FULL_REFRESH_EVERY) + 1) * FULL_REFRESH_EVERY
         else:
             self.last_partial_at = int(now)
         return "full" if full else "partial"
