@@ -73,7 +73,7 @@ def parse_range(args) -> tuple:
 def history_rows(db, config, start: int, end: int) -> Dict[str, Any]:
     """Raw buckets inside the raw retention window, hourly rows beyond it."""
     from shared.aqi import aqi_from_pm25
-    from shared.db import METRICS
+    from shared.db import METRICS, round_metric
 
     now = int(clock.now())
     raw_horizon = now - config.retention_days.raw * 86400
@@ -88,9 +88,9 @@ def history_rows(db, config, start: int, end: int) -> Dict[str, Any]:
         for row in db.hourly_between(start, end):
             item = {"ts": row["hour"], "samples": row["samples"]}
             for m in METRICS:
-                item[m] = row[f"{m}_avg"]
-                item[f"{m}_min"] = row[f"{m}_min"]
-                item[f"{m}_max"] = row[f"{m}_max"]
+                item[m] = round_metric(m, row[f"{m}_avg"])
+                item[f"{m}_min"] = round_metric(m, row[f"{m}_min"])
+                item[f"{m}_max"] = round_metric(m, row[f"{m}_max"])
             rows.append(item)
         stats = db.hourly_stats(start, end)
         resolution = "hourly"
@@ -107,6 +107,63 @@ def history() -> Any:
     rt = _rt()
     start, end = parse_range(request.args)
     return jsonify(history_rows(rt["db"], rt["config"], start, end))
+
+
+def _csv_rows(db, config, start: int, end: int):
+    """Yield CSV lines: header, then one line per raw row (or hourly row beyond the window)."""
+    import csv
+    import io
+
+    from shared.db import METRICS, round_metric
+
+    now = int(clock.now())
+    raw_horizon = now - config.retention_days.raw * 86400
+    hourly = start < raw_horizon
+    columns = ["unix", "local_time", "resolution", *METRICS]
+    if hourly:
+        columns += [f"{m}_{stat}" for m in METRICS for stat in ("min", "max")] + ["samples"]
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+
+    def flush():
+        text = buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate()
+        return text
+
+    writer.writerow(columns)
+    yield flush()
+    if hourly:
+        for row in db.hourly_between(start, end):
+            stamp = clock.local_now(row["hour"]).strftime("%Y-%m-%d %H:%M:%S")
+            values = [round_metric(m, row[f"{m}_avg"]) for m in METRICS]
+            extra = [round_metric(m, row[f"{m}_{stat}"]) for m in METRICS for stat in ("min", "max")] + [row["samples"]]
+            writer.writerow([row["hour"], stamp, "hourly", *values, *extra])
+            yield flush()
+        return
+    page = 5000 * 10  # seconds of raw rows per database read
+    cursor = start
+    while cursor < end:
+        chunk_end = min(end, cursor + page)
+        for row in db.raw_between(cursor, chunk_end):
+            stamp = clock.local_now(row["recorded_at"]).strftime("%Y-%m-%d %H:%M:%S")
+            writer.writerow([row["recorded_at"], stamp, "raw", *(row[m] for m in METRICS)])
+        yield flush()
+        cursor = chunk_end
+
+
+@api.get("/export.csv")
+def export_csv() -> Any:
+    from flask import Response, request
+
+    rt = _rt()
+    start, end = parse_range(request.args)
+    filename = f"airstation-{start}-{end}.csv"
+    return Response(
+        _csv_rows(rt["db"], rt["config"], start, end),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @api.get("/live")
