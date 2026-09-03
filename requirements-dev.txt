@@ -1,8 +1,5 @@
-# Development/test dependencies — NOT installed on the Pi.
-# The hardware libraries (board, RPi.GPIO, spidev, adafruit-*) are faked in
-# tests/conftest.py, so the suite runs on any machine.
+# Dev server / test dependencies. Hardware libraries are faked in tests/conftest.py.
 pytest
 Flask
-requests
-Pillow
 waitress
+Pillow

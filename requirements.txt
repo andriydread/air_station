@@ -1,14 +1,9 @@
-# E-paper display (UC8253C over SPI)
+# Pi dependencies (hardware libraries included). Dev server: requirements-dev.txt
 RPi.GPIO
 spidev
 Pillow
-
-# I2C sensors (Adafruit CircuitPython)
 adafruit-blinka
+adafruit-circuitpython-scd4x    # SCD41 CO2 (+ its own temperature/humidity)
 adafruit-circuitpython-sht4x    # SHT41 temperature/humidity
-adafruit-circuitpython-scd4x    # SCD41 CO2
-
-# Dashboard and weather
 Flask
 waitress
-requests
