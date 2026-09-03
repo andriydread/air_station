@@ -770,8 +770,11 @@ function statsRangeBar(key, entry) {
 }
 
 function renderAllCharts(data) {
+  // The axis spans the range that was asked for, not the data that exists:
+  // a 30-day view of a two-day-old station shows 28 days of honest gap.
+  const options = { xMin: data.from, xMax: data.to, group: 'history' };
   for (const [svgId, config] of Object.entries(chartConfigs)) {
-    renderLineChart(svgId, data.rows || [], config, data.bucket_seconds || 60);
+    renderLineChart(svgId, data.rows || [], config, data.bucket_seconds || 60, options);
   }
 }
 
