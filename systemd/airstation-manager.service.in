@@ -1,0 +1,26 @@
+# Rendered by `make init` / `make deploy` into /etc/systemd/system/airstation-manager.service
+# (@USER@ and @REPO@ are filled in with the operator's user and the checkout path).
+[Unit]
+Description=Air station manager (e-paper, weather, machine, maintenance)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Type=notify + WatchdogSec: the app sends READY=1 once started and WATCHDOG=1
+# every 10 s from its single loop (shared/heartbeat.py). A loop wedged for
+# 90 s is killed and restarted by systemd.
+Type=notify
+WatchdogSec=90
+ExecStart=@REPO@/.venv/bin/python -m manager
+WorkingDirectory=@REPO@
+User=@USER@
+StandardOutput=journal
+StandardError=journal
+# Crash loops retry every 5 s forever (a sensor unplugged, the database locked)
+# instead of systemd giving up after five tries.
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

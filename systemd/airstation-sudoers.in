@@ -1,0 +1,10 @@
+# Passwordless sudo for exactly the commands the manager runs as root — nothing
+# broader. The collector and the dashboard have no sudo at all.
+# Rendered by `make init` / `make deploy` into /etc/sudoers.d/airstation
+# (checked with `visudo -c` first). sudoers matches on the exact resolved path.
+#
+# Wi-Fi radio bounce after six router failures (manager/network.py)
+@USER@ ALL=(root) NOPASSWD: /usr/bin/nmcli radio wifi off, /usr/bin/nmcli radio wifi on
+# Controls tab: restart collector / restart dashboard / reboot (manager/commands.py)
+@USER@ ALL=(root) NOPASSWD: /usr/bin/systemctl restart airstation-collector, /usr/bin/systemctl restart airstation-dashboard
+@USER@ ALL=(root) NOPASSWD: /usr/sbin/reboot

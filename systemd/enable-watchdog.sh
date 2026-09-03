@@ -1,6 +1,6 @@
 #!/bin/sh
 # Enables the BCM SoC hardware watchdog + the systemd runtime watchdog.
-# Run ON THE PI (make install-watchdog does it over ssh). Reboot to activate.
+# Run on the Pi by `make init`. Reboot once to activate.
 set -e
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
