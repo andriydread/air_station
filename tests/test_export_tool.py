@@ -41,8 +41,8 @@ def test_export_then_import(tmp_config, db, tmp_path, capsys):
     db.insert_event("collector", "info", "app", "started", "collector started")
     logs = Path(tmp_config.paths.logs)
     logs.mkdir(parents=True, exist_ok=True)
-    (logs / "collector-2026-09-03.log").write_text("2026-09-03T00:00:00Z INFO collector app started\n")
-    (logs / "manager-2026-09-03.log").write_text("2026-09-03T00:00:00Z INFO manager app started\n")
+    (logs / "collector.log").write_text("2026-09-03T00:00:00Z INFO collector app started\n")
+    (logs / "collector.log.2026-09-02").write_text("2026-09-03T00:00:00Z INFO manager app started\n")
     config_path = write_config(tmp_config, tmp_path)
     out = tmp_path / "home"
 
@@ -55,7 +55,7 @@ def test_export_then_import(tmp_config, db, tmp_path, capsys):
 
     with tarfile.open(archives[0]) as tar:
         names = {n.split("/", 1)[1] for n in tar.getnames() if "/" in n}
-    for member in ("db/airstation.db", "logs/collector-2026-09-03.log", "logs/manager-2026-09-03.log",
+    for member in ("db/airstation.db", "logs/collector.log", "logs/collector.log.2026-09-02",
                    "journal/units.txt", "journal/kernel-current.txt", "journal/kernel-previous.txt",
                    "system/throttled.txt", "system/temp.txt", "system/df.txt", "system/free.txt",
                    "system/uname.txt", "config.toml", "commit.txt"):
@@ -71,7 +71,7 @@ def test_export_then_import(tmp_config, db, tmp_path, capsys):
     assert tree.is_dir() and (tree / "db" / "airstation.db").exists()
     assert f"unpacked to {tree}" in text
     assert "raw_measurements     10" in text and "events               1" in text
-    assert "raw rows span 0.0 days" in text and "log files: 2 (collector-2026-09-03.log … manager-2026-09-03.log)" in text
+    assert "raw rows span 0.0 days" in text and "log files: 2 (collector.log … collector.log.2026-09-02)" in text
     assert (tree / "commit.txt").read_text().strip() != ""
 
 

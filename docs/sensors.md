@@ -54,10 +54,13 @@ I2C bus itself is re-opened only when all sensors fail together.
   `co2_humid`) and charted next to the SHT41's in History, so the bench data
   says what the offset should be: with the room in equilibrium,
   `new = T_scd41 − T_sht41 + old`.
-- Nothing is written to the sensor's EEPROM (rated ~2000 writes); settings
-  are re-applied on every start. A re-init gives the sensor the full 1 s
-  soft-reset time before configuration is written; if a software re-init
-  ever fails to unstick it, the datasheet's next step is a power cycle.
+- Offset, altitude and ASC are re-applied on every start, not stored in the
+  sensor. The one write to its EEPROM (rated ~2000 writes) is the
+  calibration form's *Persist in sensor* box, which keeps the correction
+  across power loss — a few times a year is nothing. A re-init gives the
+  sensor the full 1 s soft-reset time before configuration is written; if a
+  software re-init ever fails to unstick it, the datasheet's next step is a
+  power cycle.
 
 ## SHT41 — temperature and humidity
 
