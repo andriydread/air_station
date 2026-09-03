@@ -300,6 +300,29 @@ def create_command() -> Any:
     return jsonify({"id": command_id, "type": type_, "to_whom": to_whom, "status": "pending"}), 202
 
 
+@api.get("/display-preview.png")
+def display_preview() -> Any:
+    """Exactly what the e-paper shows, rendered from display_data by the same code."""
+    import io
+
+    from flask import Response, request
+
+    from shared.render import render
+
+    doc = _rt()["db"].get_state("display_data")
+    if doc is None or not isinstance(doc.get("value"), dict):
+        return jsonify({"error": "no display data yet"}), 404
+    etag = f'"{doc["updated_at"]}"'
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers={"ETag": etag})
+    # the preview clock shows the frame's own time, like the panel does
+    image, _painted = render(doc["value"], now=doc["value"].get("updated_at", doc["updated_at"]))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return Response(buffer.getvalue(), mimetype="image/png",
+                    headers={"Cache-Control": "no-cache", "ETag": etag})
+
+
 @api.get("/live")
 def live() -> Any:
     rt = _rt()
