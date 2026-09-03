@@ -49,7 +49,7 @@ def test_fail_running_at_start_touches_only_own_rows(db):
 
 
 def test_fail_unclaimed_respects_age(tmp_path):
-    ticks = iter([1000, 1000, 1500, 1500])
+    ticks = iter([1000, 1500])  # one now() per queued command
     db = Database(tmp_path / "c.db", now=lambda: next(ticks))
     old = db.queue_command("sps30_fan_clean", "dashboard", "collector")   # created 1000
     new = db.queue_command("reboot", "dashboard", "manager", {"confirmed": True})  # created 1500
@@ -61,7 +61,7 @@ def test_fail_unclaimed_respects_age(tmp_path):
 
 
 def test_newest_id_and_prune(tmp_path):
-    ticks = iter([100, 100, 200, 200, 300, 300])
+    ticks = iter([100, 200, 300])
     db = Database(tmp_path / "c.db", now=lambda: next(ticks))
     assert db.newest_command_id() == 0
     db.queue_command("sps30_fan_clean", "dashboard", "collector")
