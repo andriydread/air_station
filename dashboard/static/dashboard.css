@@ -499,8 +499,8 @@ button.button-danger {
 .event-level-warning { background: var(--danger-soft); color: var(--warning); }
 .event-level-error { background: var(--bad-soft); color: var(--bad); font-weight: 700; }
 
-.command-status-succeeded { color: var(--ok); }
-.command-status-failed { color: var(--bad); }
+.command-status-success { color: var(--ok); }
+.command-status-fail { color: var(--bad); }
 .command-status-pending, .command-status-running { color: var(--muted); }
 
 /* --- Controls --------------------------------------------------------------- */
@@ -656,4 +656,78 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
   .hero-grid .metric-hero:nth-child(4) { order: 2; }
   .metric-hero p { font-size: 24px; }
   .sparkline { height: 32px; }
+  /* five tabs on one line: tighter padding, smaller type */
+  .tabs { gap: 0; }
+  .tab-button { padding: 10px 9px; font-size: 14px; }
+  .vitals-now { grid-template-columns: 1fr; }
+  .version { flex-direction: column; gap: 2px; }
 }
+
+/* --- Redesign additions ---------------------------------------------------- */
+
+/* "RD": a value the new design has no source for yet — decided one by one
+   after the bench period. The card stays so it is obvious what would go. */
+.rd-chip {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px dashed var(--muted);
+  color: var(--muted);
+  cursor: help;
+  vertical-align: middle;
+}
+.empty-state .rd-chip { margin-right: 6px; }
+
+/* "updated N s ago": amber past 90 s, red past 3 minutes (manager silent). */
+.age-warn { color: var(--warning); font-weight: 600; }
+.age-bad { color: var(--bad); font-weight: 600; }
+
+/* Warming-up banner above the hero cards after a start. */
+.banner {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* A sensor in warm-up is amber, not red. */
+.health-warn { color: var(--warning); }
+.info-list .health-warn { color: var(--warning); }
+
+/* Chart legends: main series bold-ish, secondaries fainter — same as the lines. */
+.chart-legend { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 8px; }
+.legend-main { font-weight: 600; color: var(--ink); }
+.legend-secondary { opacity: 0.75; }
+.legend-tertiary { opacity: 0.55; }
+
+/* Vitals now-strip: two columns of label/value pairs. */
+.vitals-now {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 32px;
+  row-gap: 0;
+}
+.vitals-now p { margin: 4px 0; }
+
+/* Footer: the running commit and each program's uptime. */
+.version {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px 24px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+.version #version-commit { font-family: ui-monospace, "DejaVu Sans Mono", monospace; }
+
+/* History: which resolution the charts show. */
+#resolution-note { margin-top: 8px; }
