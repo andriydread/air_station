@@ -463,6 +463,85 @@ class Database:
         return count
 
 
+    # --- events ------------------------------------------------------------------
+
+    def insert_event(self, app: str, level: str, source: str, type_: str, message: str,
+                     details: Optional[Dict[str, Any]] = None, ts: Optional[int] = None) -> int:
+        _, row_id = self.write(
+            "INSERT INTO events(ts, app, level, source, type, message, details) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (self.now() if ts is None else int(ts), app, level, source, type_, message,
+             to_json(details or {})),
+        )
+        return int(row_id)
+
+    def recent_events(self, limit: int = 100, app: Optional[str] = None,
+                      level: Optional[str] = None, source: Optional[str] = None,
+                      since_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Newest first; every filter is optional and they combine."""
+        clauses, params = self._event_filters(app, level, source)
+        if since_id is not None:
+            clauses.append("id > ?")
+            params.append(int(since_id))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self.query(
+            f"SELECT * FROM events {where} ORDER BY ts DESC, id DESC LIMIT ?", (*params, limit)
+        )
+        return [self._event_row(row) for row in rows]
+
+    def events_between(self, start: int, end: int, app: Optional[str] = None,
+                       level: Optional[str] = None, source: Optional[str] = None,
+                       limit: int = 5000) -> List[Dict[str, Any]]:
+        """Oldest first, start <= ts < end (for exports and the text of a range)."""
+        clauses, params = self._event_filters(app, level, source)
+        clauses = ["ts >= ?", "ts < ?", *clauses]
+        rows = self.query(
+            f"SELECT * FROM events WHERE {' AND '.join(clauses)} ORDER BY ts, id LIMIT ?",
+            (start, end, *params, limit),
+        )
+        return [self._event_row(row) for row in rows]
+
+    def newest_event_id(self) -> int:
+        return int(self.query_one("SELECT COALESCE(MAX(id), 0) AS i FROM events")["i"])
+
+    def count_events(self, type_: str, since_ts: int, app: Optional[str] = None) -> int:
+        clauses, params = ["type = ?", "ts >= ?"], [type_, since_ts]
+        if app is not None:
+            clauses.append("app = ?")
+            params.append(app)
+        row = self.query_one(f"SELECT COUNT(*) AS n FROM events WHERE {' AND '.join(clauses)}", params)
+        return int(row["n"])
+
+    def latest_event(self, type_: str, app: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        clauses, params = ["type = ?"], [type_]
+        if app is not None:
+            clauses.append("app = ?")
+            params.append(app)
+        row = self.query_one(
+            f"SELECT * FROM events WHERE {' AND '.join(clauses)} ORDER BY ts DESC, id DESC LIMIT 1",
+            params,
+        )
+        return self._event_row(row) if row is not None else None
+
+    def prune_events(self, before_ts: int) -> int:
+        count, _ = self.write("DELETE FROM events WHERE ts < ?", (before_ts,))
+        return count
+
+    @staticmethod
+    def _event_filters(app, level, source) -> Tuple[List[str], List[Any]]:
+        clauses: List[str] = []
+        params: List[Any] = []
+        for column, value in (("app", app), ("level", level), ("source", source)):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        return clauses, params
+
+    @staticmethod
+    def _event_row(row: sqlite3.Row) -> Dict[str, Any]:
+        return {**dict(row), "details": from_json(row["details"], {})}
+
+
 def round_metric(metric: str, value: Any) -> Any:
     """CO2 is a whole ppm, particle size keeps 3 decimals, the rest 2."""
     if value is None:
