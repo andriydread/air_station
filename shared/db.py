@@ -168,6 +168,87 @@ class Database:
         return self.query_one("PRAGMA journal_mode")[0]
 
 
+    # --- raw measurements ----------------------------------------------------
+
+    def insert_raw(self, recorded_at: int, values: Dict[str, Any]) -> None:
+        """One beat. Missing or None metrics are stored as NULL; same second replaces."""
+        columns = ", ".join(("recorded_at", *METRICS))
+        marks = ", ".join("?" for _ in range(len(METRICS) + 1))
+        params = [int(recorded_at), *(values.get(metric) for metric in METRICS)]
+        self.write(f"INSERT OR REPLACE INTO raw_measurements ({columns}) VALUES ({marks})", params)
+
+    def latest_raw_at(self) -> Optional[int]:
+        return self.query_one("SELECT MAX(recorded_at) AS t FROM raw_measurements")["t"]
+
+    def raw_oldest_at(self) -> Optional[int]:
+        return self.query_one("SELECT MIN(recorded_at) AS t FROM raw_measurements")["t"]
+
+    def raw_between(self, start: int, end: int) -> List[Dict[str, Any]]:
+        """Rows with start <= recorded_at < end, oldest first."""
+        rows = self.query(
+            "SELECT * FROM raw_measurements WHERE recorded_at >= ? AND recorded_at < ? "
+            "ORDER BY recorded_at",
+            (start, end),
+        )
+        return [dict(row) for row in rows]
+
+    def minute_average(self, now: int, window: int = 60) -> Dict[str, Dict[str, Any]]:
+        """Averages over recorded_at in (now-window, now]; NULLs do not count."""
+        selects = ", ".join(f"AVG({m}) AS {m}_avg, COUNT({m}) AS {m}_n" for m in METRICS)
+        row = self.query_one(
+            f"SELECT {selects} FROM raw_measurements WHERE recorded_at > ? AND recorded_at <= ?",
+            (now - window, now),
+        )
+        values = {m: round_metric(m, row[f"{m}_avg"]) for m in METRICS}
+        samples = {m: int(row[f"{m}_n"] or 0) for m in METRICS}
+        return {"values": values, "samples": samples}
+
+    def raw_bucketed(self, start: int, end: int, bucket_s: int) -> List[Dict[str, Any]]:
+        """Per-bucket averages for charts: [{"ts": bucket_start, metric: avg|None, ...}]."""
+        bucket_s = max(1, int(bucket_s))
+        selects = ", ".join(f"AVG({m}) AS {m}" for m in METRICS)
+        rows = self.query(
+            f"SELECT (recorded_at / ?) * ? AS ts, {selects} FROM raw_measurements "
+            "WHERE recorded_at >= ? AND recorded_at < ? GROUP BY ts ORDER BY ts",
+            (bucket_s, bucket_s, start, end),
+        )
+        return [
+            {"ts": int(row["ts"]), **{m: round_metric(m, row[m]) for m in METRICS}}
+            for row in rows
+        ]
+
+    def raw_stats(self, start: int, end: int) -> Dict[str, Dict[str, Any]]:
+        """{metric: {min, max, avg, n}} over start <= recorded_at < end."""
+        selects = ", ".join(
+            f"MIN({m}) AS {m}_min, MAX({m}) AS {m}_max, AVG({m}) AS {m}_avg, COUNT({m}) AS {m}_n"
+            for m in METRICS
+        )
+        row = self.query_one(
+            f"SELECT {selects} FROM raw_measurements WHERE recorded_at >= ? AND recorded_at < ?",
+            (start, end),
+        )
+        return {
+            m: {
+                "min": round_metric(m, row[f"{m}_min"]),
+                "max": round_metric(m, row[f"{m}_max"]),
+                "avg": round_metric(m, row[f"{m}_avg"]),
+                "n": int(row[f"{m}_n"] or 0),
+            }
+            for m in METRICS
+        }
+
+
+def round_metric(metric: str, value: Any) -> Any:
+    """CO2 is a whole ppm, particle size keeps 3 decimals, the rest 2."""
+    if value is None:
+        return None
+    if metric == "co2":
+        return int(round(value))
+    if metric == "tps":
+        return round(float(value), 3)
+    return round(float(value), 2)
+
+
 class _Transaction:
     def __init__(self, db: Database):
         self._db = db
