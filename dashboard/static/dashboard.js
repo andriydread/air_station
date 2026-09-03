@@ -625,3 +625,406 @@ window.addEventListener('DOMContentLoaded', async () => {
     toast(error.message, 'error');
   }
 });
+
+// ---------------------------------------------------------------------------
+// History tab: charts and statistics over a range (raw inside the retention
+// window, hourly beyond it — the server decides and says which)
+// ---------------------------------------------------------------------------
+
+let range = { mode: 'preset', hours: 24 };
+let lastHistory = null;
+// Monotonic token: a slow 30d response landing after a fast 6h one must not
+// overwrite the charts with data for a range no longer selected.
+let historyRequestToken = 0;
+
+const statsMetrics = [
+  ['temp', 'Temperature, °C', 1],
+  ['co2_temp', 'CO2 sensor temperature, °C', 1],
+  ['humid', 'Humidity, %', 1],
+  ['co2_humid', 'CO2 sensor humidity, %', 1],
+  ['co2', 'CO2, ppm', 0],
+  ['pm1', 'PM1, µg/m³', 2],
+  ['pm25', 'PM2.5, µg/m³', 2],
+  ['pm10', 'PM10, µg/m³', 2],
+  ['tps', 'Particle size, µm', 2],
+  ['nc05', 'Particles ≥0.5 µm, /cm³', 1],
+  ['nc1', 'Particles ≥1 µm, /cm³', 1],
+  ['nc25', 'Particles ≥2.5 µm, /cm³', 1],
+];
+
+function dynamicFromZero(values, minSpan) {
+  const rawMax = Math.max(...values, 0);
+  const paddedMax = rawMax <= 0 ? minSpan : Math.ceil((rawMax * 1.1) / minSpan) * minSpan;
+  return { min: 0, max: Math.max(minSpan, paddedMax) };
+}
+
+const SECONDARY = { opacity: 0.45, width: 2 };
+const TERTIARY = { opacity: 0.3, width: 2 };
+
+// Each chart: the series it draws (first = main), the value formatter for the
+// tooltip, and how to pick the y axis.
+const chartConfigs = {
+  'chart-temp': {
+    series: [{ key: 'temp', color: '#b85c38' }, { key: 'co2_temp', color: '#b85c38', ...SECONDARY }],
+    format: (row) => `${fmt(row.temp, 1)} °C · CO2 sensor ${fmt(row.co2_temp, 1)} °C`,
+    bounds: (values) => {
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      return { min: min < 0 ? Math.floor(min - 1) : 0, max: max > 40 ? Math.ceil(max + 1) : 40 };
+    },
+  },
+  'chart-humid': {
+    series: [{ key: 'humid', color: '#2b6f9e' }, { key: 'co2_humid', color: '#2b6f9e', ...SECONDARY }],
+    format: (row) => `${fmt(row.humid, 1)} % · CO2 sensor ${fmt(row.co2_humid, 1)} %`,
+    bounds: () => ({ min: 0, max: 100 }),
+  },
+  'chart-co2': {
+    series: [{ key: 'co2', color: '#1f5c4a' }],
+    format: (row) => `${fmt(row.co2, 0)} ppm`,
+    bounds: (v) => dynamicFromZero(v, 100),
+    guides: [{ at: 1000, label: 'elevated' }, { at: 2000, label: 'poor' }],
+  },
+  'chart-aqi': {
+    series: [{ key: 'aqi', color: '#9e6f00' }],
+    format: (row) => `AQI ${fmt(row.aqi, 0)}`,
+    bounds: (v) => dynamicFromZero(v, 25),
+    guides: [{ at: 50, label: 'good' }, { at: 100, label: 'moderate' }, { at: 150, label: 'sensitive' }, { at: 200, label: 'unhealthy' }],
+  },
+  'chart-pm25': {
+    series: [{ key: 'pm25', color: '#5b4b8a' }],
+    format: (row) => `${fmt(row.pm25, 2)} µg/m³`,
+    bounds: (v) => dynamicFromZero(v, 5),
+  },
+  'chart-pm10': {
+    series: [{ key: 'pm10', color: '#6f4a2a' }],
+    format: (row) => `${fmt(row.pm10, 2)} µg/m³`,
+    bounds: (v) => dynamicFromZero(v, 5),
+  },
+  'chart-nc': {
+    series: [{ key: 'nc05', color: '#3b6e8f' }, { key: 'nc1', color: '#3b6e8f', ...SECONDARY }, { key: 'nc25', color: '#3b6e8f', ...TERTIARY }],
+    format: (row) => `0.5 µm ${fmt(row.nc05, 1)} · 1 µm ${fmt(row.nc1, 1)} · 2.5 µm ${fmt(row.nc25, 1)} /cm³`,
+    bounds: (v) => dynamicFromZero(v, 10),
+  },
+  'chart-tps': {
+    series: [{ key: 'tps', color: '#7a6a3a' }],
+    format: (row) => `${fmt(row.tps, 2)} µm`,
+    bounds: (v) => dynamicFromZero(v, 0.5),
+  },
+};
+
+function fmt(value, digits) {
+  return value == null ? DASH : Number(value).toFixed(digits);
+}
+
+function rangeBounds() {
+  if (range.mode === 'custom') return { from: range.from, to: range.to };
+  const to = Math.floor(serverNow());
+  return { from: to - range.hours * 3600, to };
+}
+
+async function refreshHistory() {
+  const token = ++historyRequestToken;
+  const { from, to } = rangeBounds();
+  const data = await fetchJson(`/api/history?from=${from}&to=${to}`);
+  if (token !== historyRequestToken) return; // superseded by a newer request
+  lastHistory = data;
+  renderAllCharts(data);
+  renderStats(data);
+  document.getElementById('export-csv').href = `/api/export.csv?from=${from}&to=${to}`;
+  const note = document.getElementById('resolution-note');
+  note.textContent = data.resolution === 'hourly'
+    ? 'Hourly averages (min/max in the tooltip) — this range reaches beyond the 10-second rows.'
+    : `10-second rows averaged per ${data.bucket_seconds >= 60 ? `${data.bucket_seconds / 60} min` : `${data.bucket_seconds} s`}.`;
+}
+
+function renderStats(data) {
+  const stats = data.stats || {};
+  const samples = stats.co2?.n ?? stats.temp?.n;
+  document.getElementById('stats-note').textContent =
+    samples != null
+      ? `${samples} ${data.resolution === 'hourly' ? 'samples in hourly rows' : 'raw samples'} · ${formatTimestamp(data.from)} → ${formatTimestamp(data.to)}`
+      : DASH;
+  const body = document.querySelector('#stats-table tbody');
+  body.innerHTML = '';
+  for (const [key, label, digits] of statsMetrics) {
+    const entry = stats[key] || {};
+    const row = document.createElement('tr');
+    row.innerHTML = `<td>${escapeHtml(label)}</td><td>${fmt(entry.min, digits)}</td><td>${fmt(entry.avg, digits)}</td><td>${fmt(entry.max, digits)}</td><td class="stats-range">${statsRangeBar(key, entry)}</td>`;
+    body.appendChild(row);
+  }
+}
+
+function statsRangeBar(key, entry) {
+  // A one-row box-plot-lite: min→max as a slim track, a dot at the average.
+  if (entry.min == null || entry.max == null || entry.avg == null) return '';
+  const config = Object.values(chartConfigs).find((c) => c.series[0].key === key);
+  const bounds = config ? config.bounds([entry.min, entry.max]) : { min: 0, max: Math.max(entry.max * 1.15, 1) };
+  const span = bounds.max - bounds.min || 1;
+  const clamp = (value) => Math.min(Math.max(value, 0), 100);
+  const left = clamp(((entry.min - bounds.min) / span) * 100);
+  const right = clamp(((entry.max - bounds.min) / span) * 100);
+  const dot = clamp(((entry.avg - bounds.min) / span) * 100);
+  return `<div class="range-track">` +
+    `<div class="range-fill" style="left:${left.toFixed(1)}%;width:${Math.max(right - left, 1.5).toFixed(1)}%"></div>` +
+    `<div class="range-dot" style="left:${dot.toFixed(1)}%"></div></div>`;
+}
+
+function renderAllCharts(data) {
+  for (const [svgId, config] of Object.entries(chartConfigs)) {
+    renderLineChart(svgId, data.rows || [], config, data.bucket_seconds || 60);
+  }
+}
+
+// --- SVG line chart (hand-rolled, zero dependencies) -----------------------
+
+const chartState = new Map();
+
+function themeColors() {
+  const styles = getComputedStyle(document.documentElement);
+  return {
+    chartGrid: styles.getPropertyValue('--chart-grid').trim(),
+    chartGridSoft: styles.getPropertyValue('--chart-grid-soft').trim(),
+    chartLabel: styles.getPropertyValue('--chart-label').trim(),
+    paper: styles.getPropertyValue('--paper').trim(),
+  };
+}
+
+function computeTicks(min, max, count) {
+  if (count <= 1) return [min];
+  const step = (max - min) / (count - 1);
+  return Array.from({ length: count }, (_, index) => min + step * index);
+}
+
+function formatTickLabel(tick, yRange) {
+  return yRange >= 50 ? String(Math.round(tick)) : (yRange >= 5 ? tick.toFixed(1) : tick.toFixed(2));
+}
+
+function nightRects(xMin, xMax, toX, padding, height) {
+  // Local 22:00–07:00 shading; only worthwhile on short ranges.
+  if (xMax - xMin > 3 * 86400) return '';
+  const rects = [];
+  const cursor = new Date(xMin * 1000);
+  cursor.setHours(0, 0, 0, 0);
+  cursor.setDate(cursor.getDate() - 1);
+  while (cursor.getTime() / 1000 < xMax) {
+    const nightStart = new Date(cursor);
+    nightStart.setHours(22, 0, 0, 0);
+    const nightEnd = new Date(cursor);
+    nightEnd.setDate(nightEnd.getDate() + 1);
+    nightEnd.setHours(7, 0, 0, 0);
+    const start = Math.max(nightStart.getTime() / 1000, xMin);
+    const end = Math.min(nightEnd.getTime() / 1000, xMax);
+    if (end > start) {
+      rects.push(`<rect x="${toX(start)}" y="${padding.top}" width="${toX(end) - toX(start)}" height="${height - padding.top - padding.bottom}" fill="currentColor" opacity="0.05"></rect>`);
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return rects.join('');
+}
+
+// Optional shaded intervals (Vitals: throttled minutes) drawn like nights but stronger.
+function shadeRects(intervals, toX, padding, height) {
+  return (intervals || []).map(([start, end]) =>
+    `<rect x="${toX(start)}" y="${padding.top}" width="${Math.max(toX(end) - toX(start), 2)}" height="${height - padding.top - padding.bottom}" fill="#c0392b" opacity="0.12"></rect>`
+  ).join('');
+}
+
+function formatAxisTimestamp(seconds, spanSeconds) {
+  const date = new Date(seconds * 1000);
+  if (spanSeconds > 48 * 3600) return `${two(date.getDate())}.${two(date.getMonth() + 1)}`;
+  return `${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+
+function renderLineChart(svgId, rows, config, bucketSeconds, options = {}) {
+  const svg = document.getElementById(svgId);
+  const tooltip = document.getElementById(`tooltip-${svgId}`);
+  if (!svg) return;
+  const rowsWithTime = rows.filter((row) => row.ts != null);
+  const mainKey = config.series[0].key;
+  const anyPoints = rowsWithTime.filter((row) => config.series.some((s) => row[s.key] != null));
+  const colors = themeColors();
+
+  if (!anyPoints.length) {
+    svg.innerHTML = `<text x="24" y="40" fill="${colors.chartLabel}" font-size="16">No data</text>`;
+    if (tooltip) tooltip.style.opacity = '0';
+    chartState.delete(svgId);
+    return;
+  }
+
+  const width = 640;
+  const height = 220;
+  const padding = { top: 18, right: 16, bottom: 40, left: 54 };
+  const values = [];
+  config.series.forEach((s) => rowsWithTime.forEach((row) => { if (row[s.key] != null) values.push(row[s.key]); }));
+  const yBounds = config.bounds(values);
+  const xMin = options.xMin ?? Math.min(...rowsWithTime.map((row) => row.ts));
+  const xMaxRaw = options.xMax ?? Math.max(...rowsWithTime.map((row) => row.ts));
+  const xMax = xMaxRaw === xMin ? xMin + 1 : xMaxRaw;
+  const yRange = yBounds.max - yBounds.min || 1;
+  const span = xMax - xMin;
+  const toX = (ts) => padding.left + ((ts - xMin) / (xMax - xMin)) * (width - padding.left - padding.right);
+  const toY = (value) => padding.top + (height - padding.top - padding.bottom) * (1 - ((value - yBounds.min) / yRange));
+  const gapSeconds = Math.max(bucketSeconds * 2, 120);
+
+  const seriesSvg = config.series.map((s) => {
+    const points = rowsWithTime.filter((row) => row[s.key] != null).map((row) => ({ x: toX(row.ts), y: toY(row[s.key]), row }));
+    // Split into segments across data gaps: an offline stretch must render as
+    // a gap, not a confident straight line bridging fabricated values.
+    const segments = [];
+    let current = [];
+    points.forEach((point, index) => {
+      if (index > 0 && point.row.ts - points[index - 1].row.ts > gapSeconds) {
+        segments.push(current);
+        current = [];
+      }
+      current.push(point);
+    });
+    segments.push(current);
+    const widthPx = s.width || 3;
+    const opacity = s.opacity ?? 1;
+    return segments.map((segment) =>
+      segment.length === 1
+        ? `<circle cx="${segment[0].x}" cy="${segment[0].y}" r="4" fill="${s.color}" opacity="${opacity}"></circle>`
+        : `<polyline fill="none" stroke="${s.color}" stroke-width="${widthPx}" opacity="${opacity}" points="${segment.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}"></polyline>`
+    ).join('');
+  }).reverse().join('');  // main series drawn last, on top
+
+  const mainPoints = rowsWithTime.filter((row) => row[mainKey] != null || config.series.some((s) => row[s.key] != null))
+    .map((row) => ({ x: toX(row.ts), y: toY(row[mainKey] != null ? row[mainKey] : config.series.map((s) => row[s.key]).find((v) => v != null)), row }));
+
+  const horizontalGrid = computeTicks(yBounds.min, yBounds.max, 5).map((tick) => {
+    const y = toY(tick);
+    return `<line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="${colors.chartGrid}" stroke-dasharray="4 4" />` +
+      `<text x="8" y="${y + 4}" fill="${colors.chartLabel}" font-size="12">${formatTickLabel(tick, yRange)}</text>`;
+  }).join('');
+  const verticalTicks = computeTicks(xMin, xMax, 5).map((tick) => {
+    const x = toX(tick);
+    return `<line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="${colors.chartGridSoft}" />` +
+      `<text x="${x}" y="${height - 12}" text-anchor="middle" fill="${colors.chartLabel}" font-size="12">${formatAxisTimestamp(tick, span)}</text>`;
+  }).join('');
+  const guides = (config.guides || [])
+    .filter((guide) => guide.at > yBounds.min && guide.at < yBounds.max)
+    .map((guide) => {
+      const y = toY(guide.at);
+      return `<line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="${colors.chartLabel}" stroke-width="1" stroke-dasharray="2 5" opacity="0.6" />` +
+        `<text x="${width - padding.right - 4}" y="${y - 4}" text-anchor="end" fill="${colors.chartLabel}" font-size="10">${guide.at} · ${guide.label}</text>`;
+    }).join('');
+
+  svg.innerHTML = `
+    <rect x="0" y="0" width="${width}" height="${height}" fill="transparent"></rect>
+    <g style="color:${colors.chartLabel}">${nightRects(xMin, xMax, toX, padding, height)}</g>
+    ${shadeRects(options.shade, toX, padding, height)}
+    ${horizontalGrid}
+    ${verticalTicks}
+    ${guides}
+    <line id="crosshair-${svgId}" x1="0" y1="${padding.top}" x2="0" y2="${height - padding.bottom}" stroke="${config.series[0].color}" stroke-width="1.5" stroke-dasharray="4 4" opacity="0"></line>
+    <circle id="focus-${svgId}" cx="0" cy="0" r="5" fill="${config.series[0].color}" stroke="${colors.paper}" stroke-width="2" opacity="0"></circle>
+    ${seriesSvg}`;
+
+  chartState.set(svgId, { coordinates: mainPoints, format: config.format, width, height, group: options.group || 'history' });
+}
+
+function hideChartTooltip(svgId) {
+  const crosshair = document.getElementById(`crosshair-${svgId}`);
+  const focus = document.getElementById(`focus-${svgId}`);
+  const tooltip = document.getElementById(`tooltip-${svgId}`);
+  if (crosshair) crosshair.setAttribute('opacity', '0');
+  if (focus) focus.setAttribute('opacity', '0');
+  if (tooltip) tooltip.style.opacity = '0';
+}
+
+function hideAllChartTooltips() {
+  chartState.forEach((_state, id) => hideChartTooltip(id));
+}
+
+// Charts of one group render the same rows, so one hover moves every
+// crosshair to the same moment — cause-and-effect reading across metrics.
+function syncCrosshairs(sourceId, ts) {
+  const group = chartState.get(sourceId)?.group;
+  chartState.forEach((state, id) => {
+    if (id === sourceId || state.group !== group || !state.coordinates.length) return;
+    let nearest = state.coordinates[0];
+    for (const point of state.coordinates) {
+      if (Math.abs(point.row.ts - ts) < Math.abs(nearest.row.ts - ts)) nearest = point;
+    }
+    const crosshair = document.getElementById(`crosshair-${id}`);
+    const focus = document.getElementById(`focus-${id}`);
+    if (!crosshair || !focus) return;
+    crosshair.setAttribute('x1', nearest.x);
+    crosshair.setAttribute('x2', nearest.x);
+    crosshair.setAttribute('opacity', '1');
+    focus.setAttribute('cx', nearest.x);
+    focus.setAttribute('cy', nearest.y);
+    focus.setAttribute('opacity', '1');
+  });
+}
+
+function installChartHover(svgId) {
+  const svg = document.getElementById(svgId);
+  const tooltip = document.getElementById(`tooltip-${svgId}`);
+  if (!svg || !tooltip) return;
+  const show = (event) => {
+    const state = chartState.get(svgId);
+    if (!state || !state.coordinates.length) return;
+    const rect = svg.getBoundingClientRect();
+    const cursorX = (event.clientX - rect.left) * (state.width / rect.width);
+    let nearest = state.coordinates[0];
+    for (const point of state.coordinates) {
+      if (Math.abs(point.x - cursorX) < Math.abs(nearest.x - cursorX)) nearest = point;
+    }
+    const crosshair = document.getElementById(`crosshair-${svgId}`);
+    const focus = document.getElementById(`focus-${svgId}`);
+    crosshair.setAttribute('x1', nearest.x);
+    crosshair.setAttribute('x2', nearest.x);
+    crosshair.setAttribute('opacity', '1');
+    focus.setAttribute('cx', nearest.x);
+    focus.setAttribute('cy', nearest.y);
+    focus.setAttribute('opacity', '1');
+    const extra = nearest.row.samples != null && nearest.row[`${state.mainKey}_min`] != null ? '' : '';
+    tooltip.innerHTML = `<strong>${escapeHtml(state.format(nearest.row))}</strong><br>${escapeHtml(formatTimestamp(nearest.row.ts))}${extra}`;
+    tooltip.style.opacity = '1';
+    tooltip.style.left = `${(nearest.x / state.width) * rect.width}px`;
+    tooltip.style.top = `${(nearest.y / state.height) * rect.height - 10}px`;
+    syncCrosshairs(svgId, nearest.row.ts);
+  };
+  // Pointer events instead of mouse events: a tap pins the tooltip (there is
+  // no hover on the primary device — a phone); tap-outside dismisses.
+  svg.addEventListener('pointermove', (event) => { if (event.pointerType === 'mouse') show(event); });
+  svg.addEventListener('pointerdown', show);
+  svg.addEventListener('mouseleave', hideAllChartTooltips);
+}
+
+document.addEventListener('pointerdown', (event) => {
+  if (!event.target.closest('.chart-frame')) hideAllChartTooltips();
+});
+
+tabRefreshers.history = refreshHistory;
+changeHooks.raw.push(async () => {
+  if (activeTab === 'history' && range.mode === 'preset') await refreshHistory();
+});
+document.addEventListener('theme-changed', () => {
+  if (lastHistory && activeTab === 'history') renderAllCharts(lastHistory);
+});
+
+installers.push(() => {
+  Object.keys(chartConfigs).forEach(installChartHover);
+  document.querySelectorAll('#range-presets button').forEach((button) => {
+    button.addEventListener('click', () => {
+      range = { mode: 'preset', hours: Number(button.dataset.hours) };
+      document.querySelectorAll('#range-presets button').forEach((item) => item.classList.remove('active'));
+      button.classList.add('active');
+      refreshHistory().catch((e) => toast(e.message, 'error'));
+    });
+  });
+  document.getElementById('custom-range-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const fromValue = document.getElementById('range-from').value;
+    const toValue = document.getElementById('range-to').value;
+    if (!fromValue) { toast('Pick a start date first.', 'error'); return; }
+    const from = Math.floor(new Date(fromValue).getTime() / 1000);
+    const to = toValue ? Math.floor(new Date(toValue).getTime() / 1000) : Math.floor(serverNow());
+    range = { mode: 'custom', from, to };
+    document.querySelectorAll('#range-presets button').forEach((item) => item.classList.remove('active'));
+    refreshHistory().catch((e) => toast(e.message, 'error'));
+  });
+});
