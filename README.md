@@ -216,7 +216,7 @@ drivers/     SPS30 over I2C with CRC, UC8253C over SPI — hand-written, stable
 tools/       status screen, export, backup, import, demo
 systemd/     the three unit templates, sudoers template, Wi-Fi power-save unit, journald drop-in, watchdog setup
 assets/      panel font, weather icons (moon.png is an empty slot: night blocks use sun.png until you add one)
-docs/        sensors.md — how the sensors are cared for; workflow.md — each program step by step
+docs/        sensors.md — how the sensors are cared for
 datasheets/  Sensirion documents the filters and warm-ups follow
 tests/       hardware-free suite; tests/mocks/ are the fake sensors, panel, clock
 data/        database, backup, logs (git-ignored)
