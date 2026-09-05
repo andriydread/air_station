@@ -3,7 +3,7 @@
 Everything here is about keeping the three Sensirion sensors truthful and
 healthy. The numbers are constants next to the code (`collector/sensors.py`,
 `collector/filters.py`); the four knobs a person may turn are in
-`config.toml` under `[sensors]`. Source datasheets live in `datasheets/`.
+`config.toml` under `[sensors]`. Source datasheets live in `docs/datasheets/`.
 
 ## Warm-up, not burn-in
 
