@@ -1,6 +1,6 @@
 """One beat: ask each sensor, drop garbage, remember what was dropped, write one row.
 
-Every 10 s on the wall clock (:00, :10, :20 …). Metrics of a sensor still in
+Every 30 s on the wall clock (:00, :30). Metrics of a sensor still in
 warm-up stay empty (one ``warming_up`` event per warm-up). A dropped value
 is NULL in its cell and a ``value_dropped`` event on the first drop of a
 streak, then every 6th. Six bad beats in a row re-init that sensor (the
@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 from collector.filters import clean_row
 from shared import clock
 
-SAMPLE_INTERVAL = 10
+SAMPLE_INTERVAL = 30       # two rows a minute; the manager averages the pair
 SAMPLING = "beat"          # or "on_ready" (not implemented; see next_due)
 DROP_EVENT_EVERY = 6       # value_dropped events: 1st of a streak, then every 6th
 
@@ -47,7 +47,7 @@ class Sampler:
         self.last_record: Optional[Dict[str, Any]] = None
 
     def next_due(self, now: float) -> float:
-        """When the next row is due. ``beat``: the next 10 s wall-clock mark."""
+        """When the next row is due. ``beat``: the next 30 s wall-clock mark."""
         return clock.next_aligned(SAMPLE_INTERVAL, now)
 
     # --- one beat -----------------------------------------------------------------------

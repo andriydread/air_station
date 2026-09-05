@@ -57,22 +57,22 @@ def test_three_minutes_of_life(station):
     reason = station.run(3 * 60)
     assert reason == "max_passes"
     rows = db.raw_between(0, 10**10)
-    assert len(rows) == 18 and all(r["recorded_at"] % 10 == 0 for r in rows)
-    # warm-up starts at launch; beats are at :10, :20 … so CO2 (60 s) appears
-    # on the 6th beat; the dust sensor initialises 1 s later (the SCD41's
-    # settle sleep), so its 30 s end just after the 3rd beat → 4th beat
-    assert [r["co2"] for r in rows[:7]] == [None] * 5 + [600, 600]
-    assert [r["pm25"] for r in rows[:5]] == [None] * 3 + [2.5, 2.5]
+    assert len(rows) == 6 and all(r["recorded_at"] % 30 == 0 for r in rows)
+    # warm-up starts at launch; beats are at :30, :60 … so CO2 (60 s) appears
+    # on the 2nd beat; the dust sensor initialises 1 s later (the SCD41's
+    # settle sleep), so its 30 s end just after the 1st beat → 2nd beat
+    assert [r["co2"] for r in rows[:3]] == [None, 600, 600]
+    assert [r["pm25"] for r in rows[:3]] == [None, 2.5, 2.5]
     assert all(r["temp"] == 22.5 for r in rows)
     status = db.get_state("collector_status")["value"]
-    assert status["sensors"]["scd41"]["healthy"] and status["sample_count"] == 18
+    assert status["sensors"]["scd41"]["healthy"] and status["sample_count"] == 6
     assert status["sensors"]["sps30"]["id"] == "2.2"
     types = [e["type"] for e in db.recent_events()]
     assert types[-1] == "started" and "shutdown" in types and "clock_unsynced" not in types
     assert types.count("warming_up") == 2
     assert station.buses == 1
     assert station.scd.stop_calls == 2  # once at open (defensive), once at shutdown
-    assert rows[0]["recorded_at"] == 1_788_436_810  # first aligned beat after a start at :00
+    assert rows[0]["recorded_at"] == 1_788_436_830  # first aligned beat after a start at :00
 
 
 def test_a_queued_fan_clean_is_answered(station):
@@ -87,7 +87,7 @@ def test_a_queued_fan_clean_is_answered(station):
 def test_unsynced_clock_is_an_event_not_a_stop(tmp_config, fake_clock, monkeypatch):
     s = Station(tmp_config, fake_clock, monkeypatch, ntp="no")
     try:
-        s.run(15)
+        s.run(45)
         types = [e["type"] for e in s.db.recent_events()]
         assert "clock_unsynced" in types and len(s.db.raw_between(0, 10**10)) >= 1
         assert fake_clock.monotonic() >= 1000 + 60  # it waited the full minute first

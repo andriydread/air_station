@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from collector.sampling import DROP_EVENT_EVERY, Sampler
+from collector.sampling import DROP_EVENT_EVERY, SAMPLE_INTERVAL, Sampler
 from collector.sensors import BAD_STREAK_REINIT, SCD41_WARMUP, SPS30_WARMUP, Scd41, Sht41, Sps30
 from tests.mocks.fake_devices import FakeClock, FakeScd41Device, FakeSht41Device, FakeSps30Device
 
@@ -34,7 +34,7 @@ class Rig:
 
     def beat(self):
         record = self.sampler.beat(self.clock.now())
-        self.clock.advance(10)
+        self.clock.advance(SAMPLE_INTERVAL)
         return record
 
     def beats(self, n):
@@ -56,7 +56,7 @@ def rig(db, log, tmp_config, monkeypatch):
 
 def test_first_beat_row_is_aligned_and_warmups_leave_cells_empty(rig, db):
     record = rig.beat()
-    assert record["ts"] % 10 == 0 and record["ts"] == 1_788_436_800
+    assert record["ts"] % SAMPLE_INTERVAL == 0 and record["ts"] == 1_788_436_800
     row = rig.rows()[0]
     assert row["temp"] == 22.5 and row["humid"] == 45.0        # SHT41 has no warm-up
     assert row["co2"] is None and row["pm25"] is None           # SCD41 / SPS30 warming up
@@ -66,19 +66,19 @@ def test_first_beat_row_is_aligned_and_warmups_leave_cells_empty(rig, db):
 
 
 def test_warmup_event_is_logged_once_and_values_arrive_after(rig, db):
-    rig.beats(7)  # 0 … 60 s
+    rig.beats(4)  # 0 … 90 s
     warm = [e for e in db.recent_events() if e["type"] == "warming_up"]
     assert len(warm) == 2
     rows = rig.rows()
-    assert [r["pm25"] for r in rows[:4]] == [None, None, None, 2.5]   # dust from beat 4 (30 s)
-    assert [r["co2"] for r in rows[:7]] == [None] * 6 + [600]         # co2 from beat 7 (60 s)
-    assert rows[6]["co2_temp"] == 23.0 and rows[6]["nc1"] == 8.6
+    assert [r["pm25"] for r in rows[:3]] == [None, 2.5, 2.5]          # dust from beat 2 (30 s)
+    assert [r["co2"] for r in rows[:4]] == [None, None, 600, 600]      # co2 from beat 3 (60 s)
+    assert rows[2]["co2_temp"] == 23.0 and rows[2]["nc1"] == 8.6
 
 
 def test_dropped_value_is_null_with_event_cadence(rig, db):
     rig.warm()
     rig.scd.default_co2 = 0.0  # below 350: garbage forever
-    rig.beats(14)
+    rig.beats(10)  # six drops, a re-init, two warm-up beats, two more drops
     rows = rig.rows()
     assert all(r["co2"] is None for r in rows) and all(r["temp"] == 22.5 for r in rows)
     # six drops re-init the sensor (new warm-up, nothing asked), so a dying
@@ -107,7 +107,7 @@ def test_six_dropped_in_a_row_reinit_the_sensor_only(rig, db):
     assert rig.scd.start_calls == 2
     # a new warm-up follows the re-init: no CO2 asked for, no more drops
     before = len([e for e in db.recent_events() if e["type"] == "value_dropped"])
-    rig.beats(3)
+    rig.sampler.beat(rig.clock.now())  # the next beat, 30 s into the new warm-up
     after = len([e for e in db.recent_events() if e["type"] == "value_dropped"])
     assert after == before and rig.scd41.warmup_left(rig.clock.now()) > 0
 

@@ -26,6 +26,7 @@ def test_open_applies_the_settings_in_idle_mode_then_starts(scd41):
     assert scd41.ensure(1000) is True
     fake = scd41.fake
     assert fake.reinit_calls == 1 and fake.start_calls == 1
+    assert fake.mode == "low_power"  # datasheet 3.8: a value every ~30 s, 3 mA instead of 15
     assert fake.altitude == 296 and fake.temperature_offset == 4.0
     assert fake.self_calibration_enabled is False and scd41.asc is False
     assert scd41.health.id == "001100220033"

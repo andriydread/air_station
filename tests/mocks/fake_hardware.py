@@ -128,6 +128,9 @@ def install() -> None:
         def start_periodic_measurement(self):
             pass
 
+        def start_low_periodic_measurement(self):
+            pass
+
         def stop_periodic_measurement(self):
             pass
 

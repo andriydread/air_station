@@ -1,7 +1,7 @@
 """The collector program: ``python -m collector`` (``--fake`` on a machine without sensors).
 
-Start everything, run the 10 s beat forever on one thread, stop cleanly.
-Tasks: sample (10 s, wall-aligned), commands (2 s), status (30 s), weather
+Start everything, run the 30 s beat forever on one thread, stop cleanly.
+Tasks: sample (30 s, wall-aligned), commands (2 s), status (30 s), weather
 pressure into the SCD41 (30 min), the Sunday 04:00 fan clean (checked every
 minute). Heartbeats and clock-jump detection come from the shared loop.
 """

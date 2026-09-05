@@ -30,6 +30,7 @@ class FakeScd41Device:
         self.stop_calls = 0
         self.reinit_calls = 0
         self.persist_calls = 0
+        self.mode = None  # "periodic" | "low_power" after a start
 
     @property
     def data_ready(self) -> bool:
@@ -51,6 +52,11 @@ class FakeScd41Device:
 
     def start_periodic_measurement(self):
         self.start_calls += 1
+        self.mode = "periodic"
+
+    def start_low_periodic_measurement(self):
+        self.start_calls += 1
+        self.mode = "low_power"
 
     def stop_periodic_measurement(self):
         self.stop_calls += 1

@@ -20,14 +20,14 @@ def _events(db, type_=None, source=None):
 
 
 def test_a_zero_ppm_sensor_is_reinitialised_and_recovers(station):
-    station.scd.co2_values = [0.0] * BAD_STREAK_REINIT  # garbage for a minute after warm-up
-    station.run(4 * 60)
+    station.scd.co2_values = [0.0] * BAD_STREAK_REINIT  # garbage for three minutes after warm-up
+    station.run(7 * 60)
     db = station.db
     reinits = _events(db, "sensor_reinit", "scd41")
     assert len(reinits) == 1 and "bad readings" in reinits[0]["message"]
     assert station.scd.start_calls == 2
     rows = db.raw_between(0, 10**10)
-    # empty during warm-up (5), garbage (6), warm-up again (6), then real values
+    # empty during warm-up (1), garbage (6), warm-up again (2-3), then real values
     assert rows[-1]["co2"] == 600 and rows[-1]["temp"] == 22.5
     drops = _events(db, "value_dropped")
     assert len(drops) == 1  # one streak, one event
@@ -53,7 +53,7 @@ def test_i2c_errors_on_one_sensor_log_once_then_recover(station):
     original = FakeSht41Device.temperature
     FakeSht41Device.temperature = property(lambda self: flaky_temperature())
     try:
-        station.run(2 * 60)
+        station.run(4 * 60)
     finally:
         FakeSht41Device.temperature = original
     db = station.db
@@ -74,7 +74,7 @@ def test_all_three_raising_reinits_the_bus_and_everything_comes_back(station):
     for fake in (station.scd, station.sht, station.sps):
         fake.raise_on_data_ready = None
         fake.raise_on_read = None
-    station.run(70)
+    station.run(150)  # the re-inited SCD41 warms up 60 s first
     rows = station.db.raw_between(0, 10**10)
     assert rows[-1]["temp"] == 22.5 and rows[-1]["co2"] == 600
 
@@ -100,7 +100,9 @@ def test_sunday_four_am_triggers_one_clean_and_blanks_dust(tmp_config, fake_cloc
     monkeypatch.setenv("TZ", "Europe/Kyiv")
     _time.tzset()
     try:
-        sunday = datetime(2026, 9, 6, 3, 59, 0).astimezone().timestamp()  # local Sunday 03:59
+        # local Sunday 03:59:20: the minute check lands at 04:00:20, so the
+        # 15 s blank after the clean covers the 04:00:30 beat
+        sunday = datetime(2026, 9, 6, 3, 59, 20).astimezone().timestamp()
         fake_clock._wall = sunday
         s = Station(tmp_config, fake_clock, monkeypatch)
         try:

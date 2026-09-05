@@ -11,7 +11,11 @@ import math
 import random
 from typing import Any, Dict, Optional
 
+from collector.sampling import SAMPLE_INTERVAL
 from tests.mocks.fake_devices import FakeScd41Device, FakeSht41Device, FakeSps30Device
+
+BEATS_PER_HOUR = 3600 // SAMPLE_INTERVAL
+GARBAGE_EVERY = 19890                        # seconds; a multiple of the 30 s beat (5.5 h)
 
 DAY = 86400.0
 
@@ -31,7 +35,7 @@ class World:
         humid = 42 + 6 * math.cos((day - 0.1) * 2 * math.pi) + self._noise(t, 3, 0.6)
         bump = 12 * math.exp(-((t % 7200) / 60 - 20) ** 2 / 30)  # a dust bump every two hours
         pm25 = max(0.3, 3.0 + bump + self._noise(t, 4, 0.4))
-        garbage = int(t) % 1990 == 0                # roughly every 5.5 hours at 10 s beats
+        garbage = int(t) % GARBAGE_EVERY == 0       # one garbage beat every 5.5 hours
         return {
             "co2": 0.0 if garbage else round(co2, 1),
             "co2_temp": round(temp + 1.4, 2),
@@ -154,9 +158,9 @@ def install_generated_devices(world: Optional[World] = None):
 
 def seed_history(db, hours: float, now: Optional[float] = None, world: Optional[World] = None,
                  raw_hours: Optional[float] = None) -> Dict[str, int]:
-    """Fill raw rows (every 10 s), hourly rollups and vitals (every minute) for the past ``hours``.
+    """Fill raw rows (one per beat), hourly rollups and vitals (every minute) for the past ``hours``.
 
-    ``raw_hours`` limits how far back 10 s rows go (default: all of it, capped
+    ``raw_hours`` limits how far back the raw rows go (default: all of it, capped
     at 30 days by the caller's patience); older hours get hourly rows only.
     """
     import time
@@ -170,20 +174,20 @@ def seed_history(db, hours: float, now: Optional[float] = None, world: Optional[
     from shared.db import METRICS
     columns = ", ".join(("recorded_at", *METRICS))
     marks = ", ".join("?" for _ in range(len(METRICS) + 1))
-    t = (raw_start // 10) * 10
+    t = (raw_start // SAMPLE_INTERVAL) * SAMPLE_INTERVAL
     while t <= now:
         row = world.row(t)
         statements.append((f"INSERT OR REPLACE INTO raw_measurements ({columns}) VALUES ({marks})",
                            [t, *(row.get(m) for m in METRICS)]))
         counts["raw"] += 1
-        t += 10
+        t += SAMPLE_INTERVAL
     db.write_many(statements)
     # hourly rows for hours before the raw window come from the generator directly
     hour = (start // 3600) * 3600
     while hour + 3600 <= raw_start:
-        samples = [world.row(hour + i * 10) for i in range(360)]
+        samples = [world.row(hour + i * SAMPLE_INTERVAL) for i in range(BEATS_PER_HOUR)]
         cols = ["hour", "samples"]
-        params = [hour, 360]
+        params = [hour, BEATS_PER_HOUR]
         for m in METRICS:
             values = [s[m] for s in samples if s[m] is not None]
             cols += [f"{m}_min", f"{m}_max", f"{m}_avg"]

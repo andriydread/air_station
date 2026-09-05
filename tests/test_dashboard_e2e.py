@@ -74,7 +74,7 @@ def test_changes_live_and_history_agree_with_the_tables(world):
     assert live["version"]["uptimes"]["collector"] is not None
 
     history = client.get(f"/api/history?from={int(START) - 60}&to={int(START) + MINUTES * 60}").get_json()
-    assert history["resolution"] == "raw" and len(history["rows"]) >= MINUTES * 6 - 2
+    assert history["resolution"] == "raw" and len(history["rows"]) >= MINUTES * 2 - 2
     assert history["stats"]["temp"]["avg"] == 22.5 and history["stats"]["co2"]["n"] > 0
     assert all(row["aqi"] is not None for row in history["rows"] if row["pm25"] is not None)
 

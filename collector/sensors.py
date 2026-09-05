@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 from shared.backoff import ReinitBackoff
 
-BAD_STREAK_REINIT = 6        # bad readings in a row (one minute at 10 s) → re-init
+BAD_STREAK_REINIT = 6        # bad readings in a row (three minutes at 30 s) → re-init
 SILENCE_REINIT = 120.0       # seconds without any reading after warm-up → re-init
 SCD41_WARMUP = 60
 SPS30_WARMUP = 30
@@ -301,7 +301,7 @@ class Sps30(Sensor):
 
 # --- SCD41 ------------------------------------------------------------------------
 
-SCD41_DATA_READY_WAIT = 6.0      # the sensor produces a value every 5 s
+SCD41_DATA_READY_WAIT = 6.0      # low power mode: a value every ~30 s, normally waiting at the beat
 SCD41_DATA_READY_POLL = 0.5
 SCD41_REINIT_SETTLE = 1.0        # datasheet: up to 1000 ms after reinit before commands
 PRESSURE_MIN_DELTA_HPA = 1.0
@@ -359,7 +359,12 @@ class Scd41(Sensor):
         self.asc = bool(device.self_calibration_enabled)
         if self.pressure_hpa is not None:
             device.set_ambient_pressure(int(round(self.pressure_hpa)))
-        device.start_periodic_measurement()
+        # Low power periodic mode (datasheet 3.8): a value every ~30 s, i.e. one
+        # per beat, 3 mA average instead of 15 and two 200 mA pulses a minute
+        # instead of twelve on the Pi's 3.3 V rail. The sensor's ~30 s clock is
+        # not ours: when it drifts past the data-ready wait a beat gets no CO2
+        # value (a NULL, ``data_ready=0`` in the debug line), the next one catches up.
+        device.start_low_periodic_measurement()
         self.recent.clear()
 
     def _close(self, device) -> None:
