@@ -361,7 +361,11 @@ function renderLive(live) {
   const managerAge = live.manager_status ? serverNow() - live.manager_status.updated_at : null;
   const collectorAge = live.collector_status ? serverNow() - live.collector_status.updated_at : null;
 
-  document.getElementById('warming-banner').hidden = !doc.warming_up;
+  const banner = document.getElementById('warming-banner');
+  banner.hidden = !doc.warming_up;
+  banner.textContent = doc.warmup_left > 0
+    ? `Starting up — sensors ready in ~${doc.warmup_left} s.`
+    : 'Starting up — waiting for the first readings.';
   for (const metric of ['co2', 'temp', 'humid', 'pm25', 'pm10', 'tps']) {
     const target = document.getElementById(`metric-${metric}`);
     const value = doc.collector_silent ? null : values[metric];

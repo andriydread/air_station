@@ -82,6 +82,7 @@ def test_warming_up_from_a_fresh_status(frame):
     db.set_state("collector_status", _status(NOW, warmup=42))
     doc = frame.build(NOW, None, False, False)
     assert doc["warming_up"] is True and doc["collector_silent"] is False and doc["glyphs"]["sensor"] is False
+    assert doc["warmup_left"] == 42
 
 
 def test_unhealthy_sensor_lights_the_glyph(frame):

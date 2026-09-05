@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from shared.render import DASH, HEIGHT, WARMING_TEXT, WIDTH, render
+from shared.render import DASH, HEIGHT, STARTUP_TEXT, WIDTH, render
 
 OUT = Path(__file__).resolve().parent / "out"
 NOW = datetime(2026, 9, 3, 12, 34, tzinfo=timezone.utc).timestamp()
@@ -67,12 +67,14 @@ def test_empty_document_renders_without_error():
     assert f"{DASH}/{DASH}" in painted and f"Rain:{DASH}" in painted
 
 
-def test_warming_up_frame_hides_the_numbers_but_keeps_header_and_weather():
-    image, painted = render(_doc(warming_up=True), now=NOW)
-    assert WARMING_TEXT in painted
+def test_warming_up_frame_is_the_startup_screen_only():
+    image, painted = render(_doc(warming_up=True, warmup_left=47), now=NOW)
+    assert STARTUP_TEXT in painted and "sensors ready in ~47 s" in painted
     assert not any(s.startswith("AQI") or s.startswith("CO2") or s.startswith("Temp") for s in painted)
-    assert "12–15" in painted and "Rain:10%" in painted
+    assert "12–15" not in painted and "Rain:10%" not in painted  # no forecast while starting
     _save(image, "render_warming")
+    _, painted = render(_doc(warming_up=True), now=NOW)  # no countdown known
+    assert "waiting for the first readings" in painted
 
 
 def test_stale_weather_paints_dashes_in_all_three_columns():

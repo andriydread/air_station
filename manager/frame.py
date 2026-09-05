@@ -37,13 +37,15 @@ class FrameBuilder:
         fresh = status is not None and now - status["updated_at"] <= STATUS_STALE
         rows_silent = latest_raw is None or now - latest_raw > COLLECTOR_SILENT
         sensors = (status or {}).get("value", {}).get("sensors", {}) if fresh else {}
-        warming = any((s or {}).get("warmup_left", 0) > 0 for s in sensors.values())
+        warmup_left = max([int((s or {}).get("warmup_left", 0) or 0) for s in sensors.values()] or [0])
+        warming = warmup_left > 0
         unhealthy = [name for name, s in sensors.items() if (s or {}).get("healthy") is False]
         return {
             "silent": rows_silent or not fresh,
             "rows_silent": rows_silent,
             "status_fresh": fresh,
             "warming_up": bool(warming) and not rows_silent,
+            "warmup_left": warmup_left if (warming and not rows_silent) else 0,
             "unhealthy": unhealthy,
             "last_row_at": latest_raw,
         }
@@ -60,6 +62,7 @@ class FrameBuilder:
         doc = {
             "updated_at": int(now),
             "warming_up": state["warming_up"],
+            "warmup_left": state["warmup_left"],  # seconds until every sensor is past its warm-up
             "collector_silent": state["silent"],
             "values": values,
             "samples": averages["samples"],

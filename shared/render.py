@@ -5,7 +5,7 @@ show exactly the same image. 416×240, 1-bit (white=255, black=0). Layout as
 the station has always had it: clock row with problem glyphs, AQI and CO2
 huge with their category words, temperature/humidity, three forecast
 columns. A metric with no value paints "—"; while the collector's sensors
-warm up the numbers area says "Warming up…".
+warm up the whole panel is the start-up screen: "Starting up", "sensors ready in ~N s".
 
 ``render()`` returns the image and the list of strings it painted, so tests
 check *what* is on the panel without comparing pixels.
@@ -26,7 +26,8 @@ FONT_PATH = ASSETS / "fonts" / "dejavu-sans-bold.ttf"
 ICONS_DIR = ASSETS / "icons"
 
 DASH = "—"
-WARMING_TEXT = "Warming up…"
+STARTUP_TEXT = "Starting up"
+STARTUP_WAIT = "sensors ready in ~{seconds} s"
 _FONT_SIZES = (36, 24, 18, 16, 14)  # huge, large, medium, small, extra-small
 _EDGE_PAD = 12
 _Y_LINE_1, _Y_LINE_2, _Y_LINE_3 = 30, 92, 122
@@ -217,9 +218,14 @@ def _numbers(p: _Painter, fonts, width: int, data: Dict[str, Any]) -> None:
     p.right(humid_text, font_lg, width, _EDGE_PAD, _Y_LINE_2 + 2)
 
 
-def _warming(p: _Painter, fonts, width: int) -> None:
-    _, font_lg, _, _, _ = fonts
-    p.center(WARMING_TEXT, font_lg, 0, width, _Y_LINE_1 + 30)
+def _startup(p: _Painter, fonts, width: int, height: int, data: Dict[str, Any]) -> None:
+    """After a boot: only the header and the wait, no numbers, no forecast."""
+    font_huge, font_lg, _, _, _ = fonts
+    left = data.get("warmup_left")
+    seconds = int(left) if isinstance(left, (int, float)) and not isinstance(left, bool) and left > 0 else None
+    p.center(STARTUP_TEXT, font_huge, 0, width, _Y_LINE_1 + 40)
+    wait = STARTUP_WAIT.format(seconds=seconds) if seconds else "waiting for the first readings"
+    p.center(wait, font_lg, 0, width, _Y_LINE_1 + 100)
 
 
 def _weather(p: _Painter, fonts, width: int, height: int, data: Dict[str, Any],
@@ -270,11 +276,11 @@ def render(display_data: Optional[Dict[str, Any]], width: int = WIDTH, height: i
     _glyphs(p, data, glyph_start)
     p.line((0, _Y_LINE_1, width, _Y_LINE_1))
     if data.get("warming_up"):
-        _warming(p, fonts, width)
+        _startup(p, fonts, width, height, data)
     else:
         _numbers(p, fonts, width, data)
-    p.line((0, _Y_LINE_2, width, _Y_LINE_2))
-    p.line((0, _Y_LINE_3, width, _Y_LINE_3))
-    _weather(p, fonts, width, height, data, icons_dir)
+        p.line((0, _Y_LINE_2, width, _Y_LINE_2))
+        p.line((0, _Y_LINE_3, width, _Y_LINE_3))
+        _weather(p, fonts, width, height, data, icons_dir)
     p.draw.rectangle([0, 0, width - 1, height - 1], outline=0, width=1)
     return image, p.painted
