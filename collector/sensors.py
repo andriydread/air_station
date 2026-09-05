@@ -101,7 +101,22 @@ class Sensor:
         self.health.ok(now)
         self.log.event("info", self.name, "sensor_init", f"{self.name} initialised",
                        warmup_s=self.warmup_seconds, id=self.health.id, **self.init_details)
+        self._readback(now)
         return True
+
+    def _readback(self, now: float) -> None:
+        """Ask the sensor what it holds and write it down (never raises, never blocks a start)."""
+        try:
+            held = self.config_readback()
+        except Exception as exc:
+            self.log.warning(self.name, "readback_failed", error=str(exc))
+            return
+        if held:
+            self.log.event("info", self.name, "sensor_config", f"{self.name} settings as the sensor reports them", **held)
+
+    def config_readback(self) -> Dict[str, Any]:
+        """What the sensor says it holds — read back, not assumed. Default: nothing."""
+        return {}
 
     def reinit(self, now: float, reason: str) -> bool:
         self.reinit_count += 1
@@ -184,6 +199,15 @@ class Sensor:
 
 # --- SHT41 ------------------------------------------------------------------------
 
+def _mode_name(mode: Any) -> Any:
+    """adafruit_sht4x.Mode values are ints with a string table; keep it readable."""
+    try:
+        import adafruit_sht4x
+        return adafruit_sht4x.Mode.string.get(mode, mode)
+    except Exception:
+        return mode
+
+
 class Sht41(Sensor):
     """Temperature and humidity: high precision, heater off, no warm-up.
 
@@ -210,6 +234,11 @@ class Sht41(Sensor):
         if serial is not None:
             self.health.id = f"{int(serial):08x}" if isinstance(serial, int) else str(serial)
         return device
+
+    def config_readback(self) -> Dict[str, Any]:
+        mode = getattr(self.device, "mode", None)
+        return {"serial": self.health.id, "mode": _mode_name(mode), "heater": "off",
+                "temp_offset_c": self.offset}
 
     def read(self, now: float) -> Optional[Dict[str, float]]:
         """{"temp", "humid"} with the configured offset applied; errors propagate."""
@@ -272,6 +301,18 @@ class Sps30(Sensor):
 
     def _close(self, device) -> None:
         device.stop_measurement()
+
+    def config_readback(self) -> Dict[str, Any]:
+        device = self.device
+        held: Dict[str, Any] = {"firmware": self.health.id}
+        try:
+            held["autoclean_interval_s"] = int(device.auto_cleaning_interval)
+        except Exception as exc:
+            held["autoclean_interval_s"] = f"error: {exc}"
+        status = self.status_word()
+        if status:
+            held.update({f"status_{key}": value for key, value in status.items()})
+        return held
 
     def is_blanked(self, now: float) -> bool:
         if self.blank_until is None:
@@ -394,6 +435,20 @@ class Scd41(Sensor):
                            self_test=verdict)
         self._configure_and_start(device)
         return device
+
+    def config_readback(self) -> Dict[str, Any]:
+        device = self.device
+        held: Dict[str, Any] = {"serial": self.health.id, "mode": "single_shot",
+                                "self_test": self.init_details.get("self_test")}
+        for key, attr in (("variant", "sensor_variant_name"), ("altitude_m", "altitude"),
+                          ("temp_offset_c", "temperature_offset"), ("asc", "self_calibration_enabled"),
+                          ("pressure_hpa", "ambient_pressure")):
+            try:
+                value = getattr(device, attr)
+            except AttributeError:
+                continue  # an older driver without the getter
+            held[key] = round(value, 2) if isinstance(value, float) else value
+        return held
 
     def _sleep_and_wake(self, device) -> None:
         """power_down, a second, wake_up (datasheet 3.9.3/3.9.4); skipped on a driver without them."""

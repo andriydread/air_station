@@ -155,6 +155,12 @@ def install() -> None:
         def set_ambient_pressure(self, hpa):
             self.ambient_pressures.append(hpa)
 
+        @property
+        def ambient_pressure(self):
+            return int(self.ambient_pressures[-1]) if self.ambient_pressures else 0
+
+        sensor_variant_name = "SCD41"
+
     adafruit_scd4x = _module("adafruit_scd4x")
     adafruit_scd4x.SCD4X = FakeSCD4X
 

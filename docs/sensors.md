@@ -110,6 +110,18 @@ cold start for both sensors, hence the warm-up above. The collector's
 `started` event says why it started (boot or restart, clean or killed
 previous run) and its `shutdown` event carries the signal.
 
+## What the sensors say they hold
+
+After every start (and every re-init) each sensor is asked what settings it
+actually holds and the answer is a `sensor_config` event, next to the
+`sensor_init` one: the SCD41's serial, variant, altitude, temperature
+offset, ASC, pressure and self-test verdict as it reports them; the SPS30's
+firmware, auto-clean interval and status register; the SHT41's serial and
+mode. Read back, not assumed — a setting that did not land shows up here.
+With `logging.i2c_trace = true` the log also carries every byte exchanged
+with every sensor (`i2c tx` lines), including what the SCD41 answered
+before any filtering.
+
 ## Getting the numbers out
 
 - **CSV:** the History tab's *Export CSV*, or

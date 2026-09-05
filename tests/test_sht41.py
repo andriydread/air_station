@@ -44,3 +44,12 @@ def test_read_errors_propagate_and_none_without_device(sht41):
     sht41.fake.raise_on_read = OSError("nack")
     with pytest.raises(OSError):
         sht41.read(1)
+
+
+def test_readback_event_says_heater_off(sht41, db):
+    sht41.ensure(1000)
+    config = [e for e in db.recent_events() if e["source"] == "sht41" and e["type"] == "sensor_config"]
+    assert len(config) == 1
+    held = config[0]["details"]
+    assert held["heater"] == "off" and held["serial"] == "0000abcd" and held["temp_offset_c"] == 0.0
+    assert held["mode"] is not None

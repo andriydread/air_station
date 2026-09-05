@@ -179,3 +179,14 @@ def test_a_driver_without_the_extras_is_reported_not_crashed(scd41, db):
     finally:
         for name, original in originals.items():
             setattr(type(fake), name, original)
+
+
+def test_readback_event_says_what_the_sensor_holds(scd41, db):
+    scd41.pressure_hpa = 981.0  # known before the open (a stored forecast)
+    scd41.ensure(1000)
+    events = [e for e in db.recent_events() if e["source"] == "scd41"]
+    assert [e["type"] for e in reversed(events)] == ["sensor_init", "sensor_config"]
+    held = events[0]["details"]
+    assert held["serial"] == "001100220033" and held["variant"] == "SCD41" and held["mode"] == "single_shot"
+    assert held["altitude_m"] == 296 and held["temp_offset_c"] == 4.0 and held["asc"] is False
+    assert held["pressure_hpa"] == 981 and held["self_test"] == "ok"

@@ -86,3 +86,12 @@ def test_reinit_clears_a_blank(sps30):
     sps30.force_clean(100)
     sps30.reinit(101, "test")
     assert sps30.blank_until is None and sps30.fake.stop_calls == 1 and sps30.fake.start_calls == 2
+
+
+def test_readback_event_has_firmware_autoclean_and_status(sps30, db):
+    sps30.ensure(1000)
+    config = [e for e in db.recent_events() if e["source"] == "sps30" and e["type"] == "sensor_config"]
+    assert len(config) == 1
+    held = config[0]["details"]
+    assert held["firmware"] == "2.2" and held["autoclean_interval_s"] == 0
+    assert held["status_fan_error"] is False and held["status_laser_error"] is False

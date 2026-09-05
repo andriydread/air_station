@@ -87,6 +87,12 @@ class FakeScd41Device:
     def set_ambient_pressure(self, hpa: float) -> None:
         self.ambient_pressures.append(hpa)
 
+    @property
+    def ambient_pressure(self) -> int:
+        return int(self.ambient_pressures[-1]) if self.ambient_pressures else 0
+
+    sensor_variant_name = "SCD41"
+
 
 class FakeSht41Device:
     """Stands in for ``adafruit_sht4x.SHT4x``."""
