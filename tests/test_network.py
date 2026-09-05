@@ -2,7 +2,7 @@
 
 import pytest
 
-from manager.network import BOUNCE_AFTER, BOUNCE_OFF, BOUNCE_ON, WifiWatch, default_gateway
+from manager.network import BOUNCE_AFTER, BOUNCE_OFF, BOUNCE_ON, IW_LINK, NM_STATUS, WifiWatch, default_gateway
 from tests.mocks.fake_devices import FakeRunner
 
 ROUTE = """Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
@@ -125,3 +125,23 @@ def test_no_gateway_counts_as_router_failure(watch, tmp_path):
     watch.tick(now=0)
     watch.tick(now=30)
     assert watch.router_ok is False and watch.gateway is None and watch.glyph() is True
+
+
+def test_bounce_records_what_the_stack_saw(watch, db):
+    watch.runner_.results[tuple(NM_STATUS)] = FakeRunner.Completed(
+        stdout="lo:unmanaged:\nwlan0:disconnected:\n")
+    watch.runner_.results[tuple(IW_LINK)] = FakeRunner.Completed(stdout="Not connected.\n")
+    watch.bounce(now=0)
+    event = db.recent_events()[0]
+    assert event["type"] == "wifi_bounce"
+    assert event["details"]["nm_state"] == "wlan0:disconnected:" and event["details"]["iw_link"] == "Not connected."
+    assert watch.runner_.calls[:2] == [NM_STATUS, IW_LINK]  # captured before the radio goes off
+
+
+def test_snapshot_never_raises_and_keeps_it_short(watch):
+    watch.runner_.results[tuple(IW_LINK)] = FileNotFoundError(2, "No such file", "/usr/sbin/iw")
+    assert watch.snapshot(IW_LINK).startswith("FileNotFoundError")
+    watch.runner_.results[tuple(NM_STATUS)] = FakeRunner.Completed(stdout="wlan0:" + "x" * 300)
+    assert len(watch.snapshot(NM_STATUS)) == 120
+    watch.runner_.results[tuple(NM_STATUS)] = FakeRunner.Completed(returncode=3, stdout="")
+    assert watch.snapshot(NM_STATUS) == "rc=3"

@@ -23,6 +23,11 @@ BOUNCE_COOLDOWN = 600.0  # seconds between two bounces
 BOUNCE_PAUSE = 2.0
 BOUNCE_OFF = ["sudo", "nmcli", "radio", "wifi", "off"]
 BOUNCE_ON = ["sudo", "nmcli", "radio", "wifi", "on"]
+# What the stack sees, captured just before the bounce (no sudo needed):
+# NetworkManager's view of the device and the driver's view of the link.
+NM_STATUS = ["nmcli", "-t", "-f", "DEVICE,STATE,CONNECTION", "device", "status"]
+IW_LINK = ["/usr/sbin/iw", "dev", "wlan0", "link"]
+SNAPSHOT_MAX = 120         # characters kept per snapshot in the event
 ROUTE_PATH = "/proc/net/route"
 
 
@@ -135,8 +140,24 @@ class WifiWatch:
                            failures=failures, gateway=self.gateway)
             setattr(self, state_attr, False)
 
+    def snapshot(self, argv) -> str:
+        """The wlan0 line (or the first line) of a diagnostic command, one string, never raises."""
+        try:
+            result = self.runner(argv, capture_output=True, text=True, timeout=10, check=False)
+            lines = [line.strip() for line in str(getattr(result, "stdout", "") or "").splitlines() if line.strip()]
+            wlan = [line for line in lines if line.startswith("wlan0")]
+            text = " | ".join((wlan or lines)[:2]) or f"rc={getattr(result, 'returncode', '?')}"
+        except Exception as exc:
+            text = f"{exc.__class__.__name__}: {exc}"
+        return text[:SNAPSHOT_MAX]
+
     def bounce(self, now: float) -> bool:
-        """Radio off, two seconds, radio on. True when both commands returned 0."""
+        """Radio off, two seconds, radio on. True when both commands returned 0.
+
+        The event carries what NetworkManager and the driver reported just
+        before, so a night of bounces leaves evidence (bench-2026-09-04 §2).
+        """
+        nm_state, iw_link = self.snapshot(NM_STATUS), self.snapshot(IW_LINK)
         results = []
         for argv in (BOUNCE_OFF, BOUNCE_ON):
             try:
@@ -152,7 +173,7 @@ class WifiWatch:
         self.router_failures = 0
         self.log.event("warning" if ok else "error", "wifi", "wifi_bounce",
                        "wi-fi radio bounced" if ok else "wi-fi radio bounce failed",
-                       results=results, count=self.bounces)
+                       results=results, count=self.bounces, nm_state=nm_state, iw_link=iw_link)
         return ok
 
     # --- for the frame and the status document ------------------------------------------------
