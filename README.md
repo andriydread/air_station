@@ -23,9 +23,10 @@ tables in `data/airstation.db`.
 
 **collector** owns the I2C bus.
 
-- Every 30 s on the wall clock (:00, :30) it reads the SHT41, the SPS30 and
-  the SCD41 (in low power periodic mode: one value every ~30 s, waiting up to
-  6 s for its data-ready flag), drops garbage (corrupt
+- Every 30 s, five seconds after the :00/:30 mark (clear of the panel
+  refresh), it reads the sensors one after another so no two draw current at
+  once: the SHT41 measures, the SPS30 hands over its latest numbers, then the
+  SCD41 is told to measure once (a 5 s single shot) and read. It drops garbage (corrupt
   words, negatives, values outside the sensor's range, CO2 below 350 ppm)
   and writes one raw row: 12 metrics, an empty cell where a value was dropped.
 - After any start a sensor warms up first: 60 s for CO2, 30 s for dust. Cells
@@ -68,8 +69,8 @@ the running commit and the three uptimes.
 ### What one beat looks like
 
 ```
-:00  collector reads three sensors → one raw row
-:30  … and again
+:05  collector: SHT41 → SPS30 → SCD41 single shot (5 s) → one raw row stamped :00
+:35  … and again, stamped :30
 :00 of each minute   manager averages the two rows of the minute that ended one beat ago → display_data → panel
 :00 of each hour     manager rolls the hour up into hourly_measurements
 00:05 local          manager prunes, checkpoints, backs up

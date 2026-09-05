@@ -18,15 +18,19 @@ IDLE_SLEEP = 0.2
 
 class Task:
     def __init__(self, name: str, interval: float, func: Callable[[], None],
-                 aligned: bool = False, first_run_immediately: bool = True, initial_delay: float = 0.0):
+                 aligned: bool = False, first_run_immediately: bool = True, initial_delay: float = 0.0,
+                 offset: float = 0.0):
         if interval <= 0:
             raise ValueError("interval must be positive")
+        if not 0 <= offset < interval:
+            raise ValueError("offset must be in [0, interval)")
         self.name = name
         self.interval = float(interval)
         self.func = func
         self.aligned = aligned
         self.first_run_immediately = first_run_immediately
         self.initial_delay = float(initial_delay)
+        self.offset = float(offset)  # aligned tasks fire this long after the wall-clock mark
         self.next_due: Optional[float] = None
         self.runs = 0
         self.failures = 0
@@ -40,7 +44,10 @@ class Task:
         if self.first_run_immediately:
             self.next_due = now + self.initial_delay
         else:
-            self.next_due = clock.next_aligned(self.interval, now) if self.aligned else now + self.interval
+            self.next_due = self._next_mark(now) if self.aligned else now + self.interval
+
+    def _next_mark(self, now: float) -> float:
+        return clock.next_aligned(self.interval, now - self.offset) + self.offset
 
     def due(self, now: float) -> bool:
         if self.next_due is None:
@@ -68,7 +75,7 @@ class Task:
             self.next_due, self._retry = now + self._retry, None
             return
         if self.aligned:
-            self.next_due = clock.next_aligned(self.interval, now)
+            self.next_due = self._next_mark(now)
             return
         self.next_due += self.interval
         while self.next_due <= now:  # a long stall: skip the missed runs, do not burst

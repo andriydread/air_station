@@ -1,7 +1,14 @@
 """One beat: ask each sensor, drop garbage, remember what was dropped, write one row.
 
-Every 30 s on the wall clock (:00, :30). Metrics of a sensor still in
-warm-up stay empty (one ``warming_up`` event per warm-up). A dropped value
+Every 30 s on the wall clock, ``BEAT_OFFSET`` seconds after the :00/:30 mark
+(the panel refresh at :00 is over by then), in a fixed order so no two
+sensors draw at once: the SHT41 measures (8 ms), the SPS30 hands over its
+latest numbers (its fan runs all the time), then the SCD41 is told to
+measure once (single shot, ~5 s, its 175 mA pulse happens now and only
+now) and read. The row carries the mark's timestamp. Metrics of a sensor
+still in warm-up stay empty (one ``warming_up`` event per warm-up); the
+sensor's ``warmup_beat`` still runs (the SCD41 conditions itself with two
+discarded shots). A dropped value
 is NULL in its cell and a ``value_dropped`` event on the first drop of a
 streak, then every 6th. Six bad beats in a row re-init that sensor (the
 base class does it); when every present sensor raised in the same beat the
@@ -18,6 +25,7 @@ from collector.filters import clean_row
 from shared import clock
 
 SAMPLE_INTERVAL = 30       # two rows a minute; the manager averages the pair
+BEAT_OFFSET = 5            # seconds after the mark: clear of the panel refresh at :00
 SAMPLING = "beat"          # or "on_ready" (not implemented; see next_due)
 DROP_EVENT_EVERY = 6       # value_dropped events: 1st of a streak, then every 6th
 
@@ -36,7 +44,7 @@ class Sampler:
         self.scd41 = scd41
         self.sht41 = sht41
         self.sps30 = sps30
-        self.sensors = [scd41, sht41, sps30]
+        self.sensors = [sht41, sps30, scd41]  # the order of the beat, see the module docstring
         self.i2c_factory = i2c_factory
         self.monotonic = monotonic
         self.drop_streaks: Dict[str, int] = {}
@@ -69,6 +77,11 @@ class Sampler:
             record["warmup_left"][name] = int(round(left))
             if left > 0:
                 self._log_warmup_once(sensor, left)
+                try:
+                    sensor.warmup_beat(now)
+                except Exception as exc:
+                    record["errors"][name] = f"{exc.__class__.__name__}: {exc}"
+                    self._sensor_error(sensor, exc, now)
                 continue
             started = self.monotonic()
             try:

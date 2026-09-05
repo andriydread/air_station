@@ -1,7 +1,7 @@
 """The collector program: ``python -m collector`` (``--fake`` on a machine without sensors).
 
 Start everything, run the 30 s beat forever on one thread, stop cleanly.
-Tasks: sample (30 s, wall-aligned), commands (2 s), status (30 s), weather
+Tasks: sample (30 s, wall-aligned, 5 s after the mark), commands (2 s), status (30 s), weather
 pressure into the SCD41 (30 min), the Sunday 04:00 fan clean (checked every
 minute). Heartbeats and clock-jump detection come from the shared loop.
 """
@@ -12,7 +12,7 @@ import sys
 from typing import Any, Callable, Optional
 
 from collector.commands import CommandRunner
-from collector.sampling import SAMPLE_INTERVAL, Sampler
+from collector.sampling import BEAT_OFFSET, SAMPLE_INTERVAL, Sampler
 from collector.sensors import Scd41, Sht41, Sps30
 from collector.status import build_status, debug_sample_lines
 from shared import clock
@@ -83,7 +83,8 @@ class Collector:
 
     def tasks(self):
         return [
-            Task("sample", SAMPLE_INTERVAL, self.sample, aligned=True, first_run_immediately=False),
+            Task("sample", SAMPLE_INTERVAL, self.sample, aligned=True, first_run_immediately=False,
+                 offset=BEAT_OFFSET),
             Task("commands", COMMAND_POLL, self.process_commands),
             Task("status", STATUS_EVERY, self.publish_status),
             Task("pressure", PRESSURE_EVERY, self.apply_pressure),

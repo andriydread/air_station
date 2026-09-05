@@ -104,7 +104,7 @@ def test_six_dropped_in_a_row_reinit_the_sensor_only(rig, db):
     rig.scd.default_co2 = 0.0
     rig.beats(BAD_STREAK_REINIT)
     assert rig.scd41.reinit_count == 1 and rig.sps30.reinit_count == 0 and rig.sht41.reinit_count == 0
-    assert rig.scd.start_calls == 2
+    assert rig.scd.reinit_calls == 2 and rig.scd.start_calls == 0  # single shot: no start
     # a new warm-up follows the re-init: no CO2 asked for, no more drops
     before = len([e for e in db.recent_events() if e["type"] == "value_dropped"])
     rig.sampler.beat(rig.clock.now())  # the next beat, 30 s into the new warm-up

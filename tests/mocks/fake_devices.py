@@ -30,7 +30,7 @@ class FakeScd41Device:
         self.stop_calls = 0
         self.reinit_calls = 0
         self.persist_calls = 0
-        self.mode = None  # "periodic" | "low_power" after a start
+        self.single_shots = 0
 
     @property
     def data_ready(self) -> bool:
@@ -52,13 +52,10 @@ class FakeScd41Device:
 
     def start_periodic_measurement(self):
         self.start_calls += 1
-        self.mode = "periodic"
 
-    @property
-    def start_low_periodic_measurement(self):
-        # a property, exactly like adafruit_scd4x 1.4.13 (calling it would raise)
-        self.start_calls += 1
-        self.mode = "low_power"
+    def measure_single_shot(self):
+        # the real driver sleeps 5 s here; the fake clock makes that free
+        self.single_shots += 1
 
     def stop_periodic_measurement(self):
         self.stop_calls += 1

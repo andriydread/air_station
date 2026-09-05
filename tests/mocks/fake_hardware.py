@@ -128,9 +128,8 @@ def install() -> None:
         def start_periodic_measurement(self):
             pass
 
-        @property
-        def start_low_periodic_measurement(self):  # a property in the real driver
-            return None
+        def measure_single_shot(self):
+            pass
 
         def stop_periodic_measurement(self):
             pass

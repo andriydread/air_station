@@ -25,8 +25,7 @@ def scd41(log, tmp_config, monkeypatch):
 def test_open_applies_the_settings_in_idle_mode_then_starts(scd41):
     assert scd41.ensure(1000) is True
     fake = scd41.fake
-    assert fake.reinit_calls == 1 and fake.start_calls == 1
-    assert fake.mode == "low_power"  # datasheet 3.8: a value every ~30 s, 3 mA instead of 15
+    assert fake.reinit_calls == 1 and fake.start_calls == 0  # single shot mode: the sensor stays idle
     assert fake.altitude == 296 and fake.temperature_offset == 4.0
     assert fake.self_calibration_enabled is False and scd41.asc is False
     assert scd41.health.id == "001100220033"
@@ -65,7 +64,7 @@ def test_read_gives_up_after_the_deadline(scd41):
     scd41.fake.data_ready = False
     before = scd41.clock.monotonic()
     assert scd41.read(1010) is None
-    assert 6.0 <= scd41.clock.monotonic() - before <= 6.5
+    assert 2.0 <= scd41.clock.monotonic() - before <= 2.5  # the slack after the 5 s shot
 
 
 def test_read_errors_propagate_to_the_sampler(scd41):
@@ -115,7 +114,7 @@ def test_force_calibration_flow_and_restart(scd41, log):
     scd41.fake.calibration_result = 12
     result = scd41.force_calibration(now, 420, persist=True)
     assert result["correction_ppm"] == 12 and result["persisted"] is True and result["target_ppm"] == 420
-    assert scd41.fake.stop_calls == 2 and scd41.fake.start_calls == 2 and scd41.fake.persist_calls == 1
+    assert scd41.fake.stop_calls == 2 and scd41.fake.start_calls == 0 and scd41.fake.persist_calls == 1
     assert scd41.warmup_started_at == now and scd41.recent == []  # a new warm-up, readiness restarts
     assert scd41.runtime_seconds(now) == 0
 
@@ -128,7 +127,7 @@ def test_rejected_calibration_still_restarts_measurement(scd41):
     scd41.fake.calibration_result = 0xFFFF
     with pytest.raises(RuntimeError, match="0xFFFF"):
         scd41.force_calibration(now, 420)
-    assert scd41.fake.start_calls == 2 and scd41.fake.persist_calls == 0
+    assert scd41.fake.start_calls == 0 and scd41.fake.persist_calls == 0
 
 
 def test_recent_window_trims_old_samples(scd41):
@@ -138,23 +137,12 @@ def test_recent_window_trims_old_samples(scd41):
     assert scd41.calibration_readiness(1400)["sample_count"] == 1
 
 
-def test_low_power_start_works_with_a_property_and_with_a_method():
-    from collector.sensors import _start_low_power
-
-    class Buggy:  # adafruit_scd4x 1.4.13: reading the attribute sends the command
-        sent = 0
-
-        @property
-        def start_low_periodic_measurement(self):
-            self.sent += 1
-
-    class Fixed:
-        sent = 0
-
-        def start_low_periodic_measurement(self):
-            self.sent += 1
-
-    for cls in (Buggy, Fixed):
-        device = cls()
-        _start_low_power(device)
-        assert device.sent == 1, cls.__name__
+def test_read_is_one_single_shot_and_warmup_beats_condition_the_sensor(scd41):
+    scd41.ensure(1000)
+    fake = scd41.fake
+    assert fake.single_shots == 0
+    scd41.warmup_beat(1005)
+    scd41.warmup_beat(1035)
+    assert fake.single_shots == 2  # discarded, as the datasheet asks after power-up
+    assert scd41.read(1065)["co2"] == 600.0 and fake.single_shots == 3
+    assert scd41.read(1095)["co2"] == 600.0 and fake.single_shots == 4

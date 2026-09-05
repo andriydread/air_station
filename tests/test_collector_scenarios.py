@@ -25,7 +25,7 @@ def test_a_zero_ppm_sensor_is_reinitialised_and_recovers(station):
     db = station.db
     reinits = _events(db, "sensor_reinit", "scd41")
     assert len(reinits) == 1 and "bad readings" in reinits[0]["message"]
-    assert station.scd.start_calls == 2
+    assert station.scd.reinit_calls == 2
     rows = db.raw_between(0, 10**10)
     # empty during warm-up (1), garbage (6), warm-up again (2-3), then real values
     assert rows[-1]["co2"] == 600 and rows[-1]["temp"] == 22.5
@@ -100,9 +100,9 @@ def test_sunday_four_am_triggers_one_clean_and_blanks_dust(tmp_config, fake_cloc
     monkeypatch.setenv("TZ", "Europe/Kyiv")
     _time.tzset()
     try:
-        # local Sunday 03:59:20: the minute check lands at 04:00:20, so the
-        # 15 s blank after the clean covers the 04:00:30 beat
-        sunday = datetime(2026, 9, 6, 3, 59, 20).astimezone().timestamp()
+        # local Sunday 03:59:25: the minute check lands at 04:00:25, so the
+        # 15 s blank after the clean covers the beat read at 04:00:35
+        sunday = datetime(2026, 9, 6, 3, 59, 25).astimezone().timestamp()
         fake_clock._wall = sunday
         s = Station(tmp_config, fake_clock, monkeypatch)
         try:

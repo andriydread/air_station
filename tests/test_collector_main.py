@@ -58,11 +58,12 @@ def test_three_minutes_of_life(station):
     assert reason == "max_passes"
     rows = db.raw_between(0, 10**10)
     assert len(rows) == 6 and all(r["recorded_at"] % 30 == 0 for r in rows)
-    # warm-up starts at launch; beats are at :30, :60 … so CO2 (60 s) appears
-    # on the 2nd beat; the dust sensor initialises 1 s later (the SCD41's
-    # settle sleep), so its 30 s end just after the 1st beat → 2nd beat
-    assert [r["co2"] for r in rows[:3]] == [None, 600, 600]
+    # beats are read 5 s after the mark (:05, :35, :65 …) and stamped with the
+    # mark; warm-up starts at launch, so CO2 (60 s) appears on the 3rd beat,
+    # dust (30 s, initialised 1 s after the SCD41) on the 2nd
+    assert [r["co2"] for r in rows[:3]] == [None, None, 600]
     assert [r["pm25"] for r in rows[:3]] == [None, 2.5, 2.5]
+    assert station.scd.single_shots == 6  # two conditioning shots in warm-up, then one per beat
     assert all(r["temp"] == 22.5 for r in rows)
     status = db.get_state("collector_status")["value"]
     assert status["sensors"]["scd41"]["healthy"] and status["sample_count"] == 6
@@ -72,7 +73,7 @@ def test_three_minutes_of_life(station):
     assert types.count("warming_up") == 2
     assert station.buses == 1
     assert station.scd.stop_calls == 2  # once at open (defensive), once at shutdown
-    assert rows[0]["recorded_at"] == 1_788_436_830  # first aligned beat after a start at :00
+    assert rows[0]["recorded_at"] == 1_788_436_800  # a start at :00 is read at :05, stamped :00
 
 
 def test_a_queued_fan_clean_is_answered(station):

@@ -153,3 +153,15 @@ def test_retry_in_overrides_the_next_interval_once(fake_clock, log):
     _run_for(Loop(log, None, [task]), fake_clock, 2000)
     gaps = [round(b - a) for a, b in zip(calls, calls[1:])]
     assert gaps == [120, 1800]
+
+
+def test_aligned_task_with_an_offset_fires_after_the_mark(fake_clock):
+    runs = []
+    task = Task("t", 30, lambda: runs.append(clock.now()), aligned=True, first_run_immediately=False, offset=5)
+    fake_clock._wall = 1_788_436_812  # :12 past a 30 s mark
+    task.schedule(clock.now())
+    assert task.next_due == 1_788_436_835  # the next mark (:30) plus 5 s
+    task._reschedule(1_788_436_836)
+    assert task.next_due == 1_788_436_865
+    with pytest.raises(ValueError):
+        Task("bad", 30, lambda: None, aligned=True, offset=30)

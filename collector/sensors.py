@@ -123,6 +123,9 @@ class Sensor:
 
     # --- per-beat bookkeeping ----------------------------------------------------------
 
+    def warmup_beat(self, now: float) -> None:
+        """A beat that falls inside the warm-up (nothing is stored); default: nothing."""
+
     def warmup_left(self, now: float) -> float:
         if self.device is None or self.warmup_started_at is None:
             return 0.0
@@ -308,7 +311,7 @@ class Sps30(Sensor):
 
 # --- SCD41 ------------------------------------------------------------------------
 
-SCD41_DATA_READY_WAIT = 6.0      # low power mode: a value every ~30 s, normally waiting at the beat
+SCD41_DATA_READY_WAIT = 2.0      # after the 5 s single shot the value is there; this is the slack
 SCD41_DATA_READY_POLL = 0.5
 SCD41_REINIT_SETTLE = 1.0        # datasheet: up to 1000 ms after reinit before commands
 PRESSURE_MIN_DELTA_HPA = 1.0
@@ -324,23 +327,18 @@ class CalibrationRefused(RuntimeError):
     """A forced calibration was not attempted because a safety check failed."""
 
 
-def _start_low_power(device) -> None:
-    """Send start_low_power_periodic_measurement (0x21ac).
-
-    adafruit_scd4x (1.4.13) declares ``start_low_periodic_measurement`` as a
-    ``@property``: reading the attribute sends the command and calling the
-    result raises TypeError. Handle both that and a driver that fixed it.
-    """
-    attr = getattr(type(device), "start_low_periodic_measurement", None)
-    if isinstance(attr, property):
-        attr.fget(device)
-    else:
-        device.start_low_periodic_measurement()
-
-
 class Scd41(Sensor):
+    """CO2 in single shot mode (datasheet 3.10): the sensor measures only when
+    the beat tells it to, so its 175 mA pulse lands at a known moment, ~5 s
+    into the beat, never together with the panel refresh or the SHT41. The
+    idle current between shots is 0.15 mA; at two shots a minute the average
+    is ~2.6 mA (15 mA in the default periodic mode). Two conditioning shots
+    during the 60 s warm-up are discarded, as the datasheet asks.
+    """
+
     name = "scd41"
     warmup_seconds = SCD41_WARMUP
+    init_details = {"mode": "single_shot"}
 
     def __init__(self, i2c, config, log, sleep=time.sleep, monotonic=time.monotonic):
         super().__init__(log)
@@ -373,32 +371,32 @@ class Scd41(Sensor):
 
     def _configure_and_start(self, device) -> None:
         # Settings live in RAM only (no EEPROM wear) and must be written in
-        # idle mode, i.e. before start_periodic_measurement.
+        # idle mode — which single shot never leaves.
         device.altitude = int(self.config.location.altitude_m)
         device.temperature_offset = float(self.config.sensors.scd41_temp_offset_c)
         device.self_calibration_enabled = bool(self.config.sensors.asc)
         self.asc = bool(device.self_calibration_enabled)
         if self.pressure_hpa is not None:
             device.set_ambient_pressure(int(round(self.pressure_hpa)))
-        # Low power periodic mode (datasheet 3.8): a value every ~30 s, i.e. one
-        # per beat, 3 mA average instead of 15 and two 200 mA pulses a minute
-        # instead of twelve on the Pi's 3.3 V rail. The sensor's ~30 s clock is
-        # not ours: when it drifts past the data-ready wait a beat gets no CO2
-        # value (a NULL, ``data_ready=0`` in the debug line), the next one catches up.
-        _start_low_power(device)
         self.recent.clear()
 
     def _close(self, device) -> None:
-        device.stop_periodic_measurement()
+        device.stop_periodic_measurement()  # harmless in idle; stops a periodic mode an old build left
+
+    def warmup_beat(self, now: float) -> None:
+        """A conditioning shot, result discarded (datasheet: skip the first two)."""
+        if self.device is not None:
+            self.device.measure_single_shot()
 
     def read(self, now: float, deadline_s: float = SCD41_DATA_READY_WAIT) -> Optional[Dict[str, float]]:
-        """Wait up to ``deadline_s`` for a fresh value; None when none came.
+        """One single shot (~5 s, the driver waits), then the value; None when none came.
 
         Returns the raw numbers as the sensor gave them — CO2 plus the SCD41's
         own temperature and humidity. I2C errors propagate to the sampler.
         """
         if self.device is None:
             return None
+        self.device.measure_single_shot()
         started = self.monotonic()
         while True:
             if self.device.data_ready:

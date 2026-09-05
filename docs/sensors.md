@@ -54,14 +54,15 @@ I2C bus itself is re-opened only when all sensors fail together.
   `co2_humid`) and charted next to the SHT41's in History, so the bench data
   says what the offset should be: with the room in equilibrium,
   `new = T_scd41 − T_sht41 + old`.
-- **Low power periodic mode.** The sensor measures every ~30 s, one value per
-  beat, instead of every 5 s: 3 mA average instead of 15 and two 200 mA
-  pulses a minute instead of twelve on the Pi's 3.3 V pin, and less
-  self-heating (which is why `co2_temp` reads lower than it did in the
-  default mode). Its ~30 s clock is not the Pi's: when it drifts past the
-  6 s data-ready wait a beat gets no CO2 value (an empty cell, `data_ready=0`
-  in the debug line) and the next beat catches up — a few per hour at worst,
-  and a `sensor_reinit` for silence only after 2 min without any value.
+- **Single shot mode.** The sensor sits idle (0.15 mA) and measures only when
+  the beat tells it to: two 5 s shots a minute, ~2.6 mA average instead of
+  the 15 mA and twelve 200 mA pulses a minute of the default periodic mode
+  on the Pi's 3.3 V pin — and the pulse lands at a known moment, five
+  seconds into the beat, after the SHT41 has measured and well after the
+  panel refresh. Less self-heating, so `co2_temp` reads lower than it did
+  in periodic mode. The two shots during the 60 s warm-up are conditioning
+  shots the datasheet asks to discard. A shot that yields nothing is
+  silence: a `sensor_reinit` after 2 min without any value.
 - Offset, altitude and ASC are re-applied on every start, not stored in the
   sensor. The one write to its EEPROM (rated ~2000 writes) is the
   calibration form's *Persist in sensor* box, which keeps the correction
