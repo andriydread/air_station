@@ -60,7 +60,12 @@ _units: _pi  # render the templates with this user and this checkout; sudoers is
 _watchdog: _pi
 	sh systemd/enable-watchdog.sh
 
-init: _hardware _apt _venv _pip _units _watchdog ## Fresh Pi: packages, venv, units, sudoers, watchdog; then reboot once
+_journal: _pi  # the system journal survives reboots (capped 200 MB) so an export can show the previous boot
+	sudo install -d -m 2755 -g systemd-journal /var/log/journal
+	sudo install -D -m 644 systemd/journald-airstation.conf /etc/systemd/journald.conf.d/airstation.conf
+	sudo systemctl restart systemd-journald
+
+init: _hardware _apt _venv _pip _units _journal _watchdog ## Fresh Pi: packages, venv, units, sudoers, journal, watchdog; then reboot once
 	sudo systemctl enable --now $(ALL_UNITS)
 	@echo ""
 	@systemctl is-active $(UNITS) || true
@@ -68,7 +73,7 @@ init: _hardware _apt _venv _pip _units _watchdog ## Fresh Pi: packages, venv, un
 	@echo "Init complete. Reboot once (sudo reboot) to arm the hardware watchdog."
 	@echo "Then: make status — and the first-hour checklist in README.md."
 
-deploy: _pip _units ## After git pull: requirements, unit files, sudoers; restart the three apps
+deploy: _pip _units _journal ## After git pull: requirements, unit files, sudoers, journal; restart the three apps
 	sudo systemctl restart $(UNITS)
 	@echo "--- deployed; units:"
 	@systemctl is-active $(UNITS) || true

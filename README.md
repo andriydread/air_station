@@ -145,8 +145,10 @@ Everything not in this file is a constant next to the code that uses it.
    packages, creates `.venv`, installs the requirements (the first install on
    a fresh card may compile for a while — that is expected), creates
    `data/logs`, renders the three unit files and the sudoers file with your
-   user and this path, enables the hardware watchdog, and enables and starts
-   the four units (the three programs plus the Wi-Fi power-save switch).
+   user and this path, makes the system journal persistent (capped at
+   200 MB, so an export can show the previous boot), enables the hardware
+   watchdog, and enables and starts the four units (the three programs plus
+   the Wi-Fi power-save switch).
 5. `sudo reboot` once, to arm the hardware watchdog.
 
 ### The first hour
@@ -211,7 +213,7 @@ shared/      config, db (schema + every query), events (logger + vocabulary),
              heartbeat, clock, loop (the scheduler), aqi, render (the panel picture), backoff
 drivers/     SPS30 over I2C with CRC, UC8253C over SPI — hand-written, stable
 tools/       status screen, export, backup, import, demo
-systemd/     the three unit templates, sudoers template, Wi-Fi power-save unit, watchdog setup
+systemd/     the three unit templates, sudoers template, Wi-Fi power-save unit, journald drop-in, watchdog setup
 assets/      panel font, weather icons (moon.png is an empty slot: night blocks use sun.png until you add one)
 docs/        sensors.md — how the sensors are cared for
 datasheets/  Sensirion documents the filters and warm-ups follow

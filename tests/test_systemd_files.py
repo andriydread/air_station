@@ -105,7 +105,9 @@ def test_sudoers_matches_the_strings_in_the_manager_code():
 
 
 def test_the_other_systemd_files_are_still_there():
-    for name in ("wifi-powersave-off.service", "enable-watchdog.sh", "watchdog-system.conf"):
+    for name in ("wifi-powersave-off.service", "enable-watchdog.sh", "watchdog-system.conf", "journald-airstation.conf"):
         assert (SYSTEMD / name).exists(), name
+    journald = (SYSTEMD / "journald-airstation.conf").read_text()
+    assert "Storage=persistent" in journald and "SystemMaxUse=200M" in journald
     assert "install-watchdog" not in (SYSTEMD / "enable-watchdog.sh").read_text()
     assert "install-watchdog" not in (SYSTEMD / "watchdog-system.conf").read_text()

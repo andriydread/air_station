@@ -44,6 +44,7 @@ def test_init_renders_units_and_sudoers_and_enables_four_units():
         assert f"systemd/{unit}.service.in" in out or f"systemd/$unit.service.in" in out
     assert "visudo -c" in out and "/etc/sudoers.d/airstation" in out
     assert "enable-watchdog.sh" in out
+    assert "journald-airstation.conf" in out and "/var/log/journal" in out
     assert "enable --now wifi-powersave-off airstation-collector airstation-manager airstation-dashboard" in out
     assert "/dev/spidev0.0" in out and "apt-get install" in out and "requirements.txt" in out
 
@@ -52,6 +53,7 @@ def test_deploy_installs_and_restarts_without_apt_or_watchdog():
     out = make("-n", "deploy").stdout
     assert "restart airstation-collector airstation-manager airstation-dashboard" in out
     assert "apt-get" not in out and "enable-watchdog" not in out
+    assert "journald-airstation.conf" in out  # the journal drop-in lands on every deploy
 
 
 def test_status_runs_the_status_tool():
