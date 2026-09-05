@@ -136,3 +136,25 @@ def test_recent_window_trims_old_samples(scd41):
     scd41.record_valid(1000, 500)
     scd41.record_valid(1400, 510)
     assert scd41.calibration_readiness(1400)["sample_count"] == 1
+
+
+def test_low_power_start_works_with_a_property_and_with_a_method():
+    from collector.sensors import _start_low_power
+
+    class Buggy:  # adafruit_scd4x 1.4.13: reading the attribute sends the command
+        sent = 0
+
+        @property
+        def start_low_periodic_measurement(self):
+            self.sent += 1
+
+    class Fixed:
+        sent = 0
+
+        def start_low_periodic_measurement(self):
+            self.sent += 1
+
+    for cls in (Buggy, Fixed):
+        device = cls()
+        _start_low_power(device)
+        assert device.sent == 1, cls.__name__

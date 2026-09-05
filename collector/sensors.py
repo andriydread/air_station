@@ -317,6 +317,20 @@ class CalibrationRefused(RuntimeError):
     """A forced calibration was not attempted because a safety check failed."""
 
 
+def _start_low_power(device) -> None:
+    """Send start_low_power_periodic_measurement (0x21ac).
+
+    adafruit_scd4x (1.4.13) declares ``start_low_periodic_measurement`` as a
+    ``@property``: reading the attribute sends the command and calling the
+    result raises TypeError. Handle both that and a driver that fixed it.
+    """
+    attr = getattr(type(device), "start_low_periodic_measurement", None)
+    if isinstance(attr, property):
+        attr.fget(device)
+    else:
+        device.start_low_periodic_measurement()
+
+
 class Scd41(Sensor):
     name = "scd41"
     warmup_seconds = SCD41_WARMUP
@@ -364,7 +378,7 @@ class Scd41(Sensor):
         # instead of twelve on the Pi's 3.3 V rail. The sensor's ~30 s clock is
         # not ours: when it drifts past the data-ready wait a beat gets no CO2
         # value (a NULL, ``data_ready=0`` in the debug line), the next one catches up.
-        device.start_low_periodic_measurement()
+        _start_low_power(device)
         self.recent.clear()
 
     def _close(self, device) -> None:

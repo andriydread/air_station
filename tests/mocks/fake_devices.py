@@ -54,7 +54,9 @@ class FakeScd41Device:
         self.start_calls += 1
         self.mode = "periodic"
 
+    @property
     def start_low_periodic_measurement(self):
+        # a property, exactly like adafruit_scd4x 1.4.13 (calling it would raise)
         self.start_calls += 1
         self.mode = "low_power"
 
