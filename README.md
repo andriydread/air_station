@@ -123,6 +123,7 @@ Everything not in this file is a constant next to the code that uses it.
 | `dashboard.port` | The web port (8080) |
 | `paths.database`, `paths.logs` | Where the data lives; relative paths resolve against this file's directory |
 | `logging.level` | `debug` for the bench period, `info` afterwards |
+| `logging.i2c_trace` | Every message to and from a sensor as a debug line (address, bytes, answer, time); ~4 MB a day at `debug` |
 
 ## A fresh Pi, start to finish
 

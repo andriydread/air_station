@@ -12,6 +12,7 @@ import sys
 from typing import Any, Callable, Optional
 
 from collector.commands import CommandRunner
+from collector.i2c_trace import TracedI2C
 from collector.sampling import BEAT_OFFSET, SAMPLE_INTERVAL, Sampler
 from collector.sensors import Scd41, Sht41, Sps30
 from collector.status import build_status, debug_sample_lines
@@ -37,7 +38,12 @@ class Collector:
         self.config = config
         self.db = db
         self.log = log
-        self.i2c_factory = i2c_factory
+        if config.logging.i2c_trace:
+            def traced_factory():
+                return TracedI2C(i2c_factory(), log)
+            self.i2c_factory = traced_factory
+        else:
+            self.i2c_factory = i2c_factory
         self.ntp_runner = ntp_runner
         self.sps30_factory = sps30_factory
         self.started_at = clock.now()

@@ -35,7 +35,7 @@ def test_shipped_file_loads_with_the_carried_over_values():
             config.retention_days.commands, config.retention_days.logs) == (90, 30, 30, 30, 45)
     assert config.weather.block_hours == 3
     assert config.dashboard.port == 8080
-    assert config.logging.level == "debug"
+    assert config.logging.level == "debug" and config.logging.i2c_trace is True
 
 
 def test_relative_paths_resolve_against_the_repo_root(tmp_path):
@@ -89,6 +89,7 @@ def test_missing_section_and_key_are_named():
         ("dashboard", "port", 70000, "dashboard.port"),
         ("paths", "database", "", "non-empty string"),
         ("logging", "level", "verbose", "logging.level"),
+        ("logging", "i2c_trace", "yes", "logging.i2c_trace"),
     ],
 )
 def test_range_and_type_rules(section, key, value, message):

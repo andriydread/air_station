@@ -32,3 +32,4 @@ logs = "data/logs"
 
 [logging]
 level = "debug"             # "debug" for the bench period, "info" afterwards
+i2c_trace = true            # every message to/from a sensor as a debug line (~4 MB a day)

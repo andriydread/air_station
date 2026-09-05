@@ -64,6 +64,7 @@ class Paths:
 @dataclass(frozen=True)
 class Logging:
     level: str
+    i2c_trace: bool  # every I2C transaction as a debug line (collector/i2c_trace.py)
 
 
 @dataclass(frozen=True)
@@ -130,7 +131,7 @@ class Config:
             weather=weather,
             dashboard=dashboard,
             paths=paths,
-            logging=Logging(level=level),
+            logging=Logging(level=level, i2c_trace=section.boolean("logging", "i2c_trace")),
             repo_root=repo_root,
             source=source,
         )

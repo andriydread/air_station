@@ -46,7 +46,7 @@ def test_level_filtering_and_file_location(tmp_config, tmp_path):
     log.close()
 
     quiet = tmp_config.__class__.from_dict(
-        {**_raw_of(tmp_config), "logging": {"level": "info"}},
+        {**_raw_of(tmp_config), "logging": {"level": "info", "i2c_trace": False}},
         repo_root=tmp_config.repo_root, source=tmp_config.source,
     )
     log = Log("manager", quiet, clock=lambda: T)
