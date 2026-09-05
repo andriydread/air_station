@@ -12,6 +12,8 @@ from typing import Any, Dict, Optional
 from shared.backoff import ReinitBackoff
 
 BAD_STREAK_REINIT = 6        # bad readings in a row (three minutes at 30 s) → re-init
+BAD_WINDOW_S = 300           # … or this many bad readings inside this window, good ones
+BAD_WINDOW_COUNT = 6         # in between or not (a sensor alternating zeros and values)
 SILENCE_REINIT = 120.0       # seconds without any reading after warm-up → re-init
 SCD41_WARMUP = 60
 SPS30_WARMUP = 30
@@ -54,6 +56,7 @@ class Sensor:
         self.health = SensorHealth(self.name)
         self.backoff = ReinitBackoff()
         self.bad_streak = 0
+        self.bad_times: list = []  # monotonic-free: wall-clock stamps of bad readings in the window
         self.reinit_count = 0
         self.init_failures_in_row = 0
         self.last_data_at: Optional[float] = None
@@ -92,6 +95,7 @@ class Sensor:
         self.backoff.reset()
         self.init_failures_in_row = 0
         self.bad_streak = 0
+        self.bad_times = []
         self.warmup_started_at = now
         self.last_data_at = now
         self.health.ok(now)
@@ -137,11 +141,21 @@ class Sensor:
         self.health.ok(now)
 
     def note_bad(self, now: float, error: str) -> bool:
-        """A garbage value or a failed read; True when this one triggered a re-init."""
+        """A garbage value or a failed read; True when this one triggered a re-init.
+
+        Two rules, either fires: ``BAD_STREAK_REINIT`` bad in a row, or
+        ``BAD_WINDOW_COUNT`` bad inside the last ``BAD_WINDOW_S`` seconds with
+        good readings in between (the 2026-09-04 fault: zeros every second or
+        third beat for 16 minutes, never six in a row).
+        """
         self.bad_streak += 1
+        self.bad_times = [t for t in self.bad_times if now - t < BAD_WINDOW_S] + [now]
         self.health.failed(error)
         if self.bad_streak >= BAD_STREAK_REINIT:
             self.reinit(now, f"{self.bad_streak} bad readings in a row")
+            return True
+        if len(self.bad_times) >= BAD_WINDOW_COUNT:
+            self.reinit(now, f"{len(self.bad_times)} bad readings in {BAD_WINDOW_S} s")
             return True
         return False
 

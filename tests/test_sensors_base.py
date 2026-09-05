@@ -1,6 +1,6 @@
 """Sensor bookkeeping: backoff, streaks, silence, warm-up, status."""
 
-from collector.sensors import BAD_STREAK_REINIT, SILENCE_REINIT, Sensor
+from collector.sensors import BAD_WINDOW_COUNT, BAD_WINDOW_S, BAD_STREAK_REINIT, SILENCE_REINIT, Sensor
 from shared.backoff import ReinitBackoff
 
 
@@ -69,12 +69,12 @@ def test_six_bad_readings_trigger_one_reinit(log, db):
 def test_a_good_reading_resets_the_streak(log):
     s = Flaky(log)
     s.ensure(0)
-    for i in range(BAD_STREAK_REINIT - 1):
+    for i in range(BAD_STREAK_REINIT - 2):
         s.note_bad(10 + i, "x")
     s.note_ok(20)
     assert s.bad_streak == 0 and s.health.healthy
     s.note_bad(30, "x")
-    assert s.reinit_count == 0
+    assert s.bad_streak == 1 and s.reinit_count == 0  # five bad in the window: one short of the window rule too
 
 
 def test_silence_counts_from_the_end_of_warmup(log):
@@ -105,3 +105,29 @@ def test_status_shape(log):
     }
     s.stop()
     assert s.device is None and s.closed == [{"n": 1}]
+
+
+def test_bad_readings_spread_over_the_window_also_reinit(log, db):
+    s = Flaky(log)
+    s.ensure(0)
+    # zeros every other beat: the streak never passes 1, the window rule fires on the 6th
+    fired = []
+    t = 100
+    for i in range(BAD_WINDOW_COUNT):
+        fired.append(s.note_bad(t, "garbage"))
+        s.note_ok(t + 25)
+        t += 50  # six bad readings inside 250 s
+    assert fired == [False] * (BAD_WINDOW_COUNT - 1) + [True]
+    assert s.reinit_count == 1 and s.bad_times == []  # a fresh device starts clean
+    reinit = [e for e in db.recent_events() if e["type"] == "sensor_reinit"]
+    assert reinit[0]["message"].endswith(f"{BAD_WINDOW_COUNT} bad readings in {BAD_WINDOW_S} s")
+
+
+def test_old_bad_readings_fall_out_of_the_window(log):
+    s = Flaky(log)
+    s.ensure(0)
+    for i in range(BAD_WINDOW_COUNT - 1):
+        s.note_bad(100 + i * 10, "x")
+        s.note_ok(105 + i * 10)
+    assert s.note_bad(100 + BAD_WINDOW_S + 1, "x") is False  # the first five are older than the window
+    assert s.reinit_count == 0
