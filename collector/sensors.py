@@ -46,6 +46,7 @@ class Sensor:
 
     name = "sensor"
     warmup_seconds = 0
+    init_details: Dict[str, Any] = {}  # extra fields on the sensor_init event
 
     def __init__(self, log):
         self.log = log
@@ -95,7 +96,7 @@ class Sensor:
         self.last_data_at = now
         self.health.ok(now)
         self.log.event("info", self.name, "sensor_init", f"{self.name} initialised",
-                       warmup_s=self.warmup_seconds, id=self.health.id)
+                       warmup_s=self.warmup_seconds, id=self.health.id, **self.init_details)
         return True
 
     def reinit(self, now: float, reason: str) -> bool:
@@ -167,10 +168,16 @@ class Sensor:
 # --- SHT41 ------------------------------------------------------------------------
 
 class Sht41(Sensor):
-    """Temperature and humidity: high precision, heater off, no warm-up."""
+    """Temperature and humidity: high precision, heater off, no warm-up.
+
+    The SHT4x heater exists for drying the sensor after condensation; it only
+    runs when a heater command is sent and switches itself off within 1 s.
+    Indoors it is never needed, so every measurement is a no-heater command.
+    """
 
     name = "sht41"
     warmup_seconds = SHT41_WARMUP
+    init_details = {"heater": "off", "precision": "high"}
 
     def __init__(self, i2c, config, log):
         super().__init__(log)

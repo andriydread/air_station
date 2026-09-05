@@ -72,6 +72,12 @@ I2C bus itself is re-opened only when all sensors fail together.
 
 ## SHT41 — temperature and humidity
 
+- **Heater: off, and it cannot be left on.** The SHT4x heater exists to dry
+  the sensor after condensation; it runs only when a heater command is sent
+  and switches itself off within a second. Every measurement the collector
+  sends is the no-heater high-precision command (the `sensor_init` event
+  says `heater=off precision=high`). Indoors it is never needed.
+
 Factory-calibrated, no user calibration exists. The real enemy is
 self-heating from the Pi: measure against a reference thermometer and set
 `sensors.sht41_temp_offset_c` (negative) to correct the mounting. The dew
