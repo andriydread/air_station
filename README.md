@@ -28,7 +28,7 @@ tables in `data/airstation.db`.
   once: the SHT41 measures, the SPS30 hands over its latest numbers, then the
   SCD41 is told to measure once (a 5 s single shot) and read. It drops garbage (corrupt
   words, negatives, values outside the sensor's range, CO2 below 350 ppm)
-  and writes one raw row: 12 metrics, an empty cell where a value was dropped.
+  and writes one raw row: 15 metrics, an empty cell where a value was dropped.
 - After any start a sensor warms up first: 60 s for CO2, 30 s for dust. Cells
   stay empty, one `warming_up` event is logged, nothing counts against the sensor.
 - Six bad readings in a row, or two minutes without any reading, re-initialise

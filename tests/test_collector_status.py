@@ -32,7 +32,7 @@ def test_debug_lines_carry_unstored_values_and_errno(db, log, tmp_config, monkey
     log.close()
     lines = [l for l in log.path.read_text().splitlines() if " sample " in l]
     sps = next(l for l in lines if " sps30 sample " in l)
-    assert "x_pm4=3.0" in sps and "x_nc10=8.9" in sps and "st_fan_error=0" in sps and "pm25_ok=1" in sps
+    assert "pm4=3.0" in sps and "nc10=8.9" in sps and "st_fan_error=0" in sps and "pm25_ok=1" in sps
     sht = next(l for l in lines if " sht41 sample " in l)
     assert "errno=121" in sht and 'error="OSError: [Errno 121] Remote I/O error"' in sht and "temp=-" in sht
     scd = next(l for l in lines if " scd41 sample " in l)

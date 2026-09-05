@@ -37,12 +37,11 @@ def debug_sample_lines(log, record: Dict[str, Any]) -> None:
     """One ``sample`` line per sensor with everything the bench wants to see."""
     raw = record.get("raw", {})
     row = record.get("row", {})
-    extra = record.get("extra", {})
     dropped = record.get("dropped", {})
     per_sensor = {
         "scd41": ("co2", "co2_temp", "co2_humid"),
         "sht41": ("temp", "humid"),
-        "sps30": ("pm1", "pm25", "pm10", "tps", "nc05", "nc1", "nc25"),
+        "sps30": ("pm1", "pm25", "pm4", "pm10", "tps", "nc05", "nc1", "nc25", "nc4", "nc10"),
     }
     for sensor, metrics in per_sensor.items():
         if sensor not in record.get("present", []):
@@ -52,7 +51,6 @@ def debug_sample_lines(log, record: Dict[str, Any]) -> None:
             kv[metric] = raw.get(metric)
             kv[f"{metric}_ok"] = metric in row and row.get(metric) is not None
         if sensor == "sps30":
-            kv.update({f"x_{name}": value for name, value in extra.items()})
             status = record.get("sps30_status")
             if status:
                 kv.update({f"st_{key}": value for key, value in status.items()})

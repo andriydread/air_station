@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 METRICS: Tuple[str, ...] = (
     "co2", "co2_temp", "co2_humid", "temp", "humid",
-    "pm1", "pm25", "pm10", "tps", "nc05", "nc1", "nc25",
+    "pm1", "pm25", "pm4", "pm10", "tps", "nc05", "nc1", "nc25", "nc4", "nc10",
 )
 
 VITALS_COLUMNS: Tuple[str, ...] = (
@@ -36,8 +36,8 @@ CREATE TABLE IF NOT EXISTS raw_measurements (
     recorded_at INTEGER PRIMARY KEY,
     co2 INTEGER, co2_temp REAL, co2_humid REAL,
     temp REAL, humid REAL,
-    pm1 REAL, pm25 REAL, pm10 REAL, tps REAL,
-    nc05 REAL, nc1 REAL, nc25 REAL
+    pm1 REAL, pm25 REAL, pm4 REAL, pm10 REAL, tps REAL,
+    nc05 REAL, nc1 REAL, nc25 REAL, nc4 REAL, nc10 REAL
 );
 
 CREATE TABLE IF NOT EXISTS hourly_measurements (

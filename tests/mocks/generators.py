@@ -55,14 +55,14 @@ class World:
         }
 
     def row(self, t: float) -> Dict[str, Any]:
-        """The 12 row metrics (filtered the way the collector would: garbage → None)."""
+        """The 15 row metrics (filtered the way the collector would: garbage → None)."""
         s = self.sample(t)
         return {
             "co2": None if s["co2"] < 350 else int(round(s["co2"])),
             "co2_temp": s["co2_temp"], "co2_humid": s["co2_humid"],
             "temp": s["temp"], "humid": s["humid"],
-            "pm1": s["pm1"], "pm25": s["pm25"], "pm10": s["pm10"], "tps": s["tps"],
-            "nc05": s["nc05"], "nc1": s["nc10"], "nc25": s["nc25"],
+            "pm1": s["pm1"], "pm25": s["pm25"], "pm4": s["pm4"], "pm10": s["pm10"], "tps": s["tps"],
+            "nc05": s["nc05"], "nc1": s["nc10"], "nc25": s["nc25"], "nc4": s["nc40"], "nc10": s["nc100"],
         }
 
     def vitals(self, t: float, collector_lag: int = 4) -> Dict[str, Any]:

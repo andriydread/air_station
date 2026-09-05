@@ -256,10 +256,10 @@ SPS30_STATUS_MIN_FIRMWARE = (2, 2)   # the Device Status Register exists from FW
 FAN_CLEAN_BLANK = 15.0               # the fan runs ~10 s at full speed; readings are not air
 FAN_CLEAN_COOLDOWN = 600.0           # a manual clean at most every 10 minutes
 
-# driver key -> raw row column (the driver names the 1 µm count "nc10", the row "nc1")
-SPS30_ROW_KEYS = {"pm1": "pm1", "pm25": "pm25", "pm10": "pm10", "tps": "tps",
-                  "nc05": "nc05", "nc10": "nc1", "nc25": "nc25"}
-SPS30_EXTRA_KEYS = {"pm4": "pm4", "nc40": "nc4", "nc100": "nc10"}  # logged, not stored
+# driver key -> raw row column (the driver names the counts by tenths of a µm:
+# "nc10" is the 1 µm count, the row calls it "nc1"; "nc40" → "nc4", "nc100" → "nc10")
+SPS30_ROW_KEYS = {"pm1": "pm1", "pm25": "pm25", "pm4": "pm4", "pm10": "pm10", "tps": "tps",
+                  "nc05": "nc05", "nc10": "nc1", "nc25": "nc25", "nc40": "nc4", "nc100": "nc10"}
 
 
 class Sps30(Sensor):
@@ -323,15 +323,13 @@ class Sps30(Sensor):
         return False
 
     def read(self, now: float):
-        """(row values, extra values) or None when no data / blanked; errors propagate."""
+        """The ten row values, or None when no data / blanked; errors propagate."""
         if self.device is None or self.is_blanked(now):
             return None
         if not self.device.data_ready:
             return None
         data = self.device.read()
-        row = {column: float(data[key]) for key, column in SPS30_ROW_KEYS.items() if key in data}
-        extra = {column: float(data[key]) for key, column in SPS30_EXTRA_KEYS.items() if key in data}
-        return row, extra
+        return {column: float(data[key]) for key, column in SPS30_ROW_KEYS.items() if key in data}
 
     def force_clean(self, now: float, manual: bool = True) -> Dict[str, Any]:
         """Start a fan clean; blank the readings for 15 s; one ``fan_clean`` event."""

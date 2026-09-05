@@ -19,11 +19,14 @@ const metricFormats = {
   humid: (v) => v == null ? DASH : `${v.toFixed(1)} %`,
   pm1: (v) => v == null ? DASH : `${v.toFixed(2)} µg/m³`,
   pm25: (v) => v == null ? DASH : `${v.toFixed(2)} µg/m³`,
+  pm4: (v) => v == null ? DASH : `${v.toFixed(2)} µg/m³`,
   pm10: (v) => v == null ? DASH : `${v.toFixed(2)} µg/m³`,
   tps: (v) => v == null ? DASH : `${v.toFixed(2)} µm`,
   nc05: (v) => v == null ? DASH : `${v.toFixed(1)} /cm³`,
   nc1: (v) => v == null ? DASH : `${v.toFixed(1)} /cm³`,
   nc25: (v) => v == null ? DASH : `${v.toFixed(1)} /cm³`,
+  nc4: (v) => v == null ? DASH : `${v.toFixed(1)} /cm³`,
+  nc10: (v) => v == null ? DASH : `${v.toFixed(1)} /cm³`,
 };
 
 function escapeHtml(value) {
@@ -645,11 +648,14 @@ const statsMetrics = [
   ['co2', 'CO2, ppm', 0],
   ['pm1', 'PM1, µg/m³', 2],
   ['pm25', 'PM2.5, µg/m³', 2],
+  ['pm4', 'PM4, µg/m³', 2],
   ['pm10', 'PM10, µg/m³', 2],
   ['tps', 'Particle size, µm', 2],
   ['nc05', 'Particles ≥0.5 µm, /cm³', 1],
   ['nc1', 'Particles ≥1 µm, /cm³', 1],
   ['nc25', 'Particles ≥2.5 µm, /cm³', 1],
+  ['nc4', 'Particles ≥4 µm, /cm³', 1],
+  ['nc10', 'Particles ≥10 µm, /cm³', 1],
 ];
 
 function dynamicFromZero(values, minSpan) {

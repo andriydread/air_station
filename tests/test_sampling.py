@@ -166,7 +166,7 @@ def test_blanked_dust_readings_do_not_count_as_silence(rig):
 def test_debug_record_carries_extras_and_status_word(rig):
     rig.warm()
     record = rig.beat()
-    assert record["extra"] == {"pm4": 3.0, "nc4": 8.9, "nc10": 8.9}
+    assert record["raw"]["pm4"] == 3.0 and record["raw"]["nc4"] == 8.9 and record["raw"]["nc10"] == 8.9
     assert record["sps30_status"]["fan_error"] is False
     assert set(record["read_ms"]) == {"scd41", "sht41", "sps30"}
 

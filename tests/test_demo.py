@@ -16,7 +16,7 @@ def test_sample_has_every_sensor_key_and_plausible_values():
     assert 0 < s["pm25"] < 30 and s["pm10"] > s["pm25"] > s["pm1"]
 
 
-def test_row_uses_the_twelve_metrics_and_drops_garbage():
+def test_row_uses_the_fifteen_metrics_and_drops_garbage():
     world = World()
     row = world.row(T)
     assert set(row) == set(METRICS) and row["nc1"] == world.sample(T)["nc10"]

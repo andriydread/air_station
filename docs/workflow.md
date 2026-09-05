@@ -16,7 +16,7 @@ tables. Times are wall-clock; ":00 / :30" means the half-minute marks.
    2. SPS30: hand over the latest numbers (the fan runs all the time).
    3. SCD41: "measure once" → the sensor works 5 s (its 175 mA pulse happens now) → CO2, its own temperature and humidity.
    4. Check every number: corrupt word, negative, out of the sensor's range, CO2 below 350 → the cell is emptied and a `value_dropped` event is logged (first of a streak, then every 6th).
-   5. Write **one row**: 12 numbers, stamped :00 or :30.
+   5. Write **one row**: 15 numbers, stamped :00 or :30.
 7. **After every beat, per sensor:** 6 bad readings in a row, **or** 6 bad readings inside 5 minutes, **or** 2 minutes without any reading → re-initialise that sensor (step 3/4/5 again; with a growing wait between attempts: 30 s → 5 min). All three failing at once → the bus is re-opened.
 8. **Every 2 s:** look for a button press in the `commands` table (calibrate CO2, clean the dust fan). Run it, write the result.
 9. **Every 30 s:** write the `collector_status` document (each sensor's health, re-init counts, calibration readiness).
@@ -63,7 +63,7 @@ tables. Times are wall-clock; ":00 / :30" means the half-minute marks.
 
 | table | written by | one row per |
 |---|---|---|
-| `raw_measurements` | collector | beat (30 s), 12 numbers |
+| `raw_measurements` | collector | beat (30 s), 15 numbers |
 | `hourly_measurements` | manager | hour, min / max / avg / count |
 | `vitals` | manager | minute, machine health |
 | `events` | all three | something worth a line: starts, re-inits, drops, Wi-Fi, nightly |

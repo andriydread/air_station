@@ -33,7 +33,7 @@ DROP_EVENT_EVERY = 6       # value_dropped events: 1st of a streak, then every 6
 SENSOR_METRICS = {
     "scd41": ("co2", "co2_temp", "co2_humid"),
     "sht41": ("temp", "humid"),
-    "sps30": ("pm1", "pm25", "pm10", "tps", "nc05", "nc1", "nc25"),
+    "sps30": ("pm1", "pm25", "pm4", "pm10", "tps", "nc05", "nc1", "nc25", "nc4", "nc10"),
 }
 
 
@@ -63,7 +63,6 @@ class Sampler:
     def beat(self, now: float) -> Dict[str, Any]:
         ts = clock.aligned_stamp(SAMPLE_INTERVAL, now)
         raw: Dict[str, float] = {}
-        extra: Dict[str, float] = {}
         record: Dict[str, Any] = {
             "ts": ts, "read_ms": {}, "data_ready": {}, "warmup_left": {},
             "errors": {}, "errno": {}, "present": [], "raised": [],
@@ -101,15 +100,10 @@ class Sampler:
                     sensor.check_silence(now)
                 continue
             record["data_ready"][name] = True
-            if isinstance(result, tuple):
-                values, more = result
-                extra.update(more)
-            else:
-                values = result
-            raw.update(values)
+            raw.update(result)
 
         row, dropped = clean_row(raw)
-        record.update(raw=raw, extra=extra, row=row, dropped=dropped)
+        record.update(raw=raw, row=row, dropped=dropped)
         self._account_values(now, raw, dropped)
         self._drop_events(dropped)
         self._write(ts, row)
