@@ -86,8 +86,8 @@ class Station:
         """Rows for the last ``minutes`` and, pre-written, for the next ``ahead_minutes``
         (the frame only sees rows up to "now", so they appear to arrive on time)."""
         now = int(clock.now())
-        for i in range(-ahead_minutes * 6, minutes * 6):
-            self.db.insert_raw(now - 10 * i, {"co2": 800 + i, "temp": 22.0, "humid": 40.0,
+        for i in range(-ahead_minutes * 2, minutes * 2):
+            self.db.insert_raw(now - 30 * i, {"co2": 800 + i, "temp": 22.0, "humid": 40.0,
                                               "pm25": 4.0, "pm10": 5.0, "pm1": 2.0})
         self.db.set_state("collector_status", {"sensors": {
             name: {"available": True, "healthy": True, "warmup_left": 0} for name in ("i2c", "scd41", "sht41", "sps30")}})

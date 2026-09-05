@@ -37,9 +37,11 @@ def frame(tmp_config, tmp_path, log):
     db.close()
 
 
-def _fill(db, now, count=6, **values):
+def _fill(db, now, count=4, **values):
+    """Rows on the 30 s beat back from ``now``; the frame averages the two that
+    end one beat ago (now-60 and now-30), the ``now`` row has not landed yet."""
     for i in range(count):
-        db.insert_raw(now - 10 * i, {"co2": 800 + i, "temp": 22.0, "humid": 40.0, "pm25": 4.0, **values})
+        db.insert_raw(now - 30 * i, {"co2": 800 + i, "temp": 22.0, "humid": 40.0, "pm25": 4.0, **values})
 
 
 def test_happy_frame(frame):
@@ -47,7 +49,7 @@ def test_happy_frame(frame):
     _fill(db, NOW)
     db.set_state("collector_status", _status(NOW))
     doc = frame.build(NOW, _weather_doc(NOW - 600), wifi_glyph=False, power_glyph=False)
-    assert doc["values"]["co2"] == 802 and doc["samples"]["co2"] == 6 and doc["values"]["nc1"] is None
+    assert doc["values"]["co2"] == 802 and doc["samples"]["co2"] == 2 and doc["values"]["nc1"] is None  # (801+802)/2
     assert doc["aqi"] == 22 and doc["aqi_category"] == "Good" and doc["aqi_short"] == "Good"
     assert doc["co2_category"] == "Good"
     assert doc["weather"]["stale"] is False and len(doc["weather"]["blocks"]) == 3

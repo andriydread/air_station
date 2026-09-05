@@ -1,19 +1,25 @@
 """The once-a-minute calculation of what the panel and the Live tab show.
 
-Averages of the last 60 s of raw rows, the AQI from PM2.5 with its words,
+Averages of the last two raw rows (the collector's :00 and :30 beats), the
+AQI from PM2.5 with its words,
 the CO2 word, the three weather blocks (or "stale"), the three glyphs, and
 the two flags the renderer acts on: ``warming_up`` (the collector reports a
-sensor still in warm-up) and ``collector_silent`` (no raw row for 60 s, or
-the collector's status document older than 90 s).
+sensor still in warm-up) and ``collector_silent`` (no raw row for 90 s, i.e.
+two beats missed, or the collector's status document older than 90 s).
 """
 
 from typing import Any, Dict, Optional
 
+from collector.sampling import SAMPLE_INTERVAL
 from manager import weather as weather_mod
 from shared.aqi import aqi_category, aqi_from_pm25, co2_category
 
 STATUS_STALE = 90.0      # collector_status older than this → the collector is silent
-COLLECTOR_SILENT = 60.0  # no raw row for this long → the collector is silent
+COLLECTOR_SILENT = 90.0  # no raw row for this long (two beats missed) → the collector is silent
+# The frame runs on the minute and the collector's :00 row lands a few seconds
+# later, so the minute averaged is the one that ends one beat ago: its two
+# rows (:00 of the previous minute and :30) are certainly written by then.
+AVERAGE_LAG = SAMPLE_INTERVAL
 
 
 class FrameBuilder:
@@ -44,7 +50,7 @@ class FrameBuilder:
 
     def build(self, now: float, weather_doc: Optional[Dict[str, Any]],
               wifi_glyph: bool, power_glyph: bool) -> Dict[str, Any]:
-        averages = self.db.minute_average(int(now))
+        averages = self.db.minute_average(int(now) - AVERAGE_LAG)
         values = averages["values"]
         aqi = aqi_from_pm25(values.get("pm25"))
         full, short = aqi_category(aqi)
