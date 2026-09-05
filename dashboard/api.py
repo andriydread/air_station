@@ -44,7 +44,7 @@ MAX_RANGE_SECONDS = 5 * 365 * 86400
 DEFAULT_RANGE_SECONDS = 24 * 3600
 
 # (span up to, bucket seconds): fine enough to look continuous, coarse enough to be light
-_BUCKETS = ((2 * 3600, 10), (6 * 3600, 60), (24 * 3600, 300), (3 * 86400, 900),
+_BUCKETS = ((2 * 3600, 30), (6 * 3600, 60), (24 * 3600, 300), (3 * 86400, 900),
             (7 * 86400, 1800), (31 * 86400, 3600), (93 * 86400, 3 * 3600))
 
 
@@ -141,7 +141,7 @@ def _csv_rows(db, config, start: int, end: int):
             writer.writerow([row["hour"], stamp, "hourly", *values, *extra])
             yield flush()
         return
-    page = 5000 * 10  # seconds of raw rows per database read
+    page = 5000 * 30  # seconds of raw rows (5000 beats) per database read
     cursor = start
     while cursor < end:
         chunk_end = min(end, cursor + page)

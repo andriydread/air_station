@@ -23,8 +23,9 @@ tables in `data/airstation.db`.
 
 **collector** owns the I2C bus.
 
-- Every 10 s on the wall clock it reads the SHT41, the SPS30 and the SCD41
-  (waiting up to 6 s for the CO2 data-ready flag), drops garbage (corrupt
+- Every 30 s on the wall clock (:00, :30) it reads the SHT41, the SPS30 and
+  the SCD41 (in low power periodic mode: one value every ~30 s, waiting up to
+  6 s for its data-ready flag), drops garbage (corrupt
   words, negatives, values outside the sensor's range, CO2 below 350 ppm)
   and writes one raw row: 12 metrics, an empty cell where a value was dropped.
 - After any start a sensor warms up first: 60 s for CO2, 30 s for dust. Cells
@@ -68,8 +69,8 @@ the running commit and the three uptimes.
 
 ```
 :00  collector reads three sensors → one raw row
-:10  … every 10 s …
-:00 of each minute   manager averages the minute → display_data → panel
+:30  … and again
+:00 of each minute   manager averages the two rows of the minute that ended one beat ago → display_data → panel
 :00 of each hour     manager rolls the hour up into hourly_measurements
 00:05 local          manager prunes, checkpoints, backs up
 Sunday 04:00 local   collector runs the SPS30 fan clean
@@ -114,7 +115,7 @@ Everything not in this file is a constant next to the code that uses it.
 | `sensors.sht41_temp_offset_c` | Subtracted from the SHT41 reading to correct the mounting |
 | `sensors.asc` | SCD41 automatic self-calibration; off, see `docs/sensors.md` |
 | `sensors.calibration_target_ppm` | Target for the forced calibration button (fresh air, 420) |
-| `retention_days.raw` | Days of 10-second rows (90); hourly rows are kept forever |
+| `retention_days.raw` | Days of 30-second rows (90); hourly rows are kept forever |
 | `retention_days.vitals`, `retention_days.events`, `retention_days.commands` | Days of machine health, events, button presses (30) |
 | `retention_days.logs` | Daily log files kept per program (45, so a 30-day bench exports whole) |
 | `weather.block_hours` | Width of the three forecast columns on the panel (3) |

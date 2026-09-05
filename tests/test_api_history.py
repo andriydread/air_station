@@ -19,14 +19,14 @@ def client(tmp_config, db, monkeypatch):
     log.close()
 
 
-def _fill(db, start, end, step=10):
+def _fill(db, start, end, step=30):
     for i, t in enumerate(range(start, end, step)):
         db.insert_raw(t, {"co2": 700 + (i % 50), "temp": 22.0, "pm25": 4.0 + (i % 3), "pm10": 6.0,
                           "co2_temp": 23.0, "nc25": 8.0, "tps": 0.5})
 
 
 @pytest.mark.parametrize("span, bucket", [
-    (3600, 10), (2 * 3600, 10), (2 * 3600 + 1, 60), (6 * 3600, 60), (12 * 3600, 300),
+    (3600, 30), (2 * 3600, 30), (2 * 3600 + 1, 60), (6 * 3600, 60), (12 * 3600, 300),
     (2 * 86400, 900), (7 * 86400, 1800), (30 * 86400, 3600), (60 * 86400, 10800), (400 * 86400, 86400),
 ])
 def test_bucket_choice(span, bucket):
@@ -41,13 +41,13 @@ def test_default_range_is_the_last_day_with_raw_buckets(client, db):
     assert len(body["rows"]) == 12 and body["rows"][0]["ts"] % 300 == 0
     row = body["rows"][0]
     assert row["aqi"] is not None and 20 <= row["aqi"] <= 35 and row["co2_temp"] == 23.0
-    assert body["stats"]["co2"]["n"] == 360 and body["stats"]["nc25"]["avg"] == 8.0
+    assert body["stats"]["co2"]["n"] == 120 and body["stats"]["nc25"]["avg"] == 8.0
 
 
-def test_short_range_uses_ten_second_buckets(client, db):
+def test_short_range_shows_every_beat(client, db):
     _fill(db, NOW - 600, NOW)
     body = client.get(f"/api/history?from={NOW - 600}&to={NOW}").get_json()
-    assert body["bucket_seconds"] == 10 and len(body["rows"]) == 60
+    assert body["bucket_seconds"] == 30 and len(body["rows"]) == 20
 
 
 def test_range_before_the_raw_horizon_switches_to_hourly(client, db, tmp_config):
@@ -59,8 +59,8 @@ def test_range_before_the_raw_horizon_switches_to_hourly(client, db, tmp_config)
     assert body["resolution"] == "hourly" and body["bucket_seconds"] == 3600
     assert len(body["rows"]) == 1
     row = body["rows"][0]
-    assert row["ts"] == hour and row["samples"] == 360 and row["co2_min"] == 700 and row["co2_max"] == 749
-    assert row["aqi"] is not None and body["stats"]["co2"]["n"] == 360
+    assert row["ts"] == hour and row["samples"] == 120 and row["co2_min"] == 700 and row["co2_max"] == 749
+    assert row["aqi"] is not None and body["stats"]["co2"]["n"] == 120
 
 
 def test_long_range_inside_the_window_is_hourly_too(client, db):
