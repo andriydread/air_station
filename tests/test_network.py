@@ -85,7 +85,7 @@ def test_router_failures_declare_down_then_bounce_at_six(watch, db):
     for i in range(BOUNCE_AFTER):
         result = watch.tick(now=i * 30)
     assert result["bounced"] is True and watch.bounces == 1 and watch.last_bounce_at == 150
-    assert watch.runner_.calls == [BOUNCE_OFF, BOUNCE_ON] and watch.sleeps == [2.0]
+    assert watch.runner_.calls == [NM_STATUS, IW_LINK, BOUNCE_OFF, BOUNCE_ON] and watch.sleeps == [2.0]
     types = [e["type"] for e in db.recent_events()]
     assert types.count("wifi_down") == 1 and types.count("wifi_bounce") == 1
     assert types.count("internet_down") == 1  # the WAN is unreachable through a dead router too
