@@ -4,6 +4,10 @@
 Description=Air station collector (I2C sensors → raw rows)
 After=network-online.target
 Wants=network-online.target
+# No start-rate limit: with Restart=always the app may crash-loop every 5 s
+# forever (a sensor unplugged, the database locked) rather than systemd
+# giving up after five tries. (Unit-section key; in [Service] it is ignored.)
+StartLimitIntervalSec=0
 
 [Service]
 # Type=notify + WatchdogSec: the app sends READY=1 once started and WATCHDOG=1
@@ -16,11 +20,9 @@ WorkingDirectory=@REPO@
 User=@USER@
 StandardOutput=journal
 StandardError=journal
-# Crash loops retry every 5 s forever (a sensor unplugged, the database locked)
-# instead of systemd giving up after five tries.
+# Crash loops retry every 5 s (see StartLimitIntervalSec in [Unit]).
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target

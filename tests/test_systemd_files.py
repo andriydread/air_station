@@ -60,7 +60,8 @@ def test_unit_has_the_watchdog_and_restart_policy(app):
     assert service["WatchdogSec"] == "90"
     assert service["Restart"] == "always"
     assert service["RestartSec"] == "5"
-    assert service["StartLimitIntervalSec"] == "0"
+    assert "StartLimitIntervalSec" not in service  # systemd ignores it there ("Unknown key")
+    assert sections["Unit"]["StartLimitIntervalSec"] == "0"
     assert sections["Unit"]["After"] == "network-online.target"
     assert sections["Unit"]["Wants"] == "network-online.target"
     assert sections["Install"]["WantedBy"] == "multi-user.target"
