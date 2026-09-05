@@ -31,6 +31,10 @@ class FakeScd41Device:
         self.reinit_calls = 0
         self.persist_calls = 0
         self.single_shots = 0
+        self.self_tests = 0
+        self.self_test_error: Optional[Exception] = None  # RuntimeError("Self test failed") like the driver
+        self.power_downs = 0
+        self.wake_ups = 0
 
     @property
     def data_ready(self) -> bool:
@@ -56,6 +60,17 @@ class FakeScd41Device:
     def measure_single_shot(self):
         # the real driver sleeps 5 s here; the fake clock makes that free
         self.single_shots += 1
+
+    def self_test(self):
+        self.self_tests += 1  # the real driver sleeps 10 s here
+        if self.self_test_error is not None:
+            raise self.self_test_error
+
+    def power_down(self):
+        self.power_downs += 1
+
+    def wake_up(self):
+        self.wake_ups += 1
 
     def stop_periodic_measurement(self):
         self.stop_calls += 1

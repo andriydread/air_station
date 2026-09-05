@@ -146,3 +146,36 @@ def test_read_is_one_single_shot_and_warmup_beats_condition_the_sensor(scd41):
     assert fake.single_shots == 2  # discarded, as the datasheet asks after power-up
     assert scd41.read(1065)["co2"] == 600.0 and fake.single_shots == 3
     assert scd41.read(1095)["co2"] == 600.0 and fake.single_shots == 4
+
+
+def test_open_sleeps_wakes_resets_and_self_tests(scd41, db):
+    scd41.ensure(1000)
+    fake = scd41.fake
+    assert fake.power_downs == 1 and fake.wake_ups == 1 and fake.reinit_calls == 1 and fake.self_tests == 1
+    assert scd41.clock.sleeps[:2] == [1.0, 1.0]  # the sleep before wake_up, the settle after reinit
+    init = [e for e in db.recent_events() if e["type"] == "sensor_init"][0]
+    assert init["details"]["self_test"] == "ok" and init["details"]["mode"] == "single_shot"
+    assert [e["type"] for e in db.recent_events() if e["type"] == "sensor_error"] == []
+
+
+def test_a_failed_self_test_is_an_error_event_and_the_sensor_still_runs(scd41, db):
+    scd41.fake.self_test_error = RuntimeError("Self test failed")
+    assert scd41.ensure(1000) is True  # the sensor is used anyway: a verdict, not a refusal
+    init = [e for e in db.recent_events() if e["type"] == "sensor_init"][0]
+    assert init["details"]["self_test"] == "fail"
+    errors = [e for e in db.recent_events() if e["type"] == "sensor_error"]
+    assert len(errors) == 1 and errors[0]["details"]["self_test"] == "fail" and "malfunction" in errors[0]["message"]
+
+
+def test_a_driver_without_the_extras_is_reported_not_crashed(scd41, db):
+    fake = scd41.fake
+    originals = {name: getattr(type(fake), name) for name in ("self_test", "power_down", "wake_up")}
+    for name in originals:  # an older adafruit_scd4x: the attribute is simply not there
+        setattr(type(fake), name, property(lambda self, n=name: (_ for _ in ()).throw(AttributeError(n))))
+    try:
+        assert scd41.ensure(1000) is True
+        init = [e for e in db.recent_events() if e["type"] == "sensor_init"][0]
+        assert init["details"]["self_test"] == "unavailable" and fake.power_downs == 0
+    finally:
+        for name, original in originals.items():
+            setattr(type(fake), name, original)

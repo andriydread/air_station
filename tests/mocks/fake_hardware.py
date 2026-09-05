@@ -131,6 +131,15 @@ def install() -> None:
         def measure_single_shot(self):
             pass
 
+        def self_test(self):
+            pass
+
+        def power_down(self):
+            pass
+
+        def wake_up(self):
+            pass
+
         def stop_periodic_measurement(self):
             pass
 

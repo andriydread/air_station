@@ -328,6 +328,7 @@ class Sps30(Sensor):
 SCD41_DATA_READY_WAIT = 2.0      # after the 5 s single shot the value is there; this is the slack
 SCD41_DATA_READY_POLL = 0.5
 SCD41_REINIT_SETTLE = 1.0        # datasheet: up to 1000 ms after reinit before commands
+SCD41_SLEEP_S = 1.0              # power_down → wake_up: the deepest reset software can give it
 PRESSURE_MIN_DELTA_HPA = 1.0
 CAL_MIN_RUNTIME = 180            # seconds the sensor must run before a forced calibration
 CAL_MIN_SAMPLES = 3
@@ -372,6 +373,12 @@ class Scd41(Sensor):
             device.stop_periodic_measurement()  # a previous run may have left it measuring
         except Exception:
             pass
+        # Every open is the full reset ladder: sleep and wake (SCD41 only, the
+        # nearest thing to a power-cycle without cutting VDD), soft reset, then
+        # the sensor's own self-test — its verdict goes into the sensor_init
+        # event, so a fault that a re-init does not clear says "hardware" in
+        # the log instead of leaving us guessing (bench-2026-09-04 §1).
+        self._sleep_and_wake(device)
         device.reinit()
         self.sleep(SCD41_REINIT_SETTLE)
         serial = getattr(device, "serial_number", None)
@@ -380,8 +387,37 @@ class Scd41(Sensor):
                 self.health.id = "".join(f"{int(word):04x}" for word in serial)
             except (TypeError, ValueError):
                 self.health.id = str(serial)
+        verdict = self._self_test(device)
+        self.init_details = {**type(self).init_details, "self_test": verdict}
+        if verdict == "fail":
+            self.log.event("error", self.name, "sensor_error", "scd41 self-test failed: the sensor reports a malfunction",
+                           self_test=verdict)
         self._configure_and_start(device)
         return device
+
+    def _sleep_and_wake(self, device) -> None:
+        """power_down, a second, wake_up (datasheet 3.9.3/3.9.4); skipped on a driver without them."""
+        down, up = getattr(device, "power_down", None), getattr(device, "wake_up", None)
+        if down is None or up is None:
+            return
+        down()
+        self.sleep(SCD41_SLEEP_S)
+        try:
+            up()
+        except OSError:
+            pass  # the sensor does not ACK wake_up; older drivers surface that NACK
+
+    @staticmethod
+    def _self_test(device) -> str:
+        """"ok" | "fail" | "unavailable" — the driver raises RuntimeError on a non-zero word (~10 s)."""
+        test = getattr(device, "self_test", None)
+        if test is None:
+            return "unavailable"
+        try:
+            test()
+        except RuntimeError:
+            return "fail"
+        return "ok"
 
     def _configure_and_start(self, device) -> None:
         # Settings live in RAM only (no EEPROM wear) and must be written in
