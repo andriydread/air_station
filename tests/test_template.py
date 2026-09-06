@@ -1,4 +1,4 @@
-"""The page skeleton: five tabs, six buttons, no removed controls, RD chips, footer."""
+"""The page skeleton: six tabs, six buttons, no removed controls, RD chips, footer."""
 
 import re
 
@@ -17,9 +17,9 @@ def page(tmp_config, db):
     return html
 
 
-def test_five_tabs_in_order(page):
+def test_six_tabs_in_order(page):
     tabs = re.findall(r'data-tab="([a-z]+)"', page)
-    assert tabs == ["live", "history", "vitals", "diagnostics", "controls"]
+    assert tabs == ["live", "history", "vitals", "diagnostics", "controls", "data"]
     for name in tabs:
         assert f'id="tab-{name}"' in page
 
@@ -41,3 +41,4 @@ def test_rd_chips_footer_and_charts(page):
     for chart in ("chart-nc", "chart-tps", "chart-cpu", "chart-load", "chart-mem", "chart-disk", "chart-wifi", "chart-lag"):
         assert f'id="{chart}"' in page
     assert 'id="event-app"' in page and "<option>watch</option>" in page
+    assert 'id="data-table"' in page and 'id="data-rows"' in page and 'id="data-more"' in page

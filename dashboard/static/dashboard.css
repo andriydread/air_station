@@ -731,3 +731,12 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 
 /* History: which resolution the charts show. */
 #resolution-note { margin-top: 8px; }
+
+/* Data tab: a plain grid of whatever the table holds; wide tables scroll inside the panel */
+.data-table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.data-table th, .data-table td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.data-table th { color: var(--muted); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--paper); }
+.data-table td.data-null { color: var(--muted); }
+.data-table tr:last-child td { border-bottom: none; }
+#tab-data .table-scroll { max-height: 70vh; overflow: auto; }
+#tab-data .button-row { margin-top: 10px; }

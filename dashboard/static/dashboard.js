@@ -165,7 +165,7 @@ async function submitCommand(type, payload = {}) {
 // ---------------------------------------------------------------------------
 
 let activeTab = 'live';
-const TAB_NAMES = ['live', 'history', 'vitals', 'diagnostics', 'controls'];
+const TAB_NAMES = ['live', 'history', 'vitals', 'diagnostics', 'controls', 'data'];
 // Each tab registers how to refresh itself; the poll loop calls the active one.
 const tabRefreshers = {};
 
@@ -1643,5 +1643,77 @@ installers.push(() => {
       allow_large_offset: document.getElementById('scd41-calibration-drift').checked,
       persist: document.getElementById('scd41-calibration-persist').checked,
     }).catch((e) => toast(e.message, 'error'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Data tab: the tables as they are — pick one, newest rows first, load more
+// ---------------------------------------------------------------------------
+
+const dataView = { table: 'raw_measurements', columns: [], rows: [], next: null };
+
+function dataCell(value) {
+  if (value === null || value === undefined) return '<td class="data-null">—</td>';
+  return `<td>${escapeHtml(String(value))}</td>`;
+}
+
+function renderDataRows(append = false) {
+  const table = document.getElementById('data-rows');
+  const head = table.querySelector('thead');
+  const body = table.querySelector('tbody');
+  if (!append) {
+    head.innerHTML = `<tr>${dataView.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join('')}</tr>`;
+    body.innerHTML = '';
+  }
+  const start = append ? body.children.length : 0;
+  const html = dataView.rows.slice(start).map((row) =>
+    `<tr>${dataView.columns.map((c) => dataCell(row[c])).join('')}</tr>`).join('');
+  body.insertAdjacentHTML('beforeend', html);
+  document.getElementById('data-more').hidden = dataView.next === null;
+  const note = document.getElementById('data-note');
+  note.textContent = dataView.rows.length
+    ? `${dataView.rows.length} row${dataView.rows.length === 1 ? '' : 's'} shown, newest first (ordered by ${dataView.orderBy})`
+    : 'No rows.';
+}
+
+async function refreshDataTables() {
+  const body = await fetchJson('/api/data/tables');
+  const select = document.getElementById('data-table');
+  const current = select.value || dataView.table;
+  select.innerHTML = body.tables.map((t) =>
+    `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)} · ${t.rows.toLocaleString()} row${t.rows === 1 ? '' : 's'}</option>`).join('');
+  select.value = body.tables.some((t) => t.name === current) ? current : body.tables[0].name;
+  dataView.table = select.value;
+}
+
+async function loadDataPage(append = false) {
+  const before = append && dataView.next !== null ? `&before=${encodeURIComponent(dataView.next)}` : '';
+  const page = await fetchJson(`/api/data/rows?table=${encodeURIComponent(dataView.table)}${before}`);
+  if (page.table !== dataView.table) return; // the selection moved on while this was in flight
+  dataView.columns = page.columns;
+  dataView.orderBy = page.order_by;
+  dataView.rows = append ? dataView.rows.concat(page.rows) : page.rows;
+  dataView.next = page.next;
+  renderDataRows(append);
+}
+
+async function refreshData() {
+  await refreshDataTables();
+  await loadDataPage(false);
+}
+
+tabRefreshers.data = refreshData;
+
+installers.push(() => {
+  document.getElementById('data-table').addEventListener('change', (event) => {
+    dataView.table = event.target.value;
+    dataView.next = null;
+    loadDataPage(false).catch((e) => toast(e.message, 'error'));
+  });
+  document.getElementById('data-refresh').addEventListener('click', () => {
+    refreshData().catch((e) => toast(e.message, 'error'));
+  });
+  document.getElementById('data-more').addEventListener('click', () => {
+    loadDataPage(true).catch((e) => toast(e.message, 'error'));
   });
 });
