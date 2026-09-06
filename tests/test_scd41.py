@@ -1,70 +1,49 @@
-"""SCD41 wrapper: start settings, data-ready wait, pressure, calibration safety."""
+"""SCD41 wrapper: periodic mode, the reset ladder at open, pressure, calibration safety."""
 
 import sys
 
 import pytest
 
 from collector.sensors import (
-    CAL_MAX_DELTA, CAL_MAX_SPREAD, CAL_MIN_RUNTIME, CAL_MIN_SAMPLES, CalibrationRefused, Scd41,
+    CAL_MAX_DELTA, CAL_MAX_SPREAD, CAL_MIN_RUNTIME, CAL_MIN_SAMPLES, CalibrationRefused, Scd41, ready_after,
 )
 from tests.mocks.fake_devices import FakeClock, FakeScd41Device
 
 
 @pytest.fixture
 def scd41(log, tmp_config, monkeypatch):
-    """A wrapper whose _open hands out a scriptable fake; clocks under test control."""
+    """A wrapper whose _open hands out a scriptable fake; the clock under test control."""
     fake = FakeScd41Device()
     clock = FakeClock(start=1000.0)
     monkeypatch.setattr(sys.modules["adafruit_scd4x"], "SCD4X", lambda _i2c: fake)
-    sensor = Scd41(object(), tmp_config, log, sleep=clock.sleep, monotonic=clock.monotonic)
+    sensor = Scd41(object(), tmp_config, log, sleep=clock.sleep)
     sensor.fake = fake
     sensor.clock = clock
     return sensor
 
 
-def test_open_applies_the_settings_in_idle_mode_then_starts(scd41):
+def test_open_applies_the_settings_in_idle_mode_then_starts_periodic(scd41, db):
     assert scd41.ensure(1000) is True
     fake = scd41.fake
-    assert fake.reinit_calls == 1 and fake.start_calls == 0  # single shot mode: the sensor stays idle
+    assert fake.reinit_calls == 1 and fake.start_calls == 1 and fake.single_shots == 0
     assert fake.altitude == 296 and fake.temperature_offset == 4.0
     assert fake.self_calibration_enabled is False and scd41.asc is False
     assert scd41.health.id == "001100220033"
-    assert scd41.clock.sleeps[0] == 1.0  # the reinit settle
+    assert scd41.clock.sleeps == [1.0, 1.0]  # before wake_up, and the reinit settle
+    init = [e for e in db.recent_events() if e["type"] == "sensor_init"][0]["details"]
+    assert init["mode"] == "periodic" and init["altitude_m"] == 296 and init["asc"] is False
+    assert init["ready_at"] == ready_after(1000) and init["id"] == "001100220033"
 
 
-def test_read_returns_the_three_raw_values(scd41):
+def test_read_returns_the_newest_values_or_none_without_waiting(scd41):
     scd41.ensure(1000)
     scd41.fake.co2_values = [812.0]
     scd41.fake.temperature = 24.1
     scd41.fake.relative_humidity = 43.2
     assert scd41.read(1010) == {"co2": 812.0, "co2_temp": 24.1, "co2_humid": 43.2}
-
-
-def test_read_waits_for_data_ready_within_the_deadline(scd41):
-    scd41.ensure(1000)
-    polls = {"n": 0}
-    fake = scd41.fake
-
-    def ready():
-        polls["n"] += 1
-        return polls["n"] >= 4  # ready on the fourth poll (1.5 s later)
-
-    original = FakeScd41Device.data_ready
-    type(fake).data_ready = property(lambda self: ready())
-    try:
-        result = scd41.read(1010)
-    finally:
-        type(fake).data_ready = original
-    assert result is not None and result["co2"] == 600.0
-    assert scd41.clock.sleeps[-3:] == [0.5, 0.5, 0.5]
-
-
-def test_read_gives_up_after_the_deadline(scd41):
-    scd41.ensure(1000)
     scd41.fake.data_ready = False
-    before = scd41.clock.monotonic()
-    assert scd41.read(1010) is None
-    assert 2.0 <= scd41.clock.monotonic() - before <= 2.5  # the slack after the 5 s shot
+    sleeps = len(scd41.clock.sleeps)
+    assert scd41.read(1020) is None and len(scd41.clock.sleeps) == sleeps
 
 
 def test_read_errors_propagate_to_the_sampler(scd41):
@@ -114,8 +93,8 @@ def test_force_calibration_flow_and_restart(scd41, log):
     scd41.fake.calibration_result = 12
     result = scd41.force_calibration(now, 420, persist=True)
     assert result["correction_ppm"] == 12 and result["persisted"] is True and result["target_ppm"] == 420
-    assert scd41.fake.stop_calls == 2 and scd41.fake.start_calls == 0 and scd41.fake.persist_calls == 1
-    assert scd41.warmup_started_at == now and scd41.recent == []  # a new warm-up, readiness restarts
+    assert scd41.fake.stop_calls == 2 and scd41.fake.start_calls == 2 and scd41.fake.persist_calls == 1
+    assert scd41.ready_at == ready_after(now) and scd41.recent == []  # a new quiet minute
     assert scd41.runtime_seconds(now) == 0
 
 
@@ -127,7 +106,7 @@ def test_rejected_calibration_still_restarts_measurement(scd41):
     scd41.fake.calibration_result = 0xFFFF
     with pytest.raises(RuntimeError, match="0xFFFF"):
         scd41.force_calibration(now, 420)
-    assert scd41.fake.start_calls == 0 and scd41.fake.persist_calls == 0
+    assert scd41.fake.start_calls == 2 and scd41.fake.persist_calls == 0
 
 
 def test_recent_window_trims_old_samples(scd41):
@@ -137,25 +116,17 @@ def test_recent_window_trims_old_samples(scd41):
     assert scd41.calibration_readiness(1400)["sample_count"] == 1
 
 
-def test_read_is_one_single_shot_and_warmup_beats_condition_the_sensor(scd41):
-    scd41.ensure(1000)
-    fake = scd41.fake
-    assert fake.single_shots == 0
-    scd41.warmup_beat(1005)
-    scd41.warmup_beat(1035)
-    assert fake.single_shots == 2  # discarded, as the datasheet asks after power-up
-    assert scd41.read(1065)["co2"] == 600.0 and fake.single_shots == 3
-    assert scd41.read(1095)["co2"] == 600.0 and fake.single_shots == 4
-
-
-def test_open_sleeps_wakes_resets_and_self_tests(scd41, db):
+def test_open_sleeps_wakes_resets_and_self_tests_once_per_process(scd41, db):
     scd41.ensure(1000)
     fake = scd41.fake
     assert fake.power_downs == 1 and fake.wake_ups == 1 and fake.reinit_calls == 1 and fake.self_tests == 1
-    assert scd41.clock.sleeps[:2] == [1.0, 1.0]  # the sleep before wake_up, the settle after reinit
     init = [e for e in db.recent_events() if e["type"] == "sensor_init"][0]
-    assert init["details"]["self_test"] == "ok" and init["details"]["mode"] == "single_shot"
+    assert init["details"]["self_test"] == "ok"
     assert [e["type"] for e in db.recent_events() if e["type"] == "sensor_error"] == []
+    scd41.reinit(2000, "test")
+    assert fake.self_tests == 1 and fake.reinit_calls == 2 and fake.start_calls == 2 and fake.stop_calls == 3
+    again = [e for e in db.recent_events() if e["type"] == "sensor_init"][0]
+    assert again["details"]["self_test"] == "ok" and again["details"]["ready_at"] == ready_after(2000)
 
 
 def test_a_failed_self_test_is_an_error_event_and_the_sensor_still_runs(scd41, db):
@@ -179,14 +150,3 @@ def test_a_driver_without_the_extras_is_reported_not_crashed(scd41, db):
     finally:
         for name, original in originals.items():
             setattr(type(fake), name, original)
-
-
-def test_readback_event_says_what_the_sensor_holds(scd41, db):
-    scd41.pressure_hpa = 981.0  # known before the open (a stored forecast)
-    scd41.ensure(1000)
-    events = [e for e in db.recent_events() if e["source"] == "scd41"]
-    assert [e["type"] for e in reversed(events)] == ["sensor_init", "sensor_config"]
-    held = events[0]["details"]
-    assert held["serial"] == "001100220033" and held["variant"] == "SCD41" and held["mode"] == "single_shot"
-    assert held["altitude_m"] == 296 and held["temp_offset_c"] == 4.0 and held["asc"] is False
-    assert held["pressure_hpa"] == 981 and held["self_test"] == "ok"

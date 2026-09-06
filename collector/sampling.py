@@ -1,40 +1,40 @@
-"""One beat: ask each sensor, drop garbage, remember what was dropped, write one row.
+"""One beat: ask each ready sensor, store what it said, keep the books, one line.
 
-Every 30 s on the wall clock, ``BEAT_OFFSET`` seconds after the :00/:30 mark
-(the panel refresh at :00 is over by then), in a fixed order so no two
-sensors draw at once: the SHT41 measures (8 ms), the SPS30 hands over its
-latest numbers (its fan runs all the time), then the SCD41 is told to
-measure once (single shot, ~5 s, its 175 mA pulse happens now and only
-now) and read. The row carries the mark's timestamp. Metrics of a sensor
-still in warm-up stay empty (one ``warming_up`` event per warm-up); the
-sensor's ``warmup_beat`` still runs (the SCD41 conditions itself with two
-discarded shots). A dropped value
-is NULL in its cell and a ``value_dropped`` event on the first drop of a
-streak, then every 6th. Six bad beats in a row re-init that sensor (the
-base class does it); when every present sensor raised in the same beat the
-I2C bus itself is re-created.
-
-``SAMPLING = "beat"`` is the seam for the alternative "one row per
-data-ready" mode: only ``next_due`` would change.
+Every 10 s on the wall clock, in a fixed order: the SHT41 measures (8 ms),
+the SPS30 hands over its newest 1 s value, the SCD41 its newest 5 s value.
+The row carries the mark's timestamp and the values **as the sensors gave
+them** (rounded to the row's precision) — nothing is dropped. The "cannot
+be air" rule (``shared/filters.py``) only counts a reading as bad for the
+sensor's reset ladder. A sensor inside its quiet time is not asked; when no
+sensor was asked (a start) nothing is written and nothing is logged. When
+every sensor asked raised in the same beat the I2C bus itself is re-created.
 """
 
+import math
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from collector.filters import clean_row
 from shared import clock
+from shared.db import METRICS, round_metric
+from shared.filters import implausible
 
-SAMPLE_INTERVAL = 30       # two rows a minute; the manager averages the pair
-BEAT_OFFSET = 5            # seconds after the mark: clear of the panel refresh at :00
-SAMPLING = "beat"          # or "on_ready" (not implemented; see next_due)
-DROP_EVENT_EVERY = 6       # value_dropped events: 1st of a streak, then every 6th
+SAMPLE_INTERVAL = 10       # six rows a minute; the manager averages them for the panel
 
-# which metrics belong to which sensor (a dropped value counts against its sensor)
+# which metrics belong to which sensor (a bad value counts against its sensor)
 SENSOR_METRICS = {
     "scd41": ("co2", "co2_temp", "co2_humid"),
     "sht41": ("temp", "humid"),
     "sps30": ("pm1", "pm25", "pm4", "pm10", "tps", "nc05", "nc1", "nc25", "nc4", "nc10"),
 }
+
+
+def _cell(metric: str, value: Any) -> Any:
+    """The stored form: rounded; a non-number cannot be stored, so NULL."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round_metric(metric, number) if math.isfinite(number) else None
 
 
 class Sampler:
@@ -47,15 +47,12 @@ class Sampler:
         self.sensors = [sht41, sps30, scd41]  # the order of the beat, see the module docstring
         self.i2c_factory = i2c_factory
         self.monotonic = monotonic
-        self.drop_streaks: Dict[str, int] = {}
-        self.warmups_logged: set = set()
         self.sample_count = 0
         self.storage_failures = 0
         self.bus_reinits = 0
         self.last_record: Optional[Dict[str, Any]] = None
 
     def next_due(self, now: float) -> float:
-        """When the next row is due. ``beat``: the next 30 s wall-clock mark."""
         return clock.next_aligned(SAMPLE_INTERVAL, now)
 
     # --- one beat -----------------------------------------------------------------------
@@ -64,24 +61,17 @@ class Sampler:
         ts = clock.aligned_stamp(SAMPLE_INTERVAL, now)
         raw: Dict[str, float] = {}
         record: Dict[str, Any] = {
-            "ts": ts, "read_ms": {}, "data_ready": {}, "warmup_left": {},
-            "errors": {}, "errno": {}, "present": [], "raised": [],
+            "ts": ts, "present": [], "asked": [], "answered": [], "raised": [],
+            "errors": {}, "errno": {}, "read_ms": {}, "raw": raw, "row": None, "bad": {},
         }
         for sensor in self.sensors:
             name = sensor.name
             if not sensor.ensure(now):
                 continue
             record["present"].append(name)
-            left = sensor.warmup_left(now)
-            record["warmup_left"][name] = int(round(left))
-            if left > 0:
-                self._log_warmup_once(sensor, left)
-                try:
-                    sensor.warmup_beat(now)
-                except Exception as exc:
-                    record["errors"][name] = f"{exc.__class__.__name__}: {exc}"
-                    self._sensor_error(sensor, exc, now)
+            if not sensor.ready(now):
                 continue
+            record["asked"].append(name)
             started = self.monotonic()
             try:
                 result = sensor.read(now)
@@ -94,37 +84,27 @@ class Sampler:
                 continue
             record["read_ms"][name] = round((self.monotonic() - started) * 1000, 1)
             if result is None:
-                record["data_ready"][name] = False
-                blanked = name == "sps30" and self.sps30.is_blanked(now)
-                if not blanked:
+                if not (name == "sps30" and self.sps30.is_blanked(now)):
                     sensor.check_silence(now)
                 continue
-            record["data_ready"][name] = True
+            record["answered"].append(name)
             raw.update(result)
 
-        row, dropped = clean_row(raw)
-        record.update(raw=raw, row=row, dropped=dropped)
-        self._account_values(now, raw, dropped)
-        self._drop_events(dropped)
-        self._write(ts, row)
-        if record["raised"] and len(record["raised"]) == len(record["present"]) and record["present"]:
+        if record["asked"]:
+            record["bad"] = self._account(now, raw)
+            row = {metric: _cell(metric, raw.get(metric)) for metric in METRICS}
+            record["row"] = row
+            self._write(ts, row)
+            self.log.info("sample", "row", ts=ts, **row,
+                          bad=",".join(f"{m}:{r}" for m, r in record["bad"].items()) or None,
+                          raised=",".join(record["raised"]) or None)
+            self.sample_count += 1
+        if record["raised"] and len(record["raised"]) == len(record["asked"]):
             self._reinit_bus(now, record["errors"])
-        if self.log.level == "debug" and "sps30" in record["data_ready"]:
-            record["sps30_status"] = self.sps30.status_word()
-        self.sample_count += 1
         self.last_record = record
         return record
 
     # --- helpers ------------------------------------------------------------------------------
-
-    def _log_warmup_once(self, sensor, left: float) -> None:
-        key = (sensor.name, sensor.warmup_started_at)
-        if key in self.warmups_logged:
-            return
-        self.warmups_logged.add(key)
-        self.log.event("info", sensor.name, "warming_up",
-                       f"{sensor.name} warming up, {int(round(left))} s to go",
-                       seconds=int(round(left)))
 
     def _sensor_error(self, sensor, exc: Exception, now: float) -> None:
         text = f"{exc.__class__.__name__}: {exc}"
@@ -137,35 +117,23 @@ class Sampler:
             self.log.warning(sensor.name, "read_failed", error=text, streak=sensor.bad_streak,
                              errno=getattr(exc, "errno", None))
 
-    def _account_values(self, now: float, raw: Dict[str, float], dropped: Dict[str, Any]) -> None:
+    def _account(self, now: float, raw: Dict[str, float]) -> Dict[str, str]:
+        """Per sensor that answered: all plausible → ok, else bad. Returns {metric: reason}."""
+        bad: Dict[str, str] = {}
         for sensor in self.sensors:
             metrics = SENSOR_METRICS[sensor.name]
-            read_any = any(m in raw for m in metrics)
-            if not read_any:
+            if not any(m in raw for m in metrics):
                 continue
-            bad = [m for m in metrics if m in dropped]
-            if bad:
-                sensor.note_bad(now, f"dropped {', '.join(bad)}")
+            reasons = {m: implausible(m, raw[m]) for m in metrics if m in raw}
+            reasons = {m: r for m, r in reasons.items() if r}
+            if reasons:
+                sensor.note_bad(now, "cannot be air: " + ", ".join(f"{m} {raw[m]}" for m in reasons))
+                bad.update(reasons)
             else:
                 sensor.note_ok(now)
                 if sensor is self.scd41 and "co2" in raw:
                     self.scd41.record_valid(now, raw["co2"])
-
-    def _drop_events(self, dropped: Dict[str, Any]) -> None:
-        for metric in list(self.drop_streaks):
-            if metric not in dropped:
-                self.drop_streaks.pop(metric)
-        for metric, (value, reason) in dropped.items():
-            streak = self.drop_streaks.get(metric, 0) + 1
-            self.drop_streaks[metric] = streak
-            source = next(name for name, metrics in SENSOR_METRICS.items() if metric in metrics)
-            if (streak - 1) % DROP_EVENT_EVERY == 0:
-                self.log.event("warning", source, "value_dropped",
-                               f"{metric} dropped ({reason}): {value}",
-                               metric=metric, value=value, reason=reason, streak=streak)
-            else:
-                self.log.info(source, "value_dropped", metric=metric, value=value, reason=reason,
-                              streak=streak)
+        return bad
 
     def _write(self, ts: int, row: Dict[str, Any]) -> None:
         try:

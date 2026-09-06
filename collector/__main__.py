@@ -1,7 +1,7 @@
 """The collector program: ``python -m collector`` (``--fake`` on a machine without sensors).
 
-Start everything, run the 30 s beat forever on one thread, stop cleanly.
-Tasks: sample (30 s, wall-aligned, 5 s after the mark), commands (2 s), status (30 s), weather
+Start everything, run the 10 s beat forever on one thread, stop cleanly.
+Tasks: sample (10 s, wall-aligned), commands (2 s), status (30 s), weather
 pressure into the SCD41 (30 min), the Sunday 04:00 fan clean (checked every
 minute). Heartbeats and clock-jump detection come from the shared loop.
 """
@@ -12,10 +12,9 @@ import sys
 from typing import Any, Callable, Optional
 
 from collector.commands import CommandRunner
-from collector.i2c_trace import TracedI2C
-from collector.sampling import BEAT_OFFSET, SAMPLE_INTERVAL, Sampler
+from collector.sampling import SAMPLE_INTERVAL, Sampler
 from collector.sensors import Scd41, Sht41, Sps30
-from collector.status import build_status, debug_sample_lines
+from collector.status import build_status
 from shared import clock
 from shared.config import Config
 from shared.db import Database
@@ -38,12 +37,7 @@ class Collector:
         self.config = config
         self.db = db
         self.log = log
-        if config.logging.i2c_trace:
-            def traced_factory():
-                return TracedI2C(i2c_factory(), log)
-            self.i2c_factory = traced_factory
-        else:
-            self.i2c_factory = i2c_factory
+        self.i2c_factory = i2c_factory
         self.ntp_runner = ntp_runner
         self.sps30_factory = sps30_factory
         self.started_at = clock.now()
@@ -65,16 +59,19 @@ class Collector:
                            "system time not confirmed by NTP; writing anyway")
         self.started_at = clock.now()  # uptime counts from a trusted clock, not the boot-time guess
         bus = self.i2c_factory()
-        scd41 = Scd41(bus, self.config, self.log, sleep=clock.sleep, monotonic=clock.monotonic)
+        scd41 = Scd41(bus, self.config, self.log, sleep=clock.sleep)
         sht41 = Sht41(bus, self.config, self.log)
         sps30 = Sps30(bus, self.config, self.log, device_factory=self.sps30_factory)
         self.sampler = Sampler(self.db, self.log, scd41, sht41, sps30, i2c_factory=self.i2c_factory,
                                monotonic=clock.monotonic)
         self.commands = CommandRunner(self.db, self.log, self.sampler, self.config, monotonic=clock.monotonic)
-        self.log.event("info", "app", "started", "collector started",
-                       ntp_synced=self.ntp_synced, sampling="beat", interval_s=SAMPLE_INTERVAL)
-        for sensor in self.sampler.sensors:  # warm-up starts now, not at the first beat
+        for sensor in self.sampler.sensors:  # the quiet time starts now, not at the first beat
             sensor.ensure(clock.now())
+        ready = [s.ready_at for s in self.sampler.sensors if s.device is not None]
+        self.log.event("info", "app", "started", "collector started",
+                       ntp_synced=self.ntp_synced, interval_s=SAMPLE_INTERVAL,
+                       ready_at=max(ready) if ready else None,
+                       **{s.name: s.health.id for s in self.sampler.sensors})
         self.publish_status()
 
     def stop(self, reason: str) -> None:
@@ -89,8 +86,7 @@ class Collector:
 
     def tasks(self):
         return [
-            Task("sample", SAMPLE_INTERVAL, self.sample, aligned=True, first_run_immediately=False,
-                 offset=BEAT_OFFSET),
+            Task("sample", SAMPLE_INTERVAL, self.sample, aligned=True, first_run_immediately=False),
             Task("commands", COMMAND_POLL, self.process_commands),
             Task("status", STATUS_EVERY, self.publish_status),
             Task("pressure", PRESSURE_EVERY, self.apply_pressure),
@@ -100,9 +96,7 @@ class Collector:
     # --- the jobs --------------------------------------------------------------------------
 
     def sample(self) -> None:
-        record = self.sampler.beat(clock.now())
-        if self.log.level == "debug":
-            debug_sample_lines(self.log, record)
+        self.sampler.beat(clock.now())
 
     def process_commands(self) -> None:
         self.commands.process(clock.now())

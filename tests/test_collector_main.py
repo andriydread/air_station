@@ -11,6 +11,8 @@ from shared.db import Database
 from shared.events import Log
 from tests.mocks.fake_devices import FakeRunner, FakeScd41Device, FakeSht41Device, FakeSps30Device
 
+START = 1_788_436_800  # 2026-09-03 12:00:00 UTC (the fake clock's start), a :00
+
 
 class Station:
     """The collector on fakes; the fake clock drives everything."""
@@ -57,23 +59,26 @@ def test_three_minutes_of_life(station):
     reason = station.run(3 * 60)
     assert reason == "max_passes"
     rows = db.raw_between(0, 10**10)
-    assert len(rows) == 6 and all(r["recorded_at"] % 30 == 0 for r in rows)
-    # beats are read 5 s after the mark (:05, :35, :65 …) and stamped with the
-    # mark; warm-up starts at launch, so CO2 (60 s) appears on the 3rd beat,
-    # dust (30 s, initialised 1 s after the SCD41) on the 2nd
-    assert [r["co2"] for r in rows[:3]] == [None, None, 600]
-    assert [r["pm25"] for r in rows[:3]] == [None, 2.5, 2.5]
-    assert station.scd.single_shots == 6  # two conditioning shots in warm-up, then one per beat
-    assert all(r["temp"] == 22.5 for r in rows)
+    # started on a :00, so the quiet time runs to the next :00 (+60 s); a row
+    # every 10 s follows, every cell filled from the first one
+    assert [r["recorded_at"] - START for r in rows] == list(range(60, 190, 10))  # the last pass lands on :00
+    assert all(r["co2"] == 600 and r["pm25"] == 2.5 and r["temp"] == 22.5 for r in rows)
+    assert station.scd.start_calls == 1 and station.scd.single_shots == 0  # periodic mode, started once
     status = db.get_state("collector_status")["value"]
-    assert status["sensors"]["scd41"]["healthy"] and status["sample_count"] == 6
-    assert status["sensors"]["sps30"]["id"] == "2.2"
-    types = [e["type"] for e in db.recent_events()]
-    assert types[-1] == "started" and "shutdown" in types and "clock_unsynced" not in types
-    assert types.count("warming_up") == 2
+    assert status["sensors"]["scd41"]["healthy"] and status["sample_count"] == 13
+    assert status["ready_at"] is None and status["sensors"]["sps30"]["id"] == "2.2"  # written after the stop
+    events = db.recent_events()
+    types = [e["type"] for e in events]
+    assert types[-4:] == ["started", "sensor_init", "sensor_init", "sensor_init"]  # oldest last
+    assert "shutdown" in types and "clock_unsynced" not in types
+    started = events[-4]["details"]
+    assert started["ready_at"] == START + 60 and started["interval_s"] == 10
+    assert started["scd41"] == "001100220033" and started["sps30"] == "2.2" and started["sht41"] == "0000abcd"
     assert station.buses == 1
     assert station.scd.stop_calls == 2  # once at open (defensive), once at shutdown
-    assert rows[0]["recorded_at"] == 1_788_436_800  # a start at :00 is read at :05, stamped :00
+    lines = station.log.path.read_text().splitlines()
+    assert len([l for l in lines if " sample row " in l]) == 13
+    assert not any(" DEBUG " in l and " sample " in l for l in lines)
 
 
 def test_a_queued_fan_clean_is_answered(station):
@@ -88,7 +93,7 @@ def test_a_queued_fan_clean_is_answered(station):
 def test_unsynced_clock_is_an_event_not_a_stop(tmp_config, fake_clock, monkeypatch):
     s = Station(tmp_config, fake_clock, monkeypatch, ntp="no")
     try:
-        s.run(45)
+        s.run(150)
         types = [e["type"] for e in s.db.recent_events()]
         assert "clock_unsynced" in types and len(s.db.raw_between(0, 10**10)) >= 1
         assert fake_clock.monotonic() >= 1000 + 60  # it waited the full minute first

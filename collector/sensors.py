@@ -1,23 +1,31 @@
 """The three sensor wrappers and the bookkeeping they share.
 
-Every sensor: is it there, is it healthy, when to try again, when to give up
-and restart it. Two things trigger a re-init — six bad readings in a row, or
-two minutes without any reading after warm-up. Warm-up after a (re)start
-(60 s CO2, 30 s dust) is not counted against the sensor at all.
+Every sensor: is it there, is it ready, when to try again, when to reset it.
+After any (re)start a sensor is **quiet** until the first whole minute at
+least ``QUIET_SECONDS`` away (``ready_at``): nothing is asked, nothing is
+stored. Then the reset ladder (decided 2026-09-06): six bad readings in a
+row, or six inside three minutes, or a minute without any answer → close the
+sensor and open it again (a new quiet minute). A *bad* reading is one that
+raised, or a value that cannot be air (``shared/filters.py``) — the value is
+stored all the same.
 """
 
+import math
 import time
 from typing import Any, Dict, Optional
 
 from shared.backoff import ReinitBackoff
 
-BAD_STREAK_REINIT = 6        # bad readings in a row (three minutes at 30 s) → re-init
-BAD_WINDOW_S = 300           # … or this many bad readings inside this window, good ones
-BAD_WINDOW_COUNT = 6         # in between or not (a sensor alternating zeros and values)
-SILENCE_REINIT = 120.0       # seconds without any reading after warm-up → re-init
-SCD41_WARMUP = 60
-SPS30_WARMUP = 30
-SHT41_WARMUP = 0
+QUIET_SECONDS = 60           # after a (re)start: nothing asked until the next :00 at least this far away
+BAD_STREAK_REINIT = 6        # bad readings in a row (one minute at 10 s) → reset
+BAD_WINDOW_S = 180           # … or this many bad readings inside this window, good ones
+BAD_WINDOW_COUNT = 6         # in between or not
+SILENCE_REINIT = 60.0        # seconds without any answer after ready_at → reset
+
+
+def ready_after(now: float) -> int:
+    """The first :00 at least ``QUIET_SECONDS`` after ``now``."""
+    return int(math.ceil((now + QUIET_SECONDS) / 60.0) * 60)
 
 
 class SensorHealth:
@@ -44,10 +52,9 @@ class SensorHealth:
 
 
 class Sensor:
-    """Base for the wrappers: init with backoff, streaks, silence, status."""
+    """Base for the wrappers: init with backoff, the quiet time, streaks, silence, status."""
 
     name = "sensor"
-    warmup_seconds = 0
     init_details: Dict[str, Any] = {}  # extra fields on the sensor_init event
 
     def __init__(self, log):
@@ -56,11 +63,12 @@ class Sensor:
         self.health = SensorHealth(self.name)
         self.backoff = ReinitBackoff()
         self.bad_streak = 0
-        self.bad_times: list = []  # monotonic-free: wall-clock stamps of bad readings in the window
+        self.bad_times: list = []  # wall-clock stamps of bad readings inside the window
         self.reinit_count = 0
         self.init_failures_in_row = 0
+        self.inited_at: Optional[float] = None
+        self.ready_at: Optional[int] = None
         self.last_data_at: Optional[float] = None
-        self.warmup_started_at: Optional[float] = None
 
     # --- hooks for the subclasses ------------------------------------------------
 
@@ -96,40 +104,20 @@ class Sensor:
         self.init_failures_in_row = 0
         self.bad_streak = 0
         self.bad_times = []
-        self.warmup_started_at = now
-        self.last_data_at = now
+        self.inited_at = now
+        self.ready_at = ready_after(now)
+        self.last_data_at = None
         self.health.ok(now)
         self.log.event("info", self.name, "sensor_init", f"{self.name} initialised",
-                       warmup_s=self.warmup_seconds, id=self.health.id, **self.init_details)
-        self._readback(now)
+                       ready_at=self.ready_at, id=self.health.id, **self.init_details)
         return True
-
-    def _readback(self, now: float) -> None:
-        """Ask the sensor what it holds and write it down (never raises, never blocks a start)."""
-        try:
-            held = self.config_readback()
-        except Exception as exc:
-            self.log.warning(self.name, "readback_failed", error=str(exc))
-            return
-        if held:
-            self.log.event("info", self.name, "sensor_config", f"{self.name} settings as the sensor reports them", **held)
-
-    def config_readback(self) -> Dict[str, Any]:
-        """What the sensor says it holds — read back, not assumed. Default: nothing."""
-        return {}
 
     def reinit(self, now: float, reason: str) -> bool:
         self.reinit_count += 1
         self.log.event("warning", self.name, "sensor_reinit",
                        f"re-initialising {self.name}: {reason}", reason=reason,
                        count=self.reinit_count)
-        device, self.device = self.device, None
-        if device is not None:
-            try:
-                self._close(device)
-            except Exception as exc:
-                self.log.warning(self.name, "close_failed", error=str(exc))
-        self.bad_streak = 0
+        self.stop()
         return self._init_once(now)
 
     def stop(self) -> None:
@@ -137,18 +125,14 @@ class Sensor:
         if device is not None:
             try:
                 self._close(device)
-            except Exception as exc:
-                self.log.warning(self.name, "close_failed", error=str(exc))
+            except Exception:
+                pass  # a close that fails is nothing: the device is gone either way
 
     # --- per-beat bookkeeping ----------------------------------------------------------
 
-    def warmup_beat(self, now: float) -> None:
-        """A beat that falls inside the warm-up (nothing is stored); default: nothing."""
-
-    def warmup_left(self, now: float) -> float:
-        if self.device is None or self.warmup_started_at is None:
-            return 0.0
-        return max(0.0, self.warmup_started_at + self.warmup_seconds - now)
+    def ready(self, now: float) -> bool:
+        """Present and past its quiet time."""
+        return self.device is not None and self.ready_at is not None and now >= self.ready_at
 
     def note_ok(self, now: float) -> None:
         self.bad_streak = 0
@@ -156,12 +140,11 @@ class Sensor:
         self.health.ok(now)
 
     def note_bad(self, now: float, error: str) -> bool:
-        """A garbage value or a failed read; True when this one triggered a re-init.
+        """A bad reading; True when this one triggered a reset.
 
         Two rules, either fires: ``BAD_STREAK_REINIT`` bad in a row, or
         ``BAD_WINDOW_COUNT`` bad inside the last ``BAD_WINDOW_S`` seconds with
-        good readings in between (the 2026-09-04 fault: zeros every second or
-        third beat for 16 minutes, never six in a row).
+        good readings in between.
         """
         self.bad_streak += 1
         self.bad_times = [t for t in self.bad_times if now - t < BAD_WINDOW_S] + [now]
@@ -175,23 +158,23 @@ class Sensor:
         return False
 
     def check_silence(self, now: float) -> bool:
-        """No reading for SILENCE_REINIT after warm-up → re-init; True when it fired."""
-        if self.device is None or self.last_data_at is None:
+        """No answer for SILENCE_REINIT after ready_at → reset; True when it fired."""
+        if self.device is None or self.ready_at is None:
             return False
-        quiet_since = max(self.last_data_at, (self.warmup_started_at or 0) + self.warmup_seconds)
+        quiet_since = max(self.last_data_at or 0, self.ready_at)
         if now - quiet_since >= SILENCE_REINIT:
             self.health.failed(f"no reading for {int(now - quiet_since)} s")
             self.reinit(now, f"silent for {int(now - quiet_since)} s")
             return True
         return False
 
-    def status(self, now: float) -> Dict[str, Any]:
+    def status(self) -> Dict[str, Any]:
         return {
             "available": self.health.available,
             "healthy": self.health.healthy,
             "last_error": self.health.last_error,
             "last_ok_at": self.health.last_ok_at,
-            "warmup_left": int(round(self.warmup_left(now))),
+            "ready_at": self.ready_at if self.device is not None else None,
             "reinit_count": self.reinit_count,
             "id": self.health.id,
         }
@@ -199,17 +182,8 @@ class Sensor:
 
 # --- SHT41 ------------------------------------------------------------------------
 
-def _mode_name(mode: Any) -> Any:
-    """adafruit_sht4x.Mode values are ints with a string table; keep it readable."""
-    try:
-        import adafruit_sht4x
-        return adafruit_sht4x.Mode.string.get(mode, mode)
-    except Exception:
-        return mode
-
-
 class Sht41(Sensor):
-    """Temperature and humidity: high precision, heater off, no warm-up.
+    """Temperature and humidity: high precision, heater off.
 
     The SHT4x heater exists for drying the sensor after condensation; it only
     runs when a heater command is sent and switches itself off within 1 s.
@@ -217,7 +191,6 @@ class Sht41(Sensor):
     """
 
     name = "sht41"
-    warmup_seconds = SHT41_WARMUP
     init_details = {"heater": "off", "precision": "high"}
 
     def __init__(self, i2c, config, log):
@@ -235,11 +208,6 @@ class Sht41(Sensor):
             self.health.id = f"{int(serial):08x}" if isinstance(serial, int) else str(serial)
         return device
 
-    def config_readback(self) -> Dict[str, Any]:
-        mode = getattr(self.device, "mode", None)
-        return {"serial": self.health.id, "mode": _mode_name(mode), "heater": "off",
-                "temp_offset_c": self.offset}
-
     def read(self, now: float) -> Optional[Dict[str, float]]:
         """{"temp", "humid"} with the configured offset applied; errors propagate."""
         if self.device is None:
@@ -252,7 +220,6 @@ class Sht41(Sensor):
 
 # --- SPS30 ------------------------------------------------------------------------
 
-SPS30_STATUS_MIN_FIRMWARE = (2, 2)   # the Device Status Register exists from FW 2.2
 FAN_CLEAN_BLANK = 15.0               # the fan runs ~10 s at full speed; readings are not air
 FAN_CLEAN_COOLDOWN = 600.0           # a manual clean at most every 10 minutes
 
@@ -263,8 +230,10 @@ SPS30_ROW_KEYS = {"pm1": "pm1", "pm25": "pm25", "pm4": "pm4", "pm10": "pm10", "t
 
 
 class Sps30(Sensor):
+    """Dust: the fan runs all the time, a new value every second; the beat takes the newest."""
+
     name = "sps30"
-    warmup_seconds = SPS30_WARMUP
+    init_details = {"fan": "on", "autoclean": "off"}
 
     def __init__(self, i2c, config, log, device_factory=None):
         super().__init__(log)
@@ -274,7 +243,6 @@ class Sps30(Sensor):
         self.blank_until: Optional[float] = None
         self.last_clean_at: Optional[float] = None
         self.firmware: Optional[tuple] = None
-        self._status_unsupported_logged = False
 
     def _open(self):
         if self._factory is None:
@@ -290,29 +258,13 @@ class Sps30(Sensor):
         self.health.id = f"{self.firmware[0]}.{self.firmware[1]}" if self.firmware else None
         # The collector schedules the weekly clean itself (Sunday 04:00); the
         # sensor's own timer restarts at every power-up and is switched off.
-        try:
-            if int(device.auto_cleaning_interval) != 0:
-                device.auto_cleaning_interval = 0
-                self.log.info(self.name, "autoclean_disabled")
-        except Exception as exc:
-            self.log.warning(self.name, "autoclean_read_failed", error=str(exc))
+        if int(device.auto_cleaning_interval) != 0:
+            device.auto_cleaning_interval = 0
         self.blank_until = None
         return device
 
     def _close(self, device) -> None:
         device.stop_measurement()
-
-    def config_readback(self) -> Dict[str, Any]:
-        device = self.device
-        held: Dict[str, Any] = {"firmware": self.health.id}
-        try:
-            held["autoclean_interval_s"] = int(device.auto_cleaning_interval)
-        except Exception as exc:
-            held["autoclean_interval_s"] = f"error: {exc}"
-        status = self.status_word()
-        if status:
-            held.update({f"status_{key}": value for key, value in status.items()})
-        return held
 
     def is_blanked(self, now: float) -> bool:
         if self.blank_until is None:
@@ -345,27 +297,9 @@ class Sps30(Sensor):
                        manual=manual, blank_s=int(FAN_CLEAN_BLANK))
         return {"blank_s": int(FAN_CLEAN_BLANK), "manual": manual}
 
-    def status_word(self) -> Optional[Dict[str, Any]]:
-        """The sensor's own fan/laser verdict (FW ≥ 2.2); None when unavailable."""
-        if self.device is None:
-            return None
-        if self.firmware is not None and self.firmware < SPS30_STATUS_MIN_FIRMWARE:
-            if not self._status_unsupported_logged:
-                self._status_unsupported_logged = True
-                self.log.info(self.name, "status_register_unsupported",
-                              firmware=f"{self.firmware[0]}.{self.firmware[1]}")
-            return None
-        try:
-            return dict(self.device.read_device_status())
-        except Exception as exc:
-            self.log.warning(self.name, "status_read_failed", error=str(exc))
-            return None
-
 
 # --- SCD41 ------------------------------------------------------------------------
 
-SCD41_DATA_READY_WAIT = 2.0      # after the 5 s single shot the value is there; this is the slack
-SCD41_DATA_READY_POLL = 0.5
 SCD41_REINIT_SETTLE = 1.0        # datasheet: up to 1000 ms after reinit before commands
 SCD41_SLEEP_S = 1.0              # power_down → wake_up: the deepest reset software can give it
 PRESSURE_MIN_DELTA_HPA = 1.0
@@ -382,27 +316,27 @@ class CalibrationRefused(RuntimeError):
 
 
 class Scd41(Sensor):
-    """CO2 in single shot mode (datasheet 3.10): the sensor measures only when
-    the beat tells it to, so its 175 mA pulse lands at a known moment, ~5 s
-    into the beat, never together with the panel refresh or the SHT41. The
-    idle current between shots is 0.15 mA; at two shots a minute the average
-    is ~2.6 mA (15 mA in the default periodic mode). Two conditioning shots
-    during the 60 s warm-up are discarded, as the datasheet asks.
+    """CO2 in periodic mode (datasheet 3.5): started once at init, the sensor
+    measures by itself every 5 s and the beat picks up the newest value when
+    ``data_ready`` says so — the same shape as the SPS30. Every open is the
+    full reset ladder (sleep → wake → soft reset); the sensor's own self-test
+    (~10 s) runs on the first open of the process only, its verdict on the
+    ``sensor_init`` event.
     """
 
     name = "scd41"
-    warmup_seconds = SCD41_WARMUP
-    init_details = {"mode": "single_shot"}
+    init_details = {"mode": "periodic"}
 
-    def __init__(self, i2c, config, log, sleep=time.sleep, monotonic=time.monotonic):
+    def __init__(self, i2c, config, log, sleep=time.sleep):
         super().__init__(log)
         self.i2c = i2c
         self.config = config
         self.sleep = sleep
-        self.monotonic = monotonic
         self.asc = bool(config.sensors.asc)
         self.pressure_hpa: Optional[float] = None
-        self.recent: list = []  # (ts, ppm) of accepted readings inside CAL_WINDOW
+        self.recent: list = []  # (ts, ppm) of plausible readings inside CAL_WINDOW
+        self.opens = 0
+        self.self_test = "unavailable"
 
     def _open(self):
         import adafruit_scd4x  # imported here: only the collector has the library
@@ -412,11 +346,6 @@ class Scd41(Sensor):
             device.stop_periodic_measurement()  # a previous run may have left it measuring
         except Exception:
             pass
-        # Every open is the full reset ladder: sleep and wake (SCD41 only, the
-        # nearest thing to a power-cycle without cutting VDD), soft reset, then
-        # the sensor's own self-test — its verdict goes into the sensor_init
-        # event, so a fault that a re-init does not clear says "hardware" in
-        # the log instead of leaving us guessing (bench-2026-09-04 §1).
         self._sleep_and_wake(device)
         device.reinit()
         self.sleep(SCD41_REINIT_SETTLE)
@@ -426,27 +355,21 @@ class Scd41(Sensor):
                 self.health.id = "".join(f"{int(word):04x}" for word in serial)
             except (TypeError, ValueError):
                 self.health.id = str(serial)
-        verdict = self._self_test(device)
-        self.init_details = {**type(self).init_details, "self_test": verdict}
-        if verdict == "fail":
-            self.log.event("error", self.name, "sensor_error", "scd41 self-test failed: the sensor reports a malfunction",
-                           self_test=verdict)
+        if self.opens == 0:
+            self.self_test = self._self_test(device)
+            if self.self_test == "fail":
+                self.log.event("error", self.name, "sensor_error",
+                               "scd41 self-test failed: the sensor reports a malfunction",
+                               self_test=self.self_test)
+        self.opens += 1
+        self.init_details = {
+            **type(self).init_details, "self_test": self.self_test,
+            "altitude_m": int(self.config.location.altitude_m),
+            "temp_offset_c": float(self.config.sensors.scd41_temp_offset_c),
+            "asc": bool(self.config.sensors.asc),
+        }
         self._configure_and_start(device)
         return device
-
-    def config_readback(self) -> Dict[str, Any]:
-        device = self.device
-        held: Dict[str, Any] = {"serial": self.health.id, "mode": "single_shot",
-                                "self_test": self.init_details.get("self_test")}
-        for key, attr in (("variant", "sensor_variant_name"), ("altitude_m", "altitude"),
-                          ("temp_offset_c", "temperature_offset"), ("asc", "self_calibration_enabled"),
-                          ("pressure_hpa", "ambient_pressure")):
-            try:
-                value = getattr(device, attr)
-            except AttributeError:
-                continue  # an older driver without the getter
-            held[key] = round(value, 2) if isinstance(value, float) else value
-        return held
 
     def _sleep_and_wake(self, device) -> None:
         """power_down, a second, wake_up (datasheet 3.9.3/3.9.4); skipped on a driver without them."""
@@ -474,43 +397,28 @@ class Scd41(Sensor):
 
     def _configure_and_start(self, device) -> None:
         # Settings live in RAM only (no EEPROM wear) and must be written in
-        # idle mode — which single shot never leaves.
+        # idle mode, i.e. before the periodic measurement is started.
         device.altitude = int(self.config.location.altitude_m)
         device.temperature_offset = float(self.config.sensors.scd41_temp_offset_c)
         device.self_calibration_enabled = bool(self.config.sensors.asc)
         self.asc = bool(device.self_calibration_enabled)
         if self.pressure_hpa is not None:
             device.set_ambient_pressure(int(round(self.pressure_hpa)))
+        device.start_periodic_measurement()
         self.recent.clear()
 
     def _close(self, device) -> None:
-        device.stop_periodic_measurement()  # harmless in idle; stops a periodic mode an old build left
+        device.stop_periodic_measurement()
 
-    def warmup_beat(self, now: float) -> None:
-        """A conditioning shot, result discarded (datasheet: skip the first two)."""
-        if self.device is not None:
-            self.device.measure_single_shot()
-
-    def read(self, now: float, deadline_s: float = SCD41_DATA_READY_WAIT) -> Optional[Dict[str, float]]:
-        """One single shot (~5 s, the driver waits), then the value; None when none came.
-
-        Returns the raw numbers as the sensor gave them — CO2 plus the SCD41's
-        own temperature and humidity. I2C errors propagate to the sampler.
-        """
-        if self.device is None:
+    def read(self, now: float) -> Optional[Dict[str, float]]:
+        """The newest measurement when the sensor has one, else None; I2C errors propagate."""
+        if self.device is None or not self.device.data_ready:
             return None
-        self.device.measure_single_shot()
-        started = self.monotonic()
-        while True:
-            if self.device.data_ready:
-                return {
-                    "co2": float(self.device.CO2),
-                    "co2_temp": float(self.device.temperature),
-                    "co2_humid": float(self.device.relative_humidity),
-                }
-            if self.monotonic() - started >= deadline_s:
-                return None
-            self.sleep(SCD41_DATA_READY_POLL)
+        return {
+            "co2": float(self.device.CO2),
+            "co2_temp": float(self.device.temperature),
+            "co2_humid": float(self.device.relative_humidity),
+        }
 
     def record_valid(self, now: float, co2: float) -> None:
         self.recent.append((now, float(co2)))
@@ -528,9 +436,9 @@ class Scd41(Sensor):
         return True
 
     def runtime_seconds(self, now: float) -> int:
-        if self.device is None or self.warmup_started_at is None:
+        if self.device is None or self.inited_at is None:
             return 0
-        return int(now - self.warmup_started_at)
+        return int(now - self.inited_at)
 
     def calibration_readiness(self, now: float) -> Dict[str, Any]:
         samples = [ppm for ts, ppm in self.recent if now - ts <= CAL_WINDOW]
@@ -574,11 +482,10 @@ class Scd41(Sensor):
 
     def force_calibration(self, now: float, target_ppm: int, allow_large_offset: bool = False,
                           persist: bool = False) -> Dict[str, Any]:
-        """Forced recalibration after the safety checks; restarts measurement (new warm-up)."""
+        """Forced recalibration after the safety checks; measurement restarts (a new quiet minute)."""
         checks = self.check_preconditions(now, target_ppm, allow_large_offset)
         device = self.device
-        device.stop_periodic_measurement()
-        self.sleep(1.0)
+        device.stop_periodic_measurement()  # the driver waits the datasheet's 500 ms
         try:
             correction = device.force_calibration(int(target_ppm))
             if correction == CAL_REJECTED:
@@ -587,7 +494,8 @@ class Scd41(Sensor):
                 device.persist_settings()
         finally:
             self._configure_and_start(device)
-            self.warmup_started_at = now
-            self.last_data_at = now
+            self.inited_at = now
+            self.ready_at = ready_after(now)
+            self.last_data_at = None
         return {"correction_ppm": int(correction), "target_ppm": int(target_ppm),
                 "persisted": bool(persist), **checks}

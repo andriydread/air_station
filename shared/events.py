@@ -26,8 +26,7 @@ LEVELS = ("debug", "info", "warning", "error")
 _LEVEL_NO = {"debug": 10, "info": 20, "warning": 30, "error": 40}
 
 _SENSOR_TYPES = (
-    "sensor_init", "sensor_config", "sensor_reinit", "sensor_error", "value_dropped", "warming_up",
-    "fan_clean", "calibration_done", "calibration_refused",
+    "sensor_init", "sensor_reinit", "sensor_error", "fan_clean", "calibration_done", "calibration_refused",
 )
 
 # source -> the event types it may emit. Decided in redesign.md §12; adding a

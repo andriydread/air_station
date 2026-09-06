@@ -23,17 +23,20 @@ tables in `data/airstation.db`.
 
 **collector** owns the I2C bus.
 
-- Every 30 s, five seconds after the :00/:30 mark (clear of the panel
-  refresh), it reads the sensors one after another so no two draw current at
-  once: the SHT41 measures, the SPS30 hands over its latest numbers, then the
-  SCD41 is told to measure once (a 5 s single shot) and read. It drops garbage (corrupt
-  words, negatives, values outside the sensor's range, CO2 below 350 ppm)
-  and writes one raw row: 15 metrics, an empty cell where a value was dropped.
-- After any start a sensor warms up first: 60 s for CO2, 30 s for dust. Cells
-  stay empty, one `warming_up` event is logged, nothing counts against the sensor.
-- Six bad readings in a row, or two minutes without any reading, re-initialise
-  that sensor with a growing delay (30 s → 5 min). The bus itself is re-opened
-  only when all sensors fail together.
+- Every 10 s on the wall clock it reads the sensors one after another: the
+  SHT41 measures, the SPS30 hands over its newest 1 s value, the SCD41 its
+  newest 5 s value (periodic mode, started once). It writes one raw row with
+  the 15 values **as the sensors gave them** — nothing is filtered; an empty
+  cell means the sensor gave nothing. One log line per row.
+- After any start a sensor is quiet until the first whole minute at least
+  60 s away (`ready_at` on its `sensor_init` event and in the status
+  document): nothing is asked, nothing is stored, nothing is logged.
+- The reset ladder: six bad readings in a row, or six inside three minutes,
+  or a minute without any answer, close and reopen that sensor (a new quiet
+  minute). A bad reading is one that raised or a value that cannot be air —
+  the value is stored all the same. An init that fails is retried with a
+  growing delay (30 s → 5 min). The bus itself is re-opened only when all
+  sensors fail together.
 - It also runs the two sensor commands from the dashboard (forced CO2
   calibration with safety checks, manual fan clean), the weekly fan clean on
   Sunday 04:00 local time, sends the live air pressure from the weather into
@@ -69,9 +72,8 @@ the running commit and the three uptimes.
 ### What one beat looks like
 
 ```
-:05  collector: SHT41 → SPS30 → SCD41 single shot (5 s) → one raw row stamped :00
-:35  … and again, stamped :30
-:00 of each minute   manager averages the two rows of the minute that ended one beat ago → display_data → panel
+:00 :10 :20 :30 :40 :50  collector: SHT41 → SPS30 → SCD41 → one raw row, as the sensors said
+:00 of each minute   manager averages the rows of the minute that just ended → display_data → panel
 :00 of each hour     manager rolls the hour up into hourly_measurements
 00:05 local          manager prunes, checkpoints, backs up
 Sunday 04:00 local   collector runs the SPS30 fan clean
@@ -86,7 +88,7 @@ schedules above).
 
 | Table | One row per | Kept |
 |---|---|---|
-| `raw_measurements` | 10 s beat: `co2 co2_temp co2_humid temp humid pm1 pm25 pm10 tps nc05 nc1 nc25` | 90 days |
+| `raw_measurements` | 10 s beat: `co2 co2_temp co2_humid temp humid pm1 pm25 pm4 pm10 tps nc05 nc1 nc25 nc4 nc10` | 90 days |
 | `hourly_measurements` | hour: `samples` + min / max / avg of every metric | forever |
 | `vitals` | minute of machine health | 30 days |
 | `events` | thing worth remembering: `app level source type message details` | 30 days |
@@ -123,7 +125,6 @@ Everything not in this file is a constant next to the code that uses it.
 | `dashboard.port` | The web port (8080) |
 | `paths.database`, `paths.logs` | Where the data lives; relative paths resolve against this file's directory |
 | `logging.level` | `debug` for the bench period, `info` afterwards |
-| `logging.i2c_trace` | Every message to and from a sensor as a debug line (address, bytes, answer, time); ~4 MB a day at `debug` |
 
 ## A fresh Pi, start to finish
 
@@ -229,9 +230,9 @@ data/        database, backup, logs (git-ignored)
   panel's last full and partial refresh, the last weather fetch, restart
   counts, the event list with filters.
 - `make logs` for the live stream; the export for anything older.
-- The events you will see most: `warming_up` and `sensor_init` after every
-  start; `value_dropped` (first of a streak, then every sixth) when a sensor
-  hands over garbage; `sensor_reinit` when it does so six times in a row;
+- The events you will see most: `sensor_init` after every start (it says
+  when the quiet minute ends); `sensor_error` when a read raised;
+  `sensor_reinit` when the reset ladder fired;
   `internet_down` / `internet_up` on the home connection; `wifi_bounce` when
   the router itself vanished; `power_issue` when the Pi reports under-voltage;
   `collector_silent` / `collector_restarted` when the manager had to step in.

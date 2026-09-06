@@ -1,4 +1,4 @@
-"""SPS30 wrapper: start, auto-clean disabled, read mapping, blanking, status word."""
+"""SPS30 wrapper: start, auto-clean disabled, read mapping, blanking."""
 
 import pytest
 
@@ -20,7 +20,7 @@ def test_open_wakes_starts_and_disables_the_sensors_own_timer(sps30):
     assert fake.wakeup_calls == 1 and fake.start_calls == 1
     assert fake.interval_writes == [0] and fake.auto_cleaning_interval == 0
     assert sps30.health.id == "2.2" and sps30.firmware == (2, 2)
-    assert sps30.warmup_left(0) == 30
+    assert sps30.ready_at == 60
 
 
 def test_timer_already_off_is_left_alone(log, tmp_config):
@@ -70,28 +70,9 @@ def test_scheduled_clean_ignores_the_manual_cooldown(sps30):
     assert sps30.fake.clean_calls == 2
 
 
-def test_status_word_and_old_firmware(sps30, log):
-    sps30.ensure(0)
-    sps30.fake.status = {"raw": 1 << 4, "speed_warning": False, "laser_error": False, "fan_error": True}
-    assert sps30.status_word()["fan_error"] is True
-    sps30.fake.raise_on_status = OSError("x")
-    assert sps30.status_word() is None
-    sps30.firmware = (2, 1)
-    sps30.fake.raise_on_status = None
-    assert sps30.status_word() is None and sps30._status_unsupported_logged is True
-
-
 def test_reinit_clears_a_blank(sps30):
     sps30.ensure(0)
     sps30.force_clean(100)
     sps30.reinit(101, "test")
     assert sps30.blank_until is None and sps30.fake.stop_calls == 1 and sps30.fake.start_calls == 2
 
-
-def test_readback_event_has_firmware_autoclean_and_status(sps30, db):
-    sps30.ensure(1000)
-    config = [e for e in db.recent_events() if e["source"] == "sps30" and e["type"] == "sensor_config"]
-    assert len(config) == 1
-    held = config[0]["details"]
-    assert held["firmware"] == "2.2" and held["autoclean_interval_s"] == 0
-    assert held["status_fan_error"] is False and held["status_laser_error"] is False

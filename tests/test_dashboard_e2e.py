@@ -85,7 +85,7 @@ def test_changes_live_and_history_agree_with_the_tables(world):
     assert csv.count("\n") == len(db.raw_between(int(START), int(START) + MINUTES * 60)) + 1
 
     events = client.get("/api/events?app=collector").get_json()["events"]
-    assert {e["type"] for e in events} >= {"started", "sensor_init", "warming_up", "shutdown"}
+    assert {e["type"] for e in events} >= {"started", "sensor_init", "shutdown"}
     preview = client.get("/api/display-preview.png")
     assert preview.status_code == 200 and preview.mimetype == "image/png"
 

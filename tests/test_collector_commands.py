@@ -10,7 +10,7 @@ from tests.test_sampling import Rig
 @pytest.fixture
 def runner(db, log, tmp_config, monkeypatch):
     rig = Rig(db, log, tmp_config, monkeypatch)
-    rig.warm()
+    rig.ready()
     rig.beat()
     r = CommandRunner(db, log, rig.sampler, tmp_config, monotonic=rig.clock.monotonic)
     r.rig = rig
@@ -20,7 +20,7 @@ def runner(db, log, tmp_config, monkeypatch):
 def _ready_to_calibrate(rig):
     rig.clock.advance(CAL_MIN_RUNTIME)
     now = rig.clock.now()
-    rig.scd41.recent.clear()  # the warm-up beat recorded a 600 ppm reading
+    rig.scd41.recent.clear()  # the first row recorded a 600 ppm reading
     for i in range(3):
         rig.scd41.record_valid(now - 20 + i * 10, 430)
     return now

@@ -6,7 +6,7 @@ from shared.db import Database
 def _seed(db):
     ids = []
     ids.append(db.insert_event("collector", "info", "app", "started", "collector started", ts=100))
-    ids.append(db.insert_event("collector", "warning", "scd41", "value_dropped", "co2 0", {"value": 0}, ts=200))
+    ids.append(db.insert_event("collector", "warning", "scd41", "sensor_error", "co2 0", {"value": 0}, ts=200))
     ids.append(db.insert_event("manager", "error", "display", "display_error", "busy timeout", ts=300))
     ids.append(db.insert_event("manager", "info", "app", "started", "manager started", ts=400))
     return ids
@@ -17,7 +17,7 @@ def test_insert_and_newest_first_with_details(db):
     rows = db.recent_events()
     assert [r["id"] for r in rows] == list(reversed(ids))
     dropped = rows[2]
-    assert dropped["details"] == {"value": 0} and dropped["type"] == "value_dropped"
+    assert dropped["details"] == {"value": 0} and dropped["type"] == "sensor_error"
     assert set(dropped) == {"id", "ts", "app", "level", "source", "type", "message", "details"}
 
 
@@ -25,7 +25,7 @@ def test_filters_combine(db):
     _seed(db)
     assert [r["type"] for r in db.recent_events(app="manager")] == ["started", "display_error"]
     assert [r["type"] for r in db.recent_events(app="manager", level="error")] == ["display_error"]
-    assert [r["type"] for r in db.recent_events(source="scd41")] == ["value_dropped"]
+    assert [r["type"] for r in db.recent_events(source="scd41")] == ["sensor_error"]
     assert db.recent_events(app="dashboard") == []
     assert [r["type"] for r in db.recent_events(limit=1)] == ["started"]
 

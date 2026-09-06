@@ -46,7 +46,7 @@ def test_generated_devices_answer_like_the_real_ones():
 
 def test_seed_history_counts(db):
     counts = seed_history(db, hours=3, now=T + 1800, raw_hours=1)
-    assert counts["raw"] == 121                    # one hour of 30 s rows, both ends inclusive
+    assert counts["raw"] == 361                    # one hour of 10 s rows, both ends inclusive
     assert counts["vitals"] == 181                 # three hours of minutes
     assert counts["hourly"] == 3                   # two generated + one rolled from raw
     hours = [r["hour"] for r in db.hourly_between(0, 10**10)]

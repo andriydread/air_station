@@ -5,28 +5,30 @@ healthy. The numbers are constants next to the code (`collector/sensors.py`,
 `collector/filters.py`); the four knobs a person may turn are in
 `config.toml` under `[sensors]`. Source datasheets live in `docs/datasheets/`.
 
-## Warm-up, not burn-in
+## The quiet minute, not burn-in
 
 None of these sensors are metal-oxide types; the photoacoustic SCD41, the
 capacitive SHT41 and the optical SPS30 need no conditioning period. They do
 need a moment after every start: the SPS30 datasheet quotes 8–30 s until the
 fan and laser are stable, and the SCD41's cell has to reach thermal
-equilibrium. So after any start or re-init the collector waits **60 s for
-the SCD41 and 30 s for the SPS30** (the SHT41 needs nothing): the cells stay
-empty, one `warming_up` event is logged per sensor, and nothing counts
-against the sensor. The bad-read streak and the silence timer start when the
-warm-up ends. The panel shows "Warming up…" meanwhile.
+equilibrium. So after any start or re-init a sensor is **quiet until the
+first whole minute at least 60 s away** (`ready_at`): nothing is asked,
+nothing is stored, nothing is logged. The reset ladder starts counting when
+the quiet minute ends. The panel says "Starting up" meanwhile.
 
-## What is dropped
+## Nothing is dropped
 
-A value that cannot be air is stored as an empty cell, never as a number:
-corrupt words (the SPS30's CRC, non-finite floats), negatives, temperatures
-outside −40…85 °C, humidity outside 0…100 %, CO2 below 350 ppm (not indoor
-air) or above the sensor's 40 000 ppm output range (a corrupt 0xFFFF). The
-first drop of a streak logs a `value_dropped` event, then every sixth. Six
-bad readings in a row, or two minutes without any reading, re-initialise
-that sensor (`sensor_reinit`) with a growing delay from 30 s to 5 min; the
-I2C bus itself is re-opened only when all sensors fail together.
+Every value a sensor gives is stored as it came (since 2026-09-06). A value
+that cannot be air — a non-finite float, a negative particle count, a
+temperature outside −40…85 °C, humidity outside 0…100 %, CO2 below 350 ppm
+(not indoor air) or above the sensor's 40 000 ppm output range (a corrupt
+0xFFFF) — is still written to the row; the rule in `shared/filters.py` only
+counts the reading as *bad* for the sensor's reset ladder and keeps the
+value out of the panel's minute average. The ladder: six bad readings in a
+row, or six inside three minutes, or a minute without any answer →
+`sensor_reinit` (close, open, a new quiet minute). An init that fails is
+retried with a growing delay from 30 s to 5 min; the I2C bus itself is
+re-opened only when all sensors fail together.
 
 ## SCD41 — the CO2 sensor
 
@@ -54,15 +56,13 @@ I2C bus itself is re-opened only when all sensors fail together.
   `co2_humid`) and charted next to the SHT41's in History, so the bench data
   says what the offset should be: with the room in equilibrium,
   `new = T_scd41 − T_sht41 + old`.
-- **Single shot mode.** The sensor sits idle (0.15 mA) and measures only when
-  the beat tells it to: two 5 s shots a minute, ~2.6 mA average instead of
-  the 15 mA and twelve 200 mA pulses a minute of the default periodic mode
-  on the Pi's 3.3 V pin — and the pulse lands at a known moment, five
-  seconds into the beat, after the SHT41 has measured and well after the
-  panel refresh. Less self-heating, so `co2_temp` reads lower than it did
-  in periodic mode. The two shots during the 60 s warm-up are conditioning
-  shots the datasheet asks to discard. A shot that yields nothing is
-  silence: a `sensor_reinit` after 2 min without any value.
+- **Periodic mode** (the datasheet's default, chosen 2026-09-06 once the
+  wiring fault was closed). Started once at init, the sensor measures by
+  itself every 5 s (15 mA average, a 175 mA pulse per measurement) and the
+  beat picks up the newest value when `data_ready` says so — the same shape
+  as the SPS30, no waiting in the collector. Its self-test (~10 s) runs on
+  the first open of a process only; the verdict is `self_test=` on the
+  `sensor_init` event.
 - Offset, altitude and ASC are re-applied on every start, not stored in the
   sensor. The one write to its EEPROM (rated ~2000 writes) is the
   calibration form's *Persist in sensor* box, which keeps the correction
@@ -106,21 +106,17 @@ point on the Live tab is computed from its values.
 On service stop the SCD41's periodic measurement is stopped and the SPS30's
 measurement (and fan) is stopped, so power cycles and reboots never catch
 the fan spinning or leave a sensor mid-command. Every start is therefore a
-cold start for both sensors, hence the warm-up above. The collector's
+cold start for both sensors, hence the quiet minute above. The collector's
 `started` event says why it started (boot or restart, clean or killed
 previous run) and its `shutdown` event carries the signal.
 
 ## What the sensors say they hold
 
-After every start (and every re-init) each sensor is asked what settings it
-actually holds and the answer is a `sensor_config` event, next to the
-`sensor_init` one: the SCD41's serial, variant, altitude, temperature
-offset, ASC, pressure and self-test verdict as it reports them; the SPS30's
-firmware, auto-clean interval and status register; the SHT41's serial and
-mode. Read back, not assumed — a setting that did not land shows up here.
-With `logging.i2c_trace = true` the log also carries every byte exchanged
-with every sensor (`i2c tx` lines), including what the SCD41 answered
-before any filtering.
+The `sensor_init` event carries what the collector wrote into the sensor
+(the SCD41's altitude, temperature offset, ASC and self-test verdict; the
+SPS30's firmware as its id and its auto-clean switched off; the SHT41's
+heater off) and `ready_at`, when its quiet minute ends. The `started` event
+carries the three sensor ids, so a swapped sensor is visible from one line.
 
 ## Getting the numbers out
 

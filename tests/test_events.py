@@ -46,7 +46,7 @@ def test_level_filtering_and_file_location(tmp_config, tmp_path):
     log.close()
 
     quiet = tmp_config.__class__.from_dict(
-        {**_raw_of(tmp_config), "logging": {"level": "info", "i2c_trace": False}},
+        {**_raw_of(tmp_config), "logging": {"level": "info"}},
         repo_root=tmp_config.repo_root, source=tmp_config.source,
     )
     log = Log("manager", quiet, clock=lambda: T)
@@ -75,13 +75,13 @@ def test_rotation_handler_uses_the_retention_count(tmp_config):
 
 def test_event_writes_a_line_and_a_row(tmp_config, db):
     log = Log("collector", tmp_config, db=db, clock=lambda: T)
-    log.event("warning", "scd41", "value_dropped", "co2 out of range", value=0, reason="range")
+    log.event("warning", "scd41", "sensor_error", "co2 out of range", value=0, reason="range")
     line = _lines(log)[-1]
-    assert line.startswith("2026-09-03T12:00:10Z WARNING collector scd41 value_dropped ")
+    assert line.startswith("2026-09-03T12:00:10Z WARNING collector scd41 sensor_error ")
     assert 'msg="co2 out of range"' in line and "value=0" in line and "reason=range" in line
     row = db.recent_events()[0]
     assert (row["app"], row["level"], row["source"], row["type"], row["ts"]) == (
-        "collector", "warning", "scd41", "value_dropped", T)
+        "collector", "warning", "scd41", "sensor_error", T)
     assert row["details"] == {"value": 0, "reason": "range"}
     log.close()
 
