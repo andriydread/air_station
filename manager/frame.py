@@ -3,9 +3,10 @@
 Averages of the raw rows of the minute that just ended (only values that
 could be air), the AQI from PM2.5 with its words, the CO2 word, the three
 weather blocks (or "stale"), the three glyphs, and the two flags the renderer
-acts on: ``warming_up`` (the collector's ``ready_at`` is still ahead, or the
-manager itself is in its first two minutes with nothing from the collector
-yet — the start-up screen) and ``collector_silent`` (no raw row for 90 s, or
+acts on: ``warming_up`` (the collector's ``ready_at`` is ahead or less than a
+minute behind — its first full minute is not averaged yet — or the manager
+itself is in its first two minutes with nothing from the collector yet: the
+start-up screen) and ``collector_silent`` (no raw row for 90 s, or
 the collector's status document older than 90 s).
 """
 
@@ -35,10 +36,13 @@ class FrameBuilder:
         fresh = status is not None and now - status["updated_at"] <= STATUS_STALE
         value = (status or {}).get("value", {}) if fresh else {}
         ready_at = value.get("ready_at")
-        warmup_left = int(ready_at - now) if isinstance(ready_at, (int, float)) and ready_at > now else 0
+        has_ready = isinstance(ready_at, (int, float))
+        warmup_left = int(ready_at - now) if has_ready and ready_at > now else 0
+        # the first whole minute after ready_at is not averaged before the next :00
+        first_minute = has_ready and now < ready_at + 60
         starting = (self.started_at is not None and now - self.started_at < STARTUP_GRACE
                     and (not fresh or latest_raw is None))
-        warming = warmup_left > 0 or starting
+        warming = first_minute or starting
         rows_silent = latest_raw is None or now - latest_raw > COLLECTOR_SILENT
         sensors = value.get("sensors", {})
         unhealthy = [name for name, s in sensors.items() if (s or {}).get("healthy") is False]

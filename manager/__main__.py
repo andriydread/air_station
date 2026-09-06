@@ -130,7 +130,7 @@ class Manager:
         mode = self.panel.show(image, now)
         self.frame_count += 1
         frame_line(self.log, doc, mode, self.panel.render_ms, self.panel.busy_ms)
-        self.watch.tick(now, self.db.latest_raw_at())
+        self.watch.tick(now, self.db.latest_raw_at(), quiet=doc["warming_up"])
 
     def fetch_weather(self) -> None:
         started = time.perf_counter()

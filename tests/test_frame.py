@@ -95,7 +95,10 @@ def test_the_quiet_time_from_a_fresh_status(frame):
     doc = frame.build(NOW, None, False, False)
     assert doc["warming_up"] is True and doc["collector_silent"] is False and doc["glyphs"]["sensor"] is False
     assert doc["warmup_left"] == 42
-    db.set_state("collector_status", _status(NOW, ready_at=NOW - 1))  # over: numbers
+    db.set_state("collector_status", _status(NOW, ready_at=NOW - 30))  # ready, first minute not averaged yet
+    doc = frame.build(NOW, None, False, False)
+    assert doc["warming_up"] is True and doc["warmup_left"] == 0 and doc["collector_silent"] is False
+    db.set_state("collector_status", _status(NOW, ready_at=NOW - 60))  # the first full minute is in: numbers
     doc = frame.build(NOW, None, False, False)
     assert doc["warming_up"] is False and doc["warmup_left"] == 0
 

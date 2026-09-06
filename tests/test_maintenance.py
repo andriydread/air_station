@@ -101,6 +101,17 @@ def test_collector_watch_event_at_60s_restart_at_180s_with_cooldown(log, db):
     assert len(spawner.calls) == 2
 
 
+def test_collector_watch_waits_out_the_quiet_time(log, db):
+    watch = CollectorWatch(log, spawner=_Spawner())
+    watch.tick(1000 + 70, 1000.0, quiet=True)   # the start-up screen is up: not silence
+    watch.tick(1000 + 200, None, quiet=True)
+    assert watch.silent_since is None and db.recent_events() == []
+    watch.tick(1000 + 200, None)  # quiet over, still nothing: counts from here
+    assert watch.silent_since == 1000 + 200 and db.recent_events() == []
+    watch.tick(1000 + 200 + COLLECTOR_SILENT, None)
+    assert db.recent_events()[0]["type"] == "collector_silent"
+
+
 def test_collector_watch_resets_when_rows_return(log, db):
     watch = CollectorWatch(log, spawner=_Spawner())
     watch.tick(1000 + 70, 1000.0)

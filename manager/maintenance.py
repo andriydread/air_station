@@ -91,7 +91,12 @@ class CollectorWatch:
         self.last_restart_at: Optional[int] = None
         self.restarts = 0
 
-    def tick(self, now: float, latest_raw_at: Optional[float]) -> Dict[str, Any]:
+    def tick(self, now: float, latest_raw_at: Optional[float], quiet: bool = False) -> Dict[str, Any]:
+        """``quiet``: the collector is in its quiet time (the frame says "starting up") — not silence."""
+        if quiet:
+            self.silent_since = None
+            self.event_logged = False
+            return {"silent": False, "silent_since": None}
         quiet_for = now - latest_raw_at if latest_raw_at is not None else None
         if quiet_for is None or quiet_for > COLLECTOR_SILENT:
             if self.silent_since is None:
