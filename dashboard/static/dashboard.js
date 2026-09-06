@@ -1652,9 +1652,19 @@ installers.push(() => {
 
 const dataView = { table: 'raw_measurements', columns: [], rows: [], next: null };
 
-function dataCell(value) {
+const DATA_TIME_COLUMNS = new Set(['recorded_at', 'ts', 'hour', 'created_at', 'updated_at']);
+const DATA_LONG_CELL = 60; // characters; longer cells are clipped until clicked
+
+function dataCell(column, value) {
   if (value === null || value === undefined) return '<td class="data-null">—</td>';
-  return `<td>${escapeHtml(String(value))}</td>`;
+  const text = String(value);
+  if (DATA_TIME_COLUMNS.has(column) && typeof value === 'number' && value > 1e9) {
+    return `<td title="${escapeHtml(new Date(value * 1000).toLocaleString())}">${escapeHtml(text)}</td>`;
+  }
+  if (text.length > DATA_LONG_CELL) {
+    return `<td class="data-long" title="click to expand">${escapeHtml(text)}</td>`;
+  }
+  return `<td>${escapeHtml(text)}</td>`;
 }
 
 function renderDataRows(append = false) {
@@ -1667,7 +1677,7 @@ function renderDataRows(append = false) {
   }
   const start = append ? body.children.length : 0;
   const html = dataView.rows.slice(start).map((row) =>
-    `<tr>${dataView.columns.map((c) => dataCell(row[c])).join('')}</tr>`).join('');
+    `<tr>${dataView.columns.map((c) => dataCell(c, row[c])).join('')}</tr>`).join('');
   body.insertAdjacentHTML('beforeend', html);
   document.getElementById('data-more').hidden = dataView.next === null;
   const note = document.getElementById('data-note');
@@ -1715,5 +1725,9 @@ installers.push(() => {
   });
   document.getElementById('data-more').addEventListener('click', () => {
     loadDataPage(true).catch((e) => toast(e.message, 'error'));
+  });
+  document.getElementById('data-rows').addEventListener('click', (event) => {
+    const cell = event.target.closest('td.data-long');
+    if (cell) cell.classList.toggle('data-open');
   });
 });

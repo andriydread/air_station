@@ -66,9 +66,10 @@ tables in `data/airstation.db`.
 - The system commands from the dashboard: restart collector, restart
   dashboard, reboot, delete history.
 
-**dashboard** is Flask behind waitress on port 8080. Five tabs — Live,
-History, Vitals, Diagnostics, Controls — read the tables and poll
-`/api/changes` every 10 s (every second for 15 s after a button press). An
+**dashboard** is Flask behind waitress on port 8080. Six tabs — Live,
+History, Vitals, Diagnostics, Controls, Data — read the tables and poll
+`/api/changes` every 10 s (every second for 15 s after a button press). Data
+shows any table as it is stored, newest rows first, 100 at a time. An
 "RD" chip marks a value the redesign has no source for yet. The footer shows
 the running commit and the three uptimes.
 

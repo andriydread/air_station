@@ -738,5 +738,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 .data-table th { color: var(--muted); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--paper); }
 .data-table td.data-null { color: var(--muted); }
 .data-table tr:last-child td { border-bottom: none; }
+.data-table td.data-long { max-width: 36ch; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.data-table td.data-long.data-open { max-width: none; white-space: pre-wrap; word-break: break-all; cursor: default; }
 #tab-data .table-scroll { max-height: 70vh; overflow: auto; }
 #tab-data .button-row { margin-top: 10px; }
