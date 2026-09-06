@@ -13,11 +13,11 @@ asc = false                 # SCD41 automatic self-calibration
 calibration_target_ppm = 420
 
 [retention_days]
-raw = 90                    # 30-second rows
+raw = 30                    # 10-second rows, as the sensors gave them
 vitals = 30
 events = 30
 commands = 30
-logs = 45                   # one log file per app per day
+logs = 30                   # one log file per app per day; day 31 removes day 1
 # hourly rows are kept forever
 
 [weather]
@@ -31,4 +31,4 @@ database = "data/airstation.db"
 logs = "data/logs"
 
 [logging]
-level = "debug"             # "debug" for the bench period, "info" afterwards
+level = "info"              # one line per raw row and per panel frame; "debug" adds request and probe lines

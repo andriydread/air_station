@@ -32,10 +32,10 @@ def test_shipped_file_loads_with_the_carried_over_values():
     assert config.sensors.asc is False
     assert config.sensors.calibration_target_ppm == 420
     assert (config.retention_days.raw, config.retention_days.vitals, config.retention_days.events,
-            config.retention_days.commands, config.retention_days.logs) == (90, 30, 30, 30, 45)
+            config.retention_days.commands, config.retention_days.logs) == (30, 30, 30, 30, 30)
     assert config.weather.block_hours == 3
     assert config.dashboard.port == 8080
-    assert config.logging.level == "debug"
+    assert config.logging.level == "info"
 
 
 def test_relative_paths_resolve_against_the_repo_root(tmp_path):
@@ -105,5 +105,5 @@ def test_environment_variables_are_ignored(monkeypatch):
 def test_as_dict_is_plain_json_material():
     data = Config.load().as_dict()
     assert data["paths"]["database"].endswith("airstation.db")
-    assert data["retention_days"]["logs"] == 45
+    assert data["retention_days"]["logs"] == 30
     assert isinstance(data["repo_root"], str)

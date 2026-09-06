@@ -91,7 +91,7 @@ schedules above).
 
 | Table | One row per | Kept |
 |---|---|---|
-| `raw_measurements` | 10 s beat: `co2 co2_temp co2_humid temp humid pm1 pm25 pm4 pm10 tps nc05 nc1 nc25 nc4 nc10` | 90 days |
+| `raw_measurements` | 10 s beat: `co2 co2_temp co2_humid temp humid pm1 pm25 pm4 pm10 tps nc05 nc1 nc25 nc4 nc10` | 30 days |
 | `hourly_measurements` | hour: `samples` + min / max / avg of every metric | forever |
 | `vitals` | minute of machine health | 30 days |
 | `events` | thing worth remembering: `app level source type message details` | 30 days |
@@ -121,13 +121,13 @@ Everything not in this file is a constant next to the code that uses it.
 | `sensors.sht41_temp_offset_c` | Subtracted from the SHT41 reading to correct the mounting |
 | `sensors.asc` | SCD41 automatic self-calibration; off, see `docs/sensors.md` |
 | `sensors.calibration_target_ppm` | Target for the forced calibration button (fresh air, 420) |
-| `retention_days.raw` | Days of 30-second rows (90); hourly rows are kept forever |
+| `retention_days.raw` | Days of 10-second rows (30); hourly rows are kept forever |
 | `retention_days.vitals`, `retention_days.events`, `retention_days.commands` | Days of machine health, events, button presses (30) |
-| `retention_days.logs` | Daily log files kept per program (45, so a 30-day bench exports whole) |
+| `retention_days.logs` | Daily log files kept per program (30, rolling: day 31 removes day 1) |
 | `weather.block_hours` | Width of the three forecast columns on the panel (3) |
 | `dashboard.port` | The web port (8080) |
 | `paths.database`, `paths.logs` | Where the data lives; relative paths resolve against this file's directory |
-| `logging.level` | `debug` for the bench period, `info` afterwards |
+| `logging.level` | `info`: one line per raw row, one per panel frame, the weather, the nightly job, every error with its traceback; `debug` adds web requests and network probes |
 
 ## A fresh Pi, start to finish
 
@@ -189,14 +189,16 @@ On the Pi (they refuse to run anywhere else):
 | `make delete-data` | Deletes database, backup and logs and starts fresh (asks; `FORCE=1`) |
 | `make help` | The list |
 
-## The bench: logging as a test instrument
+## Logging
 
-For the first weeks `logging.level = "debug"`: every raw value, every
-timing, every error with its traceback goes into `data/logs/<program>.log`
-as `key=value` lines, one file per UTC day. A line looks like
+Every program writes `data/logs/<program>.log` as `key=value` lines, one
+file per UTC day, 30 kept (rolling). At `info` a normal day is one line per
+raw row (the collector), one per panel frame (the manager), the weather
+fetches, the nightly job, the start and stop lines, and every error with its
+traceback — about 300 KB per program. A line looks like
 
 ```
-2026-09-03T12:00:10Z DEBUG collector scd41 sample co2=812 co2_temp=25.1 co2_humid=38.4 ms=412
+2026-09-06T12:00:10Z INFO collector sample row ts=1788436810 co2=812 co2_temp=25.1 … bad=- raised=-
 ```
 
 `make export` builds `~/airstation-<YYYYMMDD-HHMM>.tar.gz` holding a

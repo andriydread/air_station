@@ -68,7 +68,7 @@ def _raw_of(config):
 def test_rotation_handler_uses_the_retention_count(tmp_config):
     log = Log("dashboard", tmp_config)
     handler = log._file
-    assert handler.backupCount == tmp_config.retention_days.logs == 45
+    assert handler.backupCount == tmp_config.retention_days.logs == 30
     assert handler.when == "MIDNIGHT" and handler.utc is True
     log.close()
 
