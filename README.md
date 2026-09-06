@@ -45,12 +45,15 @@ tables in `data/airstation.db`.
 
 **manager** owns the SPI bus and the machine. It is the only program with sudo.
 
-- Every minute it averages the last 60 s of raw rows into `display_data`:
-  AQI from PM2.5 only (EPA 2024 breakpoints, six categories; the panel says
-  "Sensitive" for the long one), CO2 on the UBA scale (Good below 1000 ppm,
-  Elevated below 2000, Poor above), the weather columns, the warning
-  glyphs, the warming-up and collector-silent flags. Then it paints
-  the panel: a partial refresh every minute, a full one on every 5-minute mark.
+- Every minute it averages the six raw rows of the minute that just ended
+  into `display_data`, leaving out any value that cannot be air (a 0 ppm, a
+  negative): AQI from PM2.5 only (EPA 2024 breakpoints, six categories; the
+  panel says "Sensitive" for the long one), CO2 on the UBA scale (Good below
+  1000 ppm, Elevated below 2000, Poor above), the weather columns, the
+  warning glyphs, the starting-up and collector-silent flags. Then it paints
+  the panel: a partial refresh every minute, a full one on every 5-minute
+  mark. Right after a boot the panel says "Starting up" until the
+  collector's quiet minute is over.
 - Weather from Open-Meteo every 30 min (and once at start), cut into rolling
   3-hour blocks on the local clock; a forecast older than 6 h is painted as "—".
 - Router and internet probes every 30 s; six router failures in a row bounce
@@ -59,7 +62,7 @@ tables in `data/airstation.db`.
   size, Wi-Fi signal, probe latencies, the throttled bits, uptime, collector lag).
 - Hourly rollups at :00 (catch-up at start), the nightly job at 00:05 local
   (prune → checkpoint → backup to `data/airstation.db.bak`), commands nobody
-  picked up failed after 10 min, the collector restarted after 5 min of silence.
+  picked up failed after 10 min, the collector restarted after 3 min of silence.
 - The system commands from the dashboard: restart collector, restart
   dashboard, reboot, delete history.
 

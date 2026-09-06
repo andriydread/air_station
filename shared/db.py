@@ -193,14 +193,21 @@ class Database:
         return [dict(row) for row in rows]
 
     def minute_average(self, now: int, window: int = 60) -> Dict[str, Dict[str, Any]]:
-        """Averages over recorded_at in (now-window, now]; NULLs do not count."""
-        selects = ", ".join(f"AVG({m}) AS {m}_avg, COUNT({m}) AS {m}_n" for m in METRICS)
-        row = self.query_one(
-            f"SELECT {selects} FROM raw_measurements WHERE recorded_at > ? AND recorded_at <= ?",
-            (now - window, now),
-        )
-        values = {m: round_metric(m, row[f"{m}_avg"]) for m in METRICS}
-        samples = {m: int(row[f"{m}_n"] or 0) for m in METRICS}
+        """Averages over recorded_at in [now-window, now) — the minute that just ended.
+
+        Only values that could be air count (``shared.filters.plausible``): the
+        rows hold whatever the sensors said, the panel shows a clean average.
+        ``samples`` is how many values went into each.
+        """
+        from shared.filters import plausible
+
+        rows = self.raw_between(now - window, now)
+        values: Dict[str, Any] = {}
+        samples: Dict[str, int] = {}
+        for m in METRICS:
+            good = [row[m] for row in rows if plausible(m, row[m])]
+            values[m] = round_metric(m, sum(good) / len(good)) if good else None
+            samples[m] = len(good)
         return {"values": values, "samples": samples}
 
     def raw_bucketed(self, start: int, end: int, bucket_s: int) -> List[Dict[str, Any]]:

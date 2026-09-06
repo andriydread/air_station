@@ -307,10 +307,10 @@ function collectorProblems(collector, doc) {
   const problems = [];
   const sensors = collector?.sensors || {};
   const bad = ['scd41', 'sht41', 'sps30'].filter((key) => sensors[key] && sensors[key].healthy === false);
-  const warming = ['scd41', 'sht41', 'sps30'].filter((key) => sensors[key] && sensors[key].warmup_left > 0);
+  const warming = ['scd41', 'sht41', 'sps30'].filter((key) => sensors[key] && sensors[key].ready_at > serverNow());
   if (doc?.collector_silent) problems.push('Collector not reporting');
   if (bad.length) problems.push(`${bad.length} sensor issue${bad.length === 1 ? '' : 's'}: ${bad.join(', ')}`);
-  if (warming.length && !doc?.collector_silent) problems.push(`Warming up: ${warming.join(', ')}`);
+  if (warming.length && !doc?.collector_silent) problems.push(`Starting up: ${warming.join(', ')}`);
   return problems;
 }
 
@@ -1312,7 +1312,8 @@ function healthOf(app, key, live) {
     const entry = live?.collector_status?.value?.sensors?.[key];
     if (!entry) return null;
     if (entry.available === false) return { ok: false, text: entry.last_error || 'missing' };
-    if (entry.warmup_left > 0) return { ok: true, warn: true, text: `warming up · ${entry.warmup_left}s` };
+    const quiet = Math.round((entry.ready_at || 0) - serverNow());
+    if (quiet > 0) return { ok: true, warn: true, text: `starting up · ready in ${quiet}s` };
     if (entry.healthy === false) return { ok: false, text: entry.last_error || 'unhealthy' };
     const id = entry.id ? ` · ${entry.id}` : '';
     const reinits = entry.reinit_count ? ` · ${entry.reinit_count} re-init${entry.reinit_count === 1 ? '' : 's'}` : '';

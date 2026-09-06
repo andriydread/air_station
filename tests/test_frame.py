@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from manager.frame import COLLECTOR_SILENT, STATUS_STALE, FrameBuilder
+from manager.frame import COLLECTOR_SILENT, STARTUP_GRACE, STATUS_STALE, FrameBuilder
 from manager.weather import parse
 from shared.db import Database
 
@@ -20,10 +20,11 @@ def _weather_doc(fetched_at):
     return parse(payload, now=fetched_at)
 
 
-def _status(now, warmup=0, healthy=True):
+def _status(now, ready_at=None, healthy=True):
     sensor = {"available": True, "healthy": healthy, "last_error": None, "last_ok_at": now,
-              "warmup_left": warmup, "reinit_count": 0, "id": "x"}
-    return {"sensors": {"i2c": dict(sensor), "scd41": dict(sensor), "sht41": dict(sensor), "sps30": dict(sensor)}}
+              "ready_at": ready_at, "reinit_count": 0, "id": "x"}
+    return {"ready_at": ready_at,
+            "sensors": {"i2c": dict(sensor), "scd41": dict(sensor), "sht41": dict(sensor), "sps30": dict(sensor)}}
 
 
 @pytest.fixture
@@ -37,11 +38,11 @@ def frame(tmp_config, tmp_path, log):
     db.close()
 
 
-def _fill(db, now, count=4, **values):
-    """Rows on the 30 s beat back from ``now``; the frame averages the two that
-    end one beat ago (now-60 and now-30), the ``now`` row has not landed yet."""
-    for i in range(count):
-        db.insert_raw(now - 30 * i, {"co2": 800 + i, "temp": 22.0, "humid": 40.0, "pm25": 4.0, **values})
+def _fill(db, now, count=6, **values):
+    """The six 10 s rows of the minute that ends at ``now`` (now-60 … now-10); the
+    ``now`` row has not landed yet."""
+    for i in range(1, count + 1):
+        db.insert_raw(now - 10 * i, {"co2": 800 + i, "temp": 22.0, "humid": 40.0, "pm25": 4.0, **values})
 
 
 def test_happy_frame(frame):
@@ -49,12 +50,23 @@ def test_happy_frame(frame):
     _fill(db, NOW)
     db.set_state("collector_status", _status(NOW))
     doc = frame.build(NOW, _weather_doc(NOW - 600), wifi_glyph=False, power_glyph=False)
-    assert doc["values"]["co2"] == 802 and doc["samples"]["co2"] == 2 and doc["values"]["nc1"] is None  # (801+802)/2
+    assert doc["values"]["co2"] == 804 and doc["samples"]["co2"] == 6 and doc["values"]["nc1"] is None  # 801…806
     assert doc["aqi"] == 22 and doc["aqi_category"] == "Good" and doc["aqi_short"] == "Good"
     assert doc["co2_category"] == "Good"
     assert doc["weather"]["stale"] is False and len(doc["weather"]["blocks"]) == 3
     assert doc["glyphs"] == {"wifi": False, "power": False, "sensor": False}
     assert doc["warming_up"] is False and doc["collector_silent"] is False and doc["updated_at"] == NOW
+
+
+def test_a_value_that_cannot_be_air_is_left_out_of_the_average(frame):
+    db = frame.db_
+    _fill(db, NOW)
+    db.insert_raw(NOW - 30, {"co2": 0, "temp": 22.0, "humid": 40.0, "pm25": -1.0})  # stored as the sensor said
+    db.insert_raw(NOW, {"co2": 5000})  # this minute's first row: not part of the minute that ended
+    db.set_state("collector_status", _status(NOW))
+    doc = frame.build(NOW, None, False, False)
+    assert doc["samples"]["co2"] == 5 and doc["samples"]["pm25"] == 5 and doc["samples"]["temp"] == 6
+    assert doc["values"]["co2"] == round((801 + 802 + 804 + 805 + 806) / 5)
 
 
 def test_no_rows_in_the_minute_gives_nulls_and_silence(frame):
@@ -70,19 +82,39 @@ def test_stale_status_means_silent_and_never_warming(frame):
     db = frame.db_
     _fill(db, NOW)
     frame.clock["t"] = NOW - STATUS_STALE - 5
-    db.set_state("collector_status", _status(NOW, warmup=30))
+    db.set_state("collector_status", _status(NOW, ready_at=NOW + 30))
     frame.clock["t"] = NOW
     doc = frame.build(NOW, None, False, False)
     assert doc["collector_silent"] is True and doc["warming_up"] is False
 
 
-def test_warming_up_from_a_fresh_status(frame):
+def test_the_quiet_time_from_a_fresh_status(frame):
     db = frame.db_
     _fill(db, NOW)
-    db.set_state("collector_status", _status(NOW, warmup=42))
+    db.set_state("collector_status", _status(NOW, ready_at=NOW + 42))
     doc = frame.build(NOW, None, False, False)
     assert doc["warming_up"] is True and doc["collector_silent"] is False and doc["glyphs"]["sensor"] is False
     assert doc["warmup_left"] == 42
+    db.set_state("collector_status", _status(NOW, ready_at=NOW - 1))  # over: numbers
+    doc = frame.build(NOW, None, False, False)
+    assert doc["warming_up"] is False and doc["warmup_left"] == 0
+
+
+def test_the_first_frames_after_a_boot_say_starting_up_not_silent(frame):
+    db = frame.db_
+    frame.started_at = NOW - 10  # the manager itself is 10 s old; nothing from the collector yet
+    doc = frame.build(NOW, None, False, False)
+    assert doc["warming_up"] is True and doc["warmup_left"] == 0 and doc["collector_silent"] is False
+    assert doc["glyphs"]["sensor"] is False
+    db.set_state("collector_status", _status(NOW, ready_at=NOW + 50))  # the collector's status arrives
+    doc = frame.build(NOW + 5, None, False, False)
+    assert doc["warming_up"] is True and doc["warmup_left"] == 45
+    later = NOW - 10 + STARTUP_GRACE + 1  # the grace is over and still nothing: silent
+    frame.clock["t"] = later
+    db.set_state("collector_status", _status(later, ready_at=None))
+    db.delete_state = None
+    doc = frame.build(later, None, False, False)
+    assert doc["warming_up"] is False and doc["collector_silent"] is True
 
 
 def test_unhealthy_sensor_lights_the_glyph(frame):

@@ -1,32 +1,30 @@
 """The once-a-minute calculation of what the panel and the Live tab show.
 
-Averages of the last two raw rows (the collector's :00 and :30 beats), the
-AQI from PM2.5 with its words,
-the CO2 word, the three weather blocks (or "stale"), the three glyphs, and
-the two flags the renderer acts on: ``warming_up`` (the collector reports a
-sensor still in warm-up) and ``collector_silent`` (no raw row for 90 s, i.e.
-two beats missed, or the collector's status document older than 90 s).
+Averages of the raw rows of the minute that just ended (only values that
+could be air), the AQI from PM2.5 with its words, the CO2 word, the three
+weather blocks (or "stale"), the three glyphs, and the two flags the renderer
+acts on: ``warming_up`` (the collector's ``ready_at`` is still ahead, or the
+manager itself is in its first two minutes with nothing from the collector
+yet — the start-up screen) and ``collector_silent`` (no raw row for 90 s, or
+the collector's status document older than 90 s).
 """
 
 from typing import Any, Dict, Optional
 
-from collector.sampling import SAMPLE_INTERVAL
 from manager import weather as weather_mod
 from shared.aqi import aqi_category, aqi_from_pm25, co2_category
 
 STATUS_STALE = 90.0      # collector_status older than this → the collector is silent
-COLLECTOR_SILENT = 90.0  # no raw row for this long (two beats missed) → the collector is silent
-# The frame runs on the minute and the collector's :00 row lands a few seconds
-# later, so the minute averaged is the one that ends one beat ago: its two
-# rows (:00 of the previous minute and :30) are certainly written by then.
-AVERAGE_LAG = SAMPLE_INTERVAL
+COLLECTOR_SILENT = 90.0  # no raw row for this long → the collector is silent
+STARTUP_GRACE = 120.0    # the manager's first seconds: no status / no row yet is "starting", not "silent"
 
 
 class FrameBuilder:
-    def __init__(self, db, log, config):
+    def __init__(self, db, log, config, started_at: Optional[float] = None):
         self.db = db
         self.log = log
         self.config = config
+        self.started_at = started_at
         self._weather_stale_logged = False
         self.last: Optional[Dict[str, Any]] = None
 
@@ -35,24 +33,28 @@ class FrameBuilder:
         latest_raw = self.db.latest_raw_at()
         status = self.db.get_state("collector_status")
         fresh = status is not None and now - status["updated_at"] <= STATUS_STALE
+        value = (status or {}).get("value", {}) if fresh else {}
+        ready_at = value.get("ready_at")
+        warmup_left = int(ready_at - now) if isinstance(ready_at, (int, float)) and ready_at > now else 0
+        starting = (self.started_at is not None and now - self.started_at < STARTUP_GRACE
+                    and (not fresh or latest_raw is None))
+        warming = warmup_left > 0 or starting
         rows_silent = latest_raw is None or now - latest_raw > COLLECTOR_SILENT
-        sensors = (status or {}).get("value", {}).get("sensors", {}) if fresh else {}
-        warmup_left = max([int((s or {}).get("warmup_left", 0) or 0) for s in sensors.values()] or [0])
-        warming = warmup_left > 0
+        sensors = value.get("sensors", {})
         unhealthy = [name for name, s in sensors.items() if (s or {}).get("healthy") is False]
         return {
-            "silent": rows_silent or not fresh,
+            "silent": (rows_silent or not fresh) and not warming,
             "rows_silent": rows_silent,
             "status_fresh": fresh,
-            "warming_up": bool(warming) and not rows_silent,
-            "warmup_left": warmup_left if (warming and not rows_silent) else 0,
+            "warming_up": warming,
+            "warmup_left": warmup_left,
             "unhealthy": unhealthy,
             "last_row_at": latest_raw,
         }
 
     def build(self, now: float, weather_doc: Optional[Dict[str, Any]],
               wifi_glyph: bool, power_glyph: bool) -> Dict[str, Any]:
-        averages = self.db.minute_average(int(now) - AVERAGE_LAG)
+        averages = self.db.minute_average(int(now))
         values = averages["values"]
         aqi = aqi_from_pm25(values.get("pm25"))
         full, short = aqi_category(aqi)
@@ -62,7 +64,7 @@ class FrameBuilder:
         doc = {
             "updated_at": int(now),
             "warming_up": state["warming_up"],
-            "warmup_left": state["warmup_left"],  # seconds until every sensor is past its warm-up
+            "warmup_left": state["warmup_left"],  # seconds until every sensor is past its quiet time
             "collector_silent": state["silent"],
             "values": values,
             "samples": averages["samples"],

@@ -29,11 +29,11 @@ def _types(db, type_=None):
 
 def test_collector_stops_writing_event_then_restart_then_cooldown(station):
     station.seed_rows(minutes=1, ahead_minutes=0)  # rows stop at START
-    station.run(16 * 60)  # restart at +5 min, cooldown 10 min, restart again at +15 min
+    station.run(14 * 60)  # restart at +3 min, cooldown 10 min, restart again at +13 min
     db = station.db
     assert _types(db, "collector_silent") == ["collector_silent"]
     restarts = [e for e in db.recent_events(limit=1000) if e["type"] == "collector_restarted"]
-    assert len(restarts) == 2  # at ~5 min and again after the 10 min cooldown
+    assert len(restarts) == 2  # at ~3 min and again after the 10 min cooldown
     assert restarts[-1]["ts"] - START >= COLLECTOR_RESTART_AFTER
     assert restarts[0]["ts"] - restarts[-1]["ts"] >= RESTART_COOLDOWN
     doc = db.get_state("display_data")["value"]
@@ -92,15 +92,14 @@ def test_midnight_runs_hourly_then_nightly_in_order(station, fake_clock, tmp_con
     assert status["storage"]["last_backup_at"] == nightly[0]["ts"]
 
 
-def test_collector_warm_up_shows_the_warming_frame_then_numbers(station):
+def test_collector_quiet_time_shows_the_startup_frame_then_numbers(station):
     station.seed_rows(ahead_minutes=4)
-    warm = {"left": 50}
+    ready_at = int(clock.now()) + 50
 
     def warming_status():
-        station.db.set_state("collector_status", {"stamp": int(clock.now()), "sensors": {
-            name: {"available": True, "healthy": True, "warmup_left": warm["left"]}
+        station.db.set_state("collector_status", {"stamp": int(clock.now()), "ready_at": ready_at, "sensors": {
+            name: {"available": True, "healthy": True, "ready_at": ready_at}
             for name in ("i2c", "scd41", "sht41", "sps30")}})
-        warm["left"] = max(0, warm["left"] - 30)
 
     station.refresh_collector_status = warming_status
     station.run(3 * 60)

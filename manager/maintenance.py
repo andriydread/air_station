@@ -11,7 +11,7 @@ from shared import clock
 NIGHTLY_HOUR = 0
 NIGHTLY_MINUTE = 5
 COLLECTOR_SILENT = 60.0          # no raw row for this long → event
-COLLECTOR_RESTART_AFTER = 300.0  # … and after this long → restart its unit
+COLLECTOR_RESTART_AFTER = 180.0  # … and after this long → restart its unit (decided 2026-09-06)
 RESTART_COOLDOWN = 600.0
 UNCLAIMED_FAIL_AFTER = 600
 RESTART_COLLECTOR = "sudo systemctl restart airstation-collector"
@@ -81,7 +81,7 @@ class Nightly:
 
 
 class CollectorWatch:
-    """No raw row for 60 s → event; 5 min → restart the collector's unit (10 min cooldown)."""
+    """No raw row for 60 s → event; 3 min → restart the collector's unit (10 min cooldown)."""
 
     def __init__(self, log, spawner: Callable = subprocess.Popen):
         self.log = log

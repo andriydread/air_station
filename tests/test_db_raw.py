@@ -27,15 +27,19 @@ def test_same_second_replaces_and_latest_oldest(db):
     assert db.latest_raw_at() == 1010 and db.raw_oldest_at() == 1000
 
 
-def test_minute_average_window_and_nulls(db):
+def test_minute_average_window_nulls_and_what_cannot_be_air(db):
     for i, co2 in enumerate([800, None, 820, 830, 840, 850]):
         db.insert_raw(1000 + 10 * i, _row(co2=co2, temp=20.0 + i))
-    db.insert_raw(940, _row(co2=100))   # exactly now-60: excluded (window is exclusive at the start)
-    db.insert_raw(1060, _row(co2=9000))  # after now: excluded
-    result = db.minute_average(now=1050)
+    db.insert_raw(990, _row(co2=100))    # before now-60: the minute before
+    db.insert_raw(1060, _row(co2=9000))  # exactly now: this minute's first row, not the one that ended
+    result = db.minute_average(now=1060)
     assert result["values"]["co2"] == 828          # (800+820+830+840+850)/5 = 828
     assert result["samples"]["co2"] == 5
     assert result["values"]["temp"] == 22.5 and result["samples"]["temp"] == 6
+    db.insert_raw(1010, _row(co2=0, temp=21.0, pm25=-1.0))  # stored as the sensor said …
+    result = db.minute_average(now=1060)
+    assert result["samples"]["co2"] == 5 and result["values"]["co2"] == 828  # … but not air, so left out
+    assert result["samples"]["pm25"] == 5 and result["samples"]["temp"] == 6
 
 
 def test_minute_average_on_empty_table_is_none_not_error(db):

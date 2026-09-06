@@ -1,4 +1,4 @@
-"""The manager's status document (every 30 s) and its bench-period debug lines."""
+"""The manager's status document (every 30 s), the frame line (one per minute) and the weather line."""
 
 from typing import Any, Dict, Optional
 
@@ -38,12 +38,13 @@ def build_status(*, started_at: float, now: float, log_failures: int, panel, wea
     }
 
 
-def debug_frame_line(log, doc: Dict[str, Any], mode: Optional[str], render_ms: Optional[float],
-                     busy_ms: Optional[float]) -> None:
+def frame_line(log, doc: Dict[str, Any], mode: Optional[str], render_ms: Optional[float],
+               busy_ms: Optional[float]) -> None:
+    """One info line per frame: what the panel shows and how long it took."""
     values = doc.get("values") or {}
     samples = doc.get("samples") or {}
     with_data = [m for m, v in values.items() if v is not None]
-    log.debug("display", "frame", mode=mode or "skipped", render_ms=render_ms, busy_ms=busy_ms,
+    log.info("display", "frame", mode=mode or "skipped", render_ms=render_ms, busy_ms=busy_ms,
               metrics=",".join(with_data) or None,
               samples=",".join(f"{m}:{n}" for m, n in samples.items() if n),
               aqi=doc.get("aqi"), aqi_short=doc.get("aqi_short"), co2=doc.get("co2_category"),

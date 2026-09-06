@@ -86,16 +86,16 @@ class Station:
         """Rows for the last ``minutes`` and, pre-written, for the next ``ahead_minutes``
         (the frame only sees rows up to "now", so they appear to arrive on time)."""
         now = int(clock.now())
-        for i in range(-ahead_minutes * 2, minutes * 2):
-            self.db.insert_raw(now - 30 * i, {"co2": 800 + i, "temp": 22.0, "humid": 40.0,
+        for i in range(-ahead_minutes * 6, minutes * 6):
+            self.db.insert_raw(now - 10 * i, {"co2": 800 + i, "temp": 22.0, "humid": 40.0,
                                               "pm25": 4.0, "pm10": 5.0, "pm1": 2.0})
-        self.db.set_state("collector_status", {"sensors": {
-            name: {"available": True, "healthy": True, "warmup_left": 0} for name in ("i2c", "scd41", "sht41", "sps30")}})
+        self.db.set_state("collector_status", {"ready_at": None, "sensors": {
+            name: {"available": True, "healthy": True, "ready_at": None} for name in ("i2c", "scd41", "sht41", "sps30")}})
 
     def refresh_collector_status(self):
         """What the real collector does every 30 s; without it the manager calls it silent."""
-        self.db.set_state("collector_status", {"stamp": int(clock.now()), "sensors": {
-            name: {"available": True, "healthy": True, "warmup_left": 0}
+        self.db.set_state("collector_status", {"stamp": int(clock.now()), "ready_at": None, "sensors": {
+            name: {"available": True, "healthy": True, "ready_at": None}
             for name in ("i2c", "scd41", "sht41", "sps30")}})
 
     def run(self, seconds, fake_collector=True):
@@ -171,14 +171,16 @@ def test_manager_commands_round_trip(station):
     assert station.spawned == [["sh", "-c", "sleep 2; exec sudo systemctl restart airstation-collector"]]
 
 
-def test_silent_collector_gets_restarted_after_five_minutes(station):
+def test_silent_collector_gets_restarted_and_shown_after_the_startup_grace(station):
     station.db.insert_raw(int(clock.now()) - 400, {"co2": 700})  # the last row is 400 s old
-    station.run(65, fake_collector=False)
+    station.run(125, fake_collector=False)  # the first two minutes say "starting up", then silent
     types = [e["type"] for e in station.db.recent_events()]
     assert "collector_silent" in types and "collector_restarted" in types
     assert station.spawned[-1][-1].endswith("airstation-collector")
     doc = station.db.get_state("display_data")["value"]
-    assert doc["collector_silent"] is True and doc["glyphs"]["sensor"] is True
+    assert doc["collector_silent"] is True and doc["glyphs"]["sensor"] is True and doc["warming_up"] is False
+    lines = [l for l in station.log.path.read_text().splitlines() if " display frame " in l]
+    assert "warming=1 silent=0" in lines[0] and "warming=0 silent=1" in lines[-1]
 
 
 def test_sigterm_stops_cleanly_and_sleeps_the_panel(station):

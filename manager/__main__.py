@@ -22,7 +22,7 @@ from manager.frame import FrameBuilder
 from manager.machine import Machine, Sources
 from manager.maintenance import CollectorWatch, Hourly, Nightly, fail_unclaimed
 from manager.network import ROUTE_PATH, PROBE_EVERY, WifiWatch
-from manager.status import build_status, debug_frame_line, debug_weather_line
+from manager.status import build_status, debug_weather_line, frame_line
 from shared import clock
 from shared.config import Config
 from shared.db import Database
@@ -85,6 +85,7 @@ class Manager:
             self.log.event("warning", "app", "clock_unsynced",
                            "system time not confirmed by NTP; painting anyway")
         self.started_at = clock.now()
+        self.frames.started_at = self.started_at  # the start-up grace counts from here
         stored = self.db.get_state("last_weather")
         if stored and isinstance(stored.get("value"), dict) and stored["value"].get("hourly"):
             self.weather_doc = stored["value"]  # the first frame uses the stored forecast
@@ -128,7 +129,7 @@ class Manager:
         self.panel.render_ms = round((time.perf_counter() - started) * 1000, 1)
         mode = self.panel.show(image, now)
         self.frame_count += 1
-        debug_frame_line(self.log, doc, mode, self.panel.render_ms, self.panel.busy_ms)
+        frame_line(self.log, doc, mode, self.panel.render_ms, self.panel.busy_ms)
         self.watch.tick(now, self.db.latest_raw_at())
 
     def fetch_weather(self) -> None:

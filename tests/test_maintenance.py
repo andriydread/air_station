@@ -78,7 +78,8 @@ class _Spawner:
         self.calls.append((argv, kwargs))
 
 
-def test_collector_watch_event_at_60s_restart_at_300s_with_cooldown(log, db):
+def test_collector_watch_event_at_60s_restart_at_180s_with_cooldown(log, db):
+    assert COLLECTOR_RESTART_AFTER == 180
     spawner = _Spawner()
     watch = CollectorWatch(log, spawner=spawner)
     last_row = 1000.0
