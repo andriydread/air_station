@@ -27,6 +27,12 @@ TABLES: Tuple[str, ...] = (
     "raw_measurements", "hourly_measurements", "vitals", "events", "commands", "state",
 )
 
+# the column that orders each table newest first (the Data tab pages on it)
+TABLE_ORDER: Dict[str, str] = {
+    "raw_measurements": "recorded_at", "hourly_measurements": "hour", "vitals": "recorded_at",
+    "events": "id", "commands": "id", "state": "updated_at",
+}
+
 _HOURLY_STAT_COLUMNS = ", ".join(
     f"{metric}_{stat} REAL" for metric in METRICS for stat in ("min", "max", "avg")
 )
@@ -656,6 +662,33 @@ class Database:
         ])
         return {key: int(value) for key, value in counts.items()}
 
+
+    # --- browsing (the Data tab) ---------------------------------------------------
+
+    def table_counts(self) -> Dict[str, int]:
+        """Row count per table, in ``TABLES`` order."""
+        return {name: int(self.query_one(f"SELECT COUNT(*) AS n FROM {name}")["n"]) for name in TABLES}
+
+    def table_page(self, table: str, limit: int = 100, before: Optional[Any] = None) -> Dict[str, Any]:
+        """One page of a table, newest first, as stored (JSON columns stay text).
+
+        ``before``: only rows whose order column is below it (the ``next`` of the
+        previous page). Returns columns, rows, the cursor for the next page (None
+        at the end) and the order column's name.
+        """
+        if table not in TABLE_ORDER:
+            raise ValueError(f"unknown table: {table}")
+        order = TABLE_ORDER[table]
+        limit = max(1, min(500, int(limit)))
+        columns = [row["name"] for row in self.query(f"PRAGMA table_info({table})")]
+        where = f" WHERE {order} < ?" if before is not None else ""
+        params: List[Any] = [before] if before is not None else []
+        rows = [dict(row) for row in self.query(
+            f"SELECT * FROM {table}{where} ORDER BY {order} DESC LIMIT ?", (*params, limit + 1))]
+        more = len(rows) > limit
+        rows = rows[:limit]
+        return {"table": table, "order_by": order, "columns": columns, "rows": rows,
+                "next": rows[-1][order] if more else None}
 
 def round_metric(metric: str, value: Any) -> Any:
     """CO2 is a whole ppm, particle size keeps 3 decimals, the rest 2."""

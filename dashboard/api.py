@@ -345,3 +345,35 @@ def live() -> Any:
         "version": {"commit": rt["commit"], "uptimes": uptimes},
         "now": now,
     })
+
+
+# --- the Data tab: the tables as they are ------------------------------------------
+
+DATA_PAGE = 100
+
+
+@api.get("/data/tables")
+def data_tables() -> Any:
+    from shared.db import TABLE_ORDER
+
+    counts = _rt()["db"].table_counts()
+    return jsonify({"tables": [{"name": name, "rows": counts[name], "order_by": TABLE_ORDER[name]}
+                               for name in counts]})
+
+
+@api.get("/data/rows")
+def data_rows() -> Any:
+    from flask import request
+
+    args = request.args
+    table = args.get("table", "")
+    limit = _int_arg(args, "limit", DATA_PAGE, 1, 500)
+    before = args.get("before")
+    if before is not None and before != "":
+        try:
+            before = int(before)
+        except ValueError:
+            raise ValueError("before must be a whole number") from None
+    else:
+        before = None
+    return jsonify(_rt()["db"].table_page(table, limit=limit, before=before))
