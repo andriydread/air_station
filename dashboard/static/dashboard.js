@@ -697,11 +697,10 @@ async function refreshHistory() {
   renderStats(data);
   document.getElementById('export-csv').href = `/api/export.csv?from=${from}&to=${to}`;
   const note = document.getElementById('resolution-note');
+  const per = data.bucket_seconds >= 60 ? `${data.bucket_seconds / 60} min` : `${data.bucket_seconds} s`;
   note.textContent = data.resolution === 'hourly'
-    ? 'Hourly averages (min/max in the tooltip) — this range reaches beyond the 30-second rows.'
-    : data.bucket_seconds <= 30
-      ? '30-second rows, one point each.'
-      : `30-second rows averaged per ${data.bucket_seconds >= 60 ? `${data.bucket_seconds / 60} min` : `${data.bucket_seconds} s`}.`;
+    ? 'Hourly averages, min and max in the tooltip.'
+    : `10-second rows averaged per ${per}.`;
 }
 
 function renderStats(data) {

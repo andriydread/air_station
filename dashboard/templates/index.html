@@ -106,7 +106,6 @@
           <div class="panel-head">
             <h2>E-paper screen</h2>
           </div>
-          <p class="panel-note">Exactly what the physical display is showing · 416 × 240 · refreshes every minute.</p>
           <div class="preview-frame"><img id="display-preview" alt="e-paper preview" hidden></div>
           <p id="preview-note" class="panel-note">No frame yet.</p>
         </section>
@@ -118,22 +117,39 @@
       <section class="panel">
         <div class="panel-head">
           <h2>Range</h2>
-          <div class="range-switch" id="range-presets">
-            <button data-hours="6" type="button">6h</button>
-            <button data-hours="24" class="active" type="button">24h</button>
-            <button data-hours="72" type="button">3d</button>
-            <button data-hours="168" type="button">7d</button>
-            <button data-hours="720" type="button">30d</button>
-            <button data-hours="8760" type="button">1y</button>
+          <button class="hint" data-hint="Top row: the 10-second rows, averaged into buckets that fit the width. Bottom row: the hourly averages (min/max in the tooltip)." type="button">?</button>
+        </div>
+        <div class="range-rows" id="range-presets">
+          <div class="range-row">
+            <span class="range-row-label">Raw</span>
+            <div class="range-switch">
+              <button data-hours="1" type="button">1h</button>
+              <button data-hours="3" type="button">3h</button>
+              <button data-hours="6" type="button">6h</button>
+              <button data-hours="12" type="button">12h</button>
+              <button data-hours="24" class="active" type="button">24h</button>
+              <button data-hours="72" type="button">3d</button>
+              <button data-hours="168" type="button">7d</button>
+            </div>
+          </div>
+          <div class="range-row">
+            <span class="range-row-label">Hourly</span>
+            <div class="range-switch">
+              <button data-hours="720" type="button">30d</button>
+              <button data-hours="1440" type="button">60d</button>
+              <button data-hours="2160" type="button">90d</button>
+              <button data-hours="4320" type="button">180d</button>
+              <button data-hours="8760" type="button">1y</button>
+            </div>
           </div>
         </div>
+        <p class="panel-note range-note" id="resolution-note"></p>
         <form id="custom-range-form" class="range-custom">
           <label>From <input type="datetime-local" id="range-from"></label>
           <label>To <input type="datetime-local" id="range-to"></label>
           <button type="submit">Apply</button>
           <a id="export-csv" class="ghost-button" href="/api/export.csv" download>Export CSV</a>
         </form>
-        <p class="panel-note" id="resolution-note"></p>
       </section>
 
       <section class="panel">

@@ -314,13 +314,19 @@ button.button-danger {
   border-radius: 999px;
 }
 .range-switch button.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+/* History: two rows of presets — the raw rows on top, the hourly averages
+   below — each with a small label; the resolution note sits under both. */
+.range-rows { display: flex; flex-direction: column; gap: 8px; }
+.range-row { display: flex; align-items: center; gap: 12px; }
+.range-row-label { width: 56px; flex: none; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.range-note { margin: 10px 0 0; }
 
 .range-custom {
   display: flex;
   align-items: end;
   gap: 12px;
   flex-wrap: wrap;
-  margin-top: 4px;
+  margin-top: 12px;
 }
 .range-custom label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .range-custom input {
