@@ -427,7 +427,6 @@ async function refreshSparklines() {
   }
   for (const key of ['temp', 'humid', 'co2', 'aqi']) {
     renderSparkline(`spark-${key}`, sparkRows, key);
-    renderHeroRange(key);
   }
   renderTodayRecap();
 }
@@ -495,18 +494,6 @@ function renderSparkline(svgId, rows, key) {
   const [lastX, lastY] = coords[coords.length - 1];
   svg.innerHTML = `<polyline fill="none" stroke="currentColor" stroke-width="2" points="${line}"></polyline>
     <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.5" fill="currentColor"></circle>`;
-}
-
-function renderHeroRange(key) {
-  const element = document.getElementById(`range-${key}`);
-  if (!element || !sparkRows) return;
-  const values = sparkRows.filter((row) => row[key] != null).map((row) => row[key]);
-  if (values.length < 2) {
-    element.textContent = '';
-    return;
-  }
-  const digits = key === 'co2' || key === 'aqi' ? 0 : 1;
-  element.textContent = `24h ${Math.min(...values).toFixed(digits)} – ${Math.max(...values).toFixed(digits)}`;
 }
 
 let previewObjectUrl = null;
