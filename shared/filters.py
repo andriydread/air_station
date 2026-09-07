@@ -5,15 +5,16 @@ this rule never touches a row. It is used in two places only: the collector
 counts a reading as *bad* for the reset ladder, and the manager leaves the
 value out of the panel's minute average. Limits follow the datasheets: the
 SCD4x output range tops out at 40 000 ppm (above it is a corrupt transfer,
-the classic 0xFFFF word), CO2 below 350 ppm is not indoor air, the SHT4x /
-SCD4x temperature and humidity ranges, and particle numbers are never
-negative.
+the classic 0xFFFF word), CO2 below 10 ppm is a dead sensor, not air (the
+operator's choice, 2026-09-07: a freshly calibrated sensor may read a little
+under outdoor air and that is still a reading), the SHT4x / SCD4x temperature
+and humidity ranges, and particle numbers are never negative.
 """
 
 import math
 from typing import Any, Optional
 
-CO2_MIN = 350
+CO2_MIN = 10
 CO2_MAX = 40_000
 TEMP_RANGE = (-40.0, 85.0)
 HUMID_RANGE = (0.0, 100.0)

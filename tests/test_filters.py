@@ -10,7 +10,8 @@ from shared.filters import implausible, plausible
     [
         ("co2", 812.6, None),
         ("co2", 350, None),
-        ("co2", 349.9, "range"),
+        ("co2", 10, None),
+        ("co2", 9.9, "range"),
         ("co2", 40000, None),
         ("co2", 65535, "range"),          # the 0xFFFF garbage word
         ("co2", 0, "range"),

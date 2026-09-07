@@ -20,8 +20,8 @@ the quiet minute ends. The panel says "Starting up" meanwhile.
 
 Every value a sensor gives is stored as it came (since 2026-09-06). A value
 that cannot be air — a non-finite float, a negative particle count, a
-temperature outside −40…85 °C, humidity outside 0…100 %, CO2 below 350 ppm
-(not indoor air) or above the sensor's 40 000 ppm output range (a corrupt
+temperature outside −40…85 °C, humidity outside 0…100 %, CO2 below 10 ppm
+(a dead sensor, not air) or above the sensor's 40 000 ppm output range (a corrupt
 0xFFFF) — is still written to the row; the rule in `shared/filters.py` only
 counts the reading as *bad* for the sensor's reset ladder and keeps the
 value out of the panel's minute average. The ladder: six bad readings in a
