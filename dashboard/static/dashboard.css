@@ -337,13 +337,16 @@ button.button-danger {
 }
 
 .table-scroll { overflow-x: auto; }
+/* Statistics: two tables side by side, each with its own header row; they
+   stack on a phone. */
+.stats-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; align-items: start; }
 .stats-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .stats-table th, .stats-table td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); }
 /* Narrow right-aligned number columns so min/avg/max sit together instead
    of spreading across the whole panel; the metric column absorbs the rest. */
 .stats-table th:not(:first-child), .stats-table td:not(:first-child) {
   text-align: right;
-  width: 90px;
+  width: 72px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -351,7 +354,7 @@ button.button-danger {
 .stats-table tr:last-child td { border-bottom: none; }
 /* min→max range bar (last column) */
 .stats-table th.stats-range-head, .stats-table td.stats-range {
-  width: 140px;
+  width: 110px;
   text-align: left;
   white-space: normal;
 }
@@ -636,6 +639,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 @media (max-width: 980px) {
   .live-panels, .diag-grid { grid-template-columns: 1fr; }
   .chart-grid { grid-template-columns: 1fr; }
+  .stats-pair { grid-template-columns: 1fr; }
 }
 @media (max-width: 760px) {
   .controls-grid { grid-template-columns: 1fr; }

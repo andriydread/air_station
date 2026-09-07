@@ -599,23 +599,28 @@ let lastHistory = null;
 // overwrite the charts with data for a range no longer selected.
 let historyRequestToken = 0;
 
-const statsMetrics = [
-  ['temp', 'Temperature, °C', 1],
-  ['co2_temp', 'CO2 sensor temperature, °C', 1],
-  ['humid', 'Humidity, %', 1],
-  ['co2_humid', 'CO2 sensor humidity, %', 1],
-  ['co2', 'CO2, ppm', 0],
-  ['pm1', 'PM1, µg/m³', 2],
-  ['pm25', 'PM2.5, µg/m³', 2],
-  ['pm4', 'PM4, µg/m³', 2],
-  ['pm10', 'PM10, µg/m³', 2],
-  ['tps', 'Particle size, µm', 2],
-  ['nc05', 'Particles ≥0.5 µm, /cm³', 1],
-  ['nc1', 'Particles ≥1 µm, /cm³', 1],
-  ['nc25', 'Particles ≥2.5 µm, /cm³', 1],
-  ['nc4', 'Particles ≥4 µm, /cm³', 1],
-  ['nc10', 'Particles ≥10 µm, /cm³', 1],
-];
+// Two tables side by side: what the air is (left) and what floats in it (right).
+const statsTables = {
+  'stats-table-left': [
+    ['temp', 'Temperature, °C', 1],
+    ['co2_temp', 'CO2 sensor temperature, °C', 1],
+    ['humid', 'Humidity, %', 1],
+    ['co2_humid', 'CO2 sensor humidity, %', 1],
+    ['co2', 'CO2, ppm', 0],
+    ['pm1', 'PM1, µg/m³', 2],
+    ['pm25', 'PM2.5, µg/m³', 2],
+    ['pm4', 'PM4, µg/m³', 2],
+    ['pm10', 'PM10, µg/m³', 2],
+  ],
+  'stats-table-right': [
+    ['nc05', 'Particles ≥0.5 µm, /cm³', 1],
+    ['nc1', 'Particles ≥1 µm, /cm³', 1],
+    ['nc25', 'Particles ≥2.5 µm, /cm³', 1],
+    ['nc4', 'Particles ≥4 µm, /cm³', 1],
+    ['nc10', 'Particles ≥10 µm, /cm³', 1],
+    ['tps', 'Particle size, µm', 2],
+  ],
+};
 
 function dynamicFromZero(values, minSpan) {
   const rawMax = Math.max(...values, 0);
@@ -710,13 +715,15 @@ function renderStats(data) {
     samples != null
       ? `${samples} ${data.resolution === 'hourly' ? 'samples in hourly rows' : 'raw samples'} · ${formatTimestamp(data.from)} → ${formatTimestamp(data.to)}`
       : DASH;
-  const body = document.querySelector('#stats-table tbody');
-  body.innerHTML = '';
-  for (const [key, label, digits] of statsMetrics) {
-    const entry = stats[key] || {};
-    const row = document.createElement('tr');
-    row.innerHTML = `<td>${escapeHtml(label)}</td><td>${fmt(entry.min, digits)}</td><td>${fmt(entry.avg, digits)}</td><td>${fmt(entry.max, digits)}</td><td class="stats-range">${statsRangeBar(key, entry)}</td>`;
-    body.appendChild(row);
+  for (const [tableId, metrics] of Object.entries(statsTables)) {
+    const body = document.querySelector(`#${tableId} tbody`);
+    body.innerHTML = '';
+    for (const [key, label, digits] of metrics) {
+      const entry = stats[key] || {};
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${escapeHtml(label)}</td><td>${fmt(entry.min, digits)}</td><td>${fmt(entry.avg, digits)}</td><td>${fmt(entry.max, digits)}</td><td class="stats-range">${statsRangeBar(key, entry)}</td>`;
+      body.appendChild(row);
+    }
   }
 }
 
