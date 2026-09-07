@@ -1287,7 +1287,7 @@ function healthOf(app, key, live) {
     const d = manager.display || {};
     if (!d.available) return { word: 'error', tone: BAD, detail: d.last_error || 'not available' };
     if (d.healthy === false) return { word: 'error', tone: BAD, detail: d.last_error || '' };
-    return { word: 'ok', tone: OK, detail: `${d.frames ?? 0} frames` };
+    return { word: 'ok', tone: OK, detail: `${d.frames ?? 0} frame${d.frames === 1 ? '' : 's'}` };
   }
   if (key === 'weather') {
     const w = manager.weather || {};
