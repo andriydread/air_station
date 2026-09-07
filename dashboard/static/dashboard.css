@@ -420,6 +420,39 @@ button.button-danger {
 .diag-side .panel { margin-bottom: 0; }
 
 .filter-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Station health / status: hairline rows, the name left, the detail muted
+   in the middle, one fixed-width pill (or value) on the right, so the
+   right edge reads as a column. */
+.health-list p {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.health-list p:last-child { border-bottom: none; }
+.health-name { flex: none; min-width: 104px; }
+.health-detail { flex: 1; min-width: 0; text-align: right; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.state {
+  flex: none;
+  width: 82px;
+  padding: 3px 0;
+  border-radius: 999px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--paper);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.state-ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.state-warn { background: var(--danger-soft); color: var(--warning); border-color: transparent; }
+.state-bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 .filter-row select {
   background: var(--input-bg);
   border: 1px solid var(--line);

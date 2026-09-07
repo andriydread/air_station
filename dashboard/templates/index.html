@@ -240,8 +240,8 @@
 
         <div class="diag-side">
           <section class="panel">
-            <div class="panel-head"><h2>Station health</h2><button class="hint" data-hint="Every subsystem the two programs track. Quiet grey means healthy; only problems get color and show their actual error." type="button">?</button></div>
-            <div class="info-list" id="sensor-health-list"></div>
+            <div class="panel-head"><h2>Station health</h2><button class="hint" data-hint="Every part the two programs watch, one word each: ok, starting (the quiet minute), re-init (the reset ladder fired, quiet again), error (the last error is the detail), throttled (the Pi reports a power flag)." type="button">?</button></div>
+            <div class="health-list" id="sensor-health-list"></div>
           </section>
           <section class="panel">
             <div class="panel-head"><h2>Station &amp; connectivity</h2><button class="hint" data-hint="How long each program has run, the Wi-Fi link to the router and to the internet, and the Pi's power flags — undervoltage means the power supply is struggling." type="button">?</button></div>

@@ -1256,56 +1256,58 @@ function renderRestartCount(restarts) {
   element.className = total > 1 || (restarts.manager || 0) > 1 ? 'health-bad' : '';
 }
 
+// Station health: one word per part (the pill) and a short detail. The
+// words: ok · starting · re-init · error · throttled · n/a.
 const healthRows = [
-  ['collector', 'scd41', 'SCD41 · CO2'],
-  ['collector', 'sht41', 'SHT41 · temp/RH'],
-  ['collector', 'sps30', 'SPS30 · particulates'],
+  ['collector', 'scd41', 'SCD41'],
+  ['collector', 'sht41', 'SHT41'],
+  ['collector', 'sps30', 'SPS30'],
   ['collector', 'i2c', 'I2C bus'],
   ['manager', 'display', 'E-paper'],
   ['manager', 'weather', 'Weather fetch'],
   ['manager', 'wifi', 'Wi-Fi'],
   ['manager', 'power', 'Power'],
-  ['manager', 'storage', 'Storage'],
 ];
+
+const OK = 'ok';
+const BAD = 'bad';
+const WARN = 'warn';
 
 function healthOf(app, key, live) {
   if (app === 'collector') {
     const entry = live?.collector_status?.value?.sensors?.[key];
     if (!entry) return null;
-    if (entry.available === false) return { ok: false, text: entry.last_error || 'missing' };
+    const reinits = entry.reinit_count ? `${entry.reinit_count} re-init${entry.reinit_count === 1 ? '' : 's'}` : '';
+    if (entry.available === false) return { word: 'error', tone: BAD, detail: entry.last_error || 'missing' };
     const quiet = Math.round((entry.ready_at || 0) - serverNow());
-    if (quiet > 0) return { ok: true, warn: true, text: `starting up · ready in ${quiet}s` };
-    if (entry.healthy === false) return { ok: false, text: entry.last_error || 'unhealthy' };
-    const id = entry.id ? ` · ${entry.id}` : '';
-    const reinits = entry.reinit_count ? ` · ${entry.reinit_count} re-init${entry.reinit_count === 1 ? '' : 's'}` : '';
-    return { ok: true, text: `ok${id}${reinits}` };
+    if (quiet > 0) return { word: entry.reinit_count ? 're-init' : 'starting', tone: WARN, detail: `ready in ${quiet} s` };
+    if (entry.healthy === false) return { word: 'error', tone: BAD, detail: entry.last_error || 'unhealthy' };
+    return { word: 'ok', tone: OK, detail: reinits };
   }
   const manager = live?.manager_status?.value;
   if (!manager) return null;
   if (key === 'display') {
     const d = manager.display || {};
-    if (!d.available) return { ok: false, text: d.last_error || 'not available' };
-    return d.healthy === false ? { ok: false, text: d.last_error || 'error' } : { ok: true, text: `ok · ${d.frames ?? 0} frames` };
+    if (!d.available) return { word: 'error', tone: BAD, detail: d.last_error || 'not available' };
+    if (d.healthy === false) return { word: 'error', tone: BAD, detail: d.last_error || '' };
+    return { word: 'ok', tone: OK, detail: `${d.frames ?? 0} frames` };
   }
   if (key === 'weather') {
     const w = manager.weather || {};
-    if (w.ok === false) return { ok: false, text: w.error || 'fetch failed' };
-    return { ok: true, text: w.fetched_at ? `ok · ${formatRelative(w.fetched_at)}` : 'not fetched yet' };
+    if (w.ok === false) return { word: 'error', tone: BAD, detail: w.error || 'fetch failed' };
+    return { word: 'ok', tone: OK, detail: w.fetched_at ? `fetched ${formatRelative(w.fetched_at)}` : 'not fetched yet' };
   }
   if (key === 'wifi') {
     const w = manager.wifi || {};
-    if (w.router_ok === false) return { ok: false, text: `router unreachable · ${w.router_failures} probes` };
-    if (w.internet_ok === false) return { ok: false, text: 'no internet' };
-    return { ok: true, text: w.router_ok == null ? DASH : 'ok' };
+    if (w.router_ok === false) return { word: 'error', tone: BAD, detail: `router unreachable · ${w.router_failures} probes` };
+    if (w.internet_ok === false) return { word: 'error', tone: BAD, detail: 'router only, no internet' };
+    if (w.router_ok == null) return null;
+    return { word: 'ok', tone: OK, detail: 'router and internet' };
   }
   if (key === 'power') {
     const p = manager.power || {};
-    if (!p.available) return { ok: true, text: 'n/a' };
-    return p.now?.length ? { ok: false, text: p.now.join(', ') } : { ok: true, text: 'ok' };
-  }
-  if (key === 'storage') {
-    const s = manager.storage || {};
-    return { ok: true, text: `${formatMb(s.db_mb)}${s.vitals_write_failures ? ` · ${s.vitals_write_failures} write failures` : ''}` };
+    if (!p.available) return { word: 'n/a', tone: WARN, detail: 'no power flags on this machine' };
+    return p.now?.length ? { word: 'throttled', tone: BAD, detail: p.now.join(', ') } : { word: 'ok', tone: OK, detail: '' };
   }
   return null;
 }
@@ -1316,9 +1318,11 @@ function renderStationHealth(live) {
   for (const [app, key, label] of healthRows) {
     const health = healthOf(app, key, live);
     const row = document.createElement('p');
-    const text = health ? health.text : DASH;
-    const cls = health && !health.ok ? ' class="health-bad"' : (health?.warn ? ' class="health-warn"' : '');
-    row.innerHTML = `<span>${escapeHtml(label)}</span><strong${cls}>${escapeHtml(text)}</strong>`;
+    const word = health ? health.word : DASH;
+    const tone = health ? health.tone : 'none';
+    row.innerHTML = `<span class="health-name">${escapeHtml(label)}</span>` +
+      `<span class="health-detail">${escapeHtml(health?.detail || '')}</span>` +
+      `<span class="state state-${tone}">${escapeHtml(word)}</span>`;
     list.appendChild(row);
   }
 }
