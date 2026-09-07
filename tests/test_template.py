@@ -36,7 +36,7 @@ def test_exactly_six_command_buttons(page):
 
 
 def test_rd_chips_footer_and_charts(page):
-    assert page.count('class="rd-chip"') == 2  # Flagged samples, Measurements (Start reason went 2026-09-07)
+    assert page.count('class="rd-chip"') == 1  # Measurements on the Database card (the other two went 2026-09-07)
     assert 'id="version-commit"' in page and 'id="warming-banner"' in page
     for chart in ("chart-nc", "chart-tps", "chart-cpu", "chart-load", "chart-mem", "chart-disk", "chart-wifi", "chart-lag"):
         assert f'id="{chart}"' in page
