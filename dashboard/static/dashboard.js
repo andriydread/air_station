@@ -1145,7 +1145,7 @@ installers.push(() => {
 
 // ---------------------------------------------------------------------------
 // Diagnostics tab: events (from all three programs), commands, health,
-// connectivity, housekeeping
+// connectivity
 // ---------------------------------------------------------------------------
 
 let commandsCache = [];
@@ -1162,12 +1162,10 @@ function eventQuery() {
 
 async function refreshDiagnostics() {
   const now = Math.floor(serverNow());
-  const [events, commands, restarts, storage, cleans, vitals] = await Promise.all([
+  const [events, commands, restarts, vitals] = await Promise.all([
     fetchJson(`/api/events?${eventQuery()}`),
     fetchJson('/api/commands?limit=20'),
     fetchJson('/api/restarts?hours=24'),
-    fetchJson('/api/events?source=storage&limit=30'),
-    fetchJson('/api/events?source=sps30&limit=50'),
     fetchJson(`/api/vitals?from=${now - 600}&to=${now}`),
   ]);
   renderEvents(events.events || []);
@@ -1178,7 +1176,6 @@ async function refreshDiagnostics() {
   recentVitalsLatest = vitals.latest || null;
   renderStationHealth(lastLive);
   renderConnectivity(lastLive);
-  renderHousekeeping(lastLive, storage.events || [], cleans.events || []);
 }
 
 async function refreshCommandsOnly() {
@@ -1351,31 +1348,6 @@ function renderConnectivity(live) {
   set('network-bounce', wifi.bounces ? `${wifi.bounces} · last ${formatRelative(wifi.last_bounce_at)}` : 'none since start', wifi.bounces > 0);
 }
 
-function renderHousekeeping(live, storageEvents, sps30Events) {
-  const storage = live?.manager_status?.value?.storage || {};
-  const overdueSeconds = 26 * 3600; // nightly tasks get a 2 h grace period
-  const setLine = (id, ts, canBeOverdue) => {
-    const element = document.getElementById(id);
-    if (!ts) {
-      element.textContent = 'never';
-      element.className = '';
-      return;
-    }
-    const overdue = canBeOverdue && serverNow() - ts > overdueSeconds;
-    element.textContent = formatRelative(ts) + (overdue ? ' · overdue' : '');
-    element.title = formatTimestamp(ts);
-    element.className = overdue ? 'health-bad' : '';
-  };
-  const nightly = storageEvents.find((event) => event.type === 'nightly');
-  setLine('hk-backup', storage.last_backup_at || nightly?.ts || null, true);
-  setLine('hk-prune', storage.last_prune_at || nightly?.ts || null, true);
-  setLine('hk-rollup', storage.last_rollup_hour ? storage.last_rollup_hour + 3600 : null, false);
-  const clean = sps30Events.find((event) => event.type === 'fan_clean');
-  setLine('hk-clean', clean?.ts || null, false);
-  document.getElementById('hk-db-size').textContent = storage.db_mb == null
-    ? DASH : `${formatMb(storage.db_mb)}${storage.last_backup_mb != null ? ` · backup ${formatMb(storage.last_backup_mb)}` : ''}`;
-}
-
 // --- Custom dropdowns --------------------------------------------------------
 // Native <select> popups commit on mouse-release on the operator's system,
 // which made the menus unusable. The native select stays in the DOM as the
@@ -1485,6 +1457,7 @@ installers.push(() => {
 // the button unlocks exactly when a command would pass.
 const calibrationLimits = { min_runtime: 180, min_samples: 3, max_spread: 30, max_delta: 200 };
 const pendingCommandTypes = new Set();
+let lastFanCleanAt = null; // the newest fan_clean event, fetched when the tab opens
 
 function renderControls(live) {
   const collector = live?.collector_status?.value || {};
@@ -1497,6 +1470,9 @@ function renderControls(live) {
   document.getElementById('scd41-pressure').textContent = collector.pressure_hpa == null
     ? 'altitude only (no weather pressure yet)' : `${collector.pressure_hpa} hPa from the weather`;
   document.getElementById('sps30-firmware').textContent = collector.sensors?.sps30?.id || DASH;
+  const clean = document.getElementById('sps30-last-clean');
+  clean.textContent = lastFanCleanAt ? formatRelative(lastFanCleanAt) : 'never';
+  clean.title = lastFanCleanAt ? formatTimestamp(lastFanCleanAt) : '';
   document.getElementById('database-size').textContent = formatMb(manager.storage?.db_mb);
   document.getElementById('database-free').textContent = formatMb(recentVitalsLatest?.disk_free);
   document.getElementById('database-newest').textContent = lastChanges?.raw_at ? formatRelative(lastChanges.raw_at) : DASH;
@@ -1586,9 +1562,13 @@ async function runButton(button) {
 tabRefreshers.controls = async () => {
   const now = Math.floor(serverNow());
   try {
-    const vitals = await fetchJson(`/api/vitals?from=${now - 600}&to=${now}`);
+    const [vitals, cleans] = await Promise.all([
+      fetchJson(`/api/vitals?from=${now - 600}&to=${now}`),
+      fetchJson('/api/events?source=sps30&limit=50'),
+    ]);
     recentVitalsLatest = vitals.latest || recentVitalsLatest;
-  } catch (_error) { /* the disk line stays a dash */ }
+    lastFanCleanAt = (cleans.events || []).find((event) => event.type === 'fan_clean')?.ts || null;
+  } catch (_error) { /* the disk and fan-clean lines stay as they were */ }
   renderControls(lastLive);
   renderCommandNotes(commandsCache);
 };

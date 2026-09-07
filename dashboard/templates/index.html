@@ -259,16 +259,6 @@
             </div>
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Housekeeping</h2><button class="hint" data-hint="The station maintains itself: nightly prune and backup at 00:05, hourly rollups, the Sunday 04:00 fan clean. Colored only when something is overdue." type="button">?</button></div>
-            <div class="info-list">
-              <p><span>Last backup</span><strong id="hk-backup">--</strong></p>
-              <p><span>Last data prune</span><strong id="hk-prune">--</strong></p>
-              <p><span>Last hourly rollup</span><strong id="hk-rollup">--</strong></p>
-              <p><span>Last fan clean</span><strong id="hk-clean">--</strong></p>
-              <p><span>Database</span><strong id="hk-db-size">--</strong></p>
-            </div>
-          </section>
-          <section class="panel">
             <div class="panel-head"><h2>Flagged samples</h2><p class="panel-note">Readings the quality guard rejected</p></div>
             <div class="empty-state"><span class="rd-chip" title="no source in the redesign — decide later">RD</span> The rate guard is gone; dropped values are events now (filter source scd41/sht41/sps30, type value_dropped).</div>
           </section>
@@ -307,6 +297,7 @@
           <h2>SPS30 particulates <button class="hint" data-hint="Particulate sensor. The fan clean blows accumulated dust out; the collector also runs one every Sunday at 04:00." type="button">?</button></h2>
           <div class="info-list">
             <p><span>Weekly clean</span><strong>Sunday 04:00</strong></p>
+            <p><span>Last fan clean</span><strong id="sps30-last-clean">--</strong></p>
             <p><span>Firmware</span><strong id="sps30-firmware">--</strong></p>
           </div>
           <div class="button-row">
