@@ -428,38 +428,6 @@ async function refreshSparklines() {
   for (const key of ['temp', 'humid', 'co2', 'aqi']) {
     renderSparkline(`spark-${key}`, sparkRows, key);
   }
-  renderTodayRecap();
-}
-
-function renderTodayRecap() {
-  const wrapper = document.getElementById('today-recap');
-  const list = document.getElementById('today-recap-list');
-  if (!wrapper || !list || !sparkRows) return;
-  const midnight = new Date();
-  midnight.setHours(0, 0, 0, 0);
-  const todayRows = sparkRows.filter((row) => row.ts * 1000 >= midnight.getTime());
-  const extreme = (key, pick) => {
-    const rows = todayRows.filter((row) => row[key] != null);
-    if (rows.length < 2) return null;
-    return rows.reduce((best, row) => (pick(row[key], best[key]) ? row : best));
-  };
-  const warmest = extreme('temp', (a, b) => a > b);
-  const coolest = extreme('temp', (a, b) => a < b);
-  const co2Peak = extreme('co2', (a, b) => a > b);
-  const lines = [];
-  if (warmest && coolest) {
-    lines.push(['Warmest', `${warmest.temp.toFixed(1)}° at ${formatClock(warmest.ts)}`]);
-    lines.push(['Coolest', `${coolest.temp.toFixed(1)}° at ${formatClock(coolest.ts)}`]);
-  }
-  if (co2Peak) lines.push(['CO2 peak', `${Math.round(co2Peak.co2)} ppm at ${formatClock(co2Peak.ts)}`]);
-  if (!lines.length) {
-    wrapper.hidden = true;
-    return;
-  }
-  list.innerHTML = lines.map(([label, value]) =>
-    `<p><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></p>`
-  ).join('');
-  wrapper.hidden = false;
 }
 
 function renderSparkline(svgId, rows, key) {
