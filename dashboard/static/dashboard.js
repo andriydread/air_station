@@ -1253,7 +1253,7 @@ function renderRestartCount(restarts) {
   const element = document.getElementById('collector-restarts');
   const total = (restarts.collector || 0);
   element.textContent = `collector ${restarts.collector ?? DASH} · manager ${restarts.manager ?? DASH} · dashboard ${restarts.dashboard ?? DASH}`;
-  element.className = total > 1 || (restarts.manager || 0) > 1 ? 'health-bad' : '';
+  element.className = `health-value${total > 1 || (restarts.manager || 0) > 1 ? ' health-bad' : ''}`;
 }
 
 // Station health: one word per part (the pill) and a short detail. The
@@ -1335,18 +1335,20 @@ function renderConnectivity(live) {
   const set = (id, text, bad = false) => {
     const element = document.getElementById(id);
     element.textContent = text;
-    element.className = bad ? 'health-bad' : '';
+    element.className = `health-value${bad ? ' health-bad' : ''}`;
   };
-  set('collector-uptime', collector.uptime == null ? DASH : `${formatDuration(collector.uptime)} (since ${formatTimestamp(collector.started_at)})`);
-  set('manager-uptime', manager.uptime == null ? DASH : `${formatDuration(manager.uptime)} (since ${formatTimestamp(manager.started_at)})`);
+  const up = (doc) => (doc.uptime == null ? DASH : `${formatDuration(doc.uptime)} · since ${formatClock(doc.started_at)}`);
+  set('collector-uptime', up(collector));
+  set('manager-uptime', up(manager));
   set('network-router', wifi.router_ok == null ? DASH : (wifi.router_ok ? `reachable · ${wifi.gateway || ''}` : `unreachable · ${wifi.router_failures} probes`), wifi.router_ok === false);
   set('network-internet', wifi.internet_ok == null ? DASH : (wifi.internet_ok ? 'reachable' : `unreachable · ${wifi.wan_failures} probes`), wifi.internet_ok === false);
   const rssi = recentVitalsLatest?.wifi_rssi;
   set('network-signal', rssi == null ? DASH : `${rssi} dBm · ${signalQuality(rssi)}`);
-  set('network-latency', `router ${fmt(wifi.lan_ms, 0)} ms · internet ${fmt(wifi.wan_ms, 0)} ms`);
-  set('network-bounce', wifi.last_bounce_at ? `${formatRelative(wifi.last_bounce_at)} (${wifi.bounces} total)` : 'never');
-  set('power-now', !power.available ? 'n/a' : (power.now?.length ? power.now.join(', ') : 'ok'), power.now?.length > 0);
-  set('power-since-boot', !power.available ? 'n/a' : (power.since_boot?.length ? power.since_boot.join(', ') : 'none'));
+  set('network-lan-ms', wifi.lan_ms == null ? DASH : `${fmt(wifi.lan_ms, 0)} ms`);
+  set('network-wan-ms', wifi.wan_ms == null ? DASH : `${fmt(wifi.wan_ms, 0)} ms`);
+  set('power-since-boot', !power.available ? 'n/a' : (power.since_boot?.length ? power.since_boot.join(', ') : 'none'), power.since_boot?.length > 0);
+  // the manager counts its own bounces; it (re)starts with the machine, so this is "since boot" in practice
+  set('network-bounce', wifi.bounces ? `${wifi.bounces} · last ${formatRelative(wifi.last_bounce_at)}` : 'none since start', wifi.bounces > 0);
 }
 
 function renderHousekeeping(live, storageEvents, sps30Events) {

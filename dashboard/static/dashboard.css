@@ -436,6 +436,7 @@ button.button-danger {
 .health-list p:last-child { border-bottom: none; }
 .health-name { flex: none; min-width: 104px; }
 .health-detail { flex: 1; min-width: 0; text-align: right; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.health-value { flex: 1; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .state {
   flex: none;
   width: 82px;

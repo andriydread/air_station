@@ -244,19 +244,18 @@
             <div class="health-list" id="sensor-health-list"></div>
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Station &amp; connectivity</h2><button class="hint" data-hint="How long each program has run, the Wi-Fi link to the router and to the internet, and the Pi's power flags — undervoltage means the power supply is struggling." type="button">?</button></div>
-            <div class="info-list">
-              <p><span>Collector up</span><strong id="collector-uptime">--</strong></p>
-              <p><span>Manager up</span><strong id="manager-uptime">--</strong></p>
-              <p><span>Restarts (24h)</span><strong id="collector-restarts">--</strong></p>
-              <p><span>Start reason</span><strong><span class="rd-chip" title="no source in the redesign — decide later">RD</span></strong></p>
-              <p><span>Router</span><strong id="network-router">--</strong></p>
-              <p><span>Internet</span><strong id="network-internet">--</strong></p>
-              <p><span>Signal</span><strong id="network-signal">--</strong></p>
-              <p><span>Latency</span><strong id="network-latency">--</strong></p>
-              <p><span>Last radio bounce</span><strong id="network-bounce">--</strong></p>
-              <p><span>Power now</span><strong id="power-now">--</strong></p>
-              <p><span>Power since boot</span><strong id="power-since-boot">--</strong></p>
+            <div class="panel-head"><h2>Status &amp; connectivity</h2><button class="hint" data-hint="How long each program has run, how often they started in the last day, the Wi-Fi link to the router and to the internet, and the Pi's power flags since boot — undervoltage means the power supply is struggling." type="button">?</button></div>
+            <div class="health-list">
+              <p><span class="health-name">Collector up</span><strong class="health-value" id="collector-uptime">--</strong></p>
+              <p><span class="health-name">Manager up</span><strong class="health-value" id="manager-uptime">--</strong></p>
+              <p><span class="health-name">Restarts (24h)</span><strong class="health-value" id="collector-restarts">--</strong></p>
+              <p><span class="health-name">Router</span><strong class="health-value" id="network-router">--</strong></p>
+              <p><span class="health-name">Internet</span><strong class="health-value" id="network-internet">--</strong></p>
+              <p><span class="health-name">Signal</span><strong class="health-value" id="network-signal">--</strong></p>
+              <p><span class="health-name">Router latency</span><strong class="health-value" id="network-lan-ms">--</strong></p>
+              <p><span class="health-name">Internet latency</span><strong class="health-value" id="network-wan-ms">--</strong></p>
+              <p><span class="health-name">Power since boot</span><strong class="health-value" id="power-since-boot">--</strong></p>
+              <p><span class="health-name">Radio bounces</span><strong class="health-value" id="network-bounce">--</strong></p>
             </div>
           </section>
           <section class="panel">
