@@ -41,12 +41,15 @@ def test_frame_and_weather_lines(log):
     weather_line(log, True, 812.4, {"bytes": 4321, "hourly": {"time": [1] * 48}, "pressure_hpa": 1002.0,
                                          "timezone": "Europe/Kyiv"})
     weather_line(log, False, 10000.0, error="WeatherError: timeout")
+    frame_line(log, {**doc, "values": {"co2": None, "temp": None, "pm25": None}, "samples": {}}, "partial", 1, 1)
     log.close()
     lines = log.path.read_text().splitlines()
     frame = next(l for l in lines if " display frame " in l)
     assert " INFO " in frame  # one per minute, at info (the fixture logs as the collector)
     assert "mode=partial" in frame and "samples=temp:0,rest:6" in frame and "missing=temp" in frame
     assert "because=-" in frame
+    empty = [l for l in lines if " display frame " in l][-1]
+    assert "samples=- missing=all" in empty  # an empty minute: one word, not fifteen names
     assert "glyphs=wifi" in frame and "weather_stale=1" in frame
     ok_line, bad_line = [l for l in lines if " weather fetch " in l]
     assert " INFO " in ok_line and " INFO " in bad_line  # every fetch leaves a line, good or bad

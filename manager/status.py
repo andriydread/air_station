@@ -50,6 +50,8 @@ def frame_line(log, doc: Dict[str, Any], mode: Optional[str], render_ms: Optiona
     values = doc.get("values") or {}
     samples = doc.get("samples") or {}
     missing = [m for m, v in values.items() if v is None]
+    if values and len(missing) == len(values):
+        missing = ["all"]  # an empty minute: one word, not fifteen names
     counts = sorted(set(samples.values()))
     if len(counts) <= 1:
         sample_text = str(counts[0]) if counts else None
