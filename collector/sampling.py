@@ -37,6 +37,11 @@ def _cell(metric: str, value: Any) -> Any:
     return round_metric(metric, number) if math.isfinite(number) else None
 
 
+def _per_sensor(values: Dict[str, Any]) -> Optional[str]:
+    """``sht41:8.1,sps30:2.3,scd41:4.0`` — the beat's order; None when nothing was read."""
+    return ",".join(f"{name}:{value}" for name, value in values.items()) or None
+
+
 class Sampler:
     def __init__(self, db, log, scd41, sht41, sps30, i2c_factory=None, monotonic=time.monotonic):
         self.db = db
@@ -95,10 +100,21 @@ class Sampler:
             row = {metric: _cell(metric, raw.get(metric)) for metric in METRICS}
             record["row"] = row
             self._write(ts, row)
-            self.log.info("sample", "row", ts=ts, **row,
-                          bad=",".join(f"{m}:{r}" for m, r in record["bad"].items()) or None,
-                          raised=",".join(record["raised"]) or None)
+            # the row as stored, the read time per sensor (a slow answer shows a
+            # bus or supply problem before anything raises), then only what went
+            # wrong — the two fields are absent on a clean beat
+            extra: Dict[str, Any] = {"ms": _per_sensor(record["read_ms"])}
+            if record["bad"]:
+                extra["bad"] = ",".join(f"{m}:{r}" for m, r in record["bad"].items())
+            if record["raised"]:
+                extra["raised"] = ",".join(record["raised"])
+            self.log.info("sample", "row", ts=ts, **row, **extra)
             self.sample_count += 1
+            no_data = [n for n in record["asked"] if n not in record["answered"] and n not in record["raised"]]
+            self.log.debug("sample", "beat", asked=",".join(record["asked"]),
+                           answered=",".join(record["answered"]) or None,
+                           no_data=",".join(no_data) or None, raised=",".join(record["raised"]) or None,
+                           ms=_per_sensor(record["read_ms"]))
         if record["raised"] and len(record["raised"]) == len(record["asked"]):
             self._reinit_bus(now, record["errors"])
         self.last_record = record

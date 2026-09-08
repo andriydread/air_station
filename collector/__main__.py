@@ -53,7 +53,9 @@ class Collector:
         failed = self.db.fail_running(APP, "collector restarted")
         if failed:
             self.log.info("app", "stale_commands_failed", count=failed)
+        ntp_started = clock.monotonic()
         self.ntp_synced = clock.wait_for_ntp(runner=self.ntp_runner)
+        ntp_wait_s = round(clock.monotonic() - ntp_started, 1)
         if not self.ntp_synced:
             self.log.event("warning", "app", "clock_unsynced",
                            "system time not confirmed by NTP; writing anyway")
@@ -65,11 +67,16 @@ class Collector:
         self.sampler = Sampler(self.db, self.log, scd41, sht41, sps30, i2c_factory=self.i2c_factory,
                                monotonic=clock.monotonic)
         self.commands = CommandRunner(self.db, self.log, self.sampler, self.config, monotonic=clock.monotonic)
+        init_ms = {}
         for sensor in self.sampler.sensors:  # the quiet time starts now, not at the first beat
+            init_started = clock.monotonic()
             sensor.ensure(clock.now())
+            init_ms[sensor.name] = round((clock.monotonic() - init_started) * 1000)
         ready = [s.ready_at for s in self.sampler.sensors if s.device is not None]
         self.log.event("info", "app", "started", "collector started",
-                       ntp_synced=self.ntp_synced, interval_s=SAMPLE_INTERVAL,
+                       ntp_synced=self.ntp_synced, ntp_wait_s=ntp_wait_s, interval_s=SAMPLE_INTERVAL,
+                       init_ms=",".join(f"{n}:{ms}" for n, ms in init_ms.items()),
+                       start_s=round(clock.monotonic() - ntp_started, 1),
                        ready_at=max(ready) if ready else None,
                        **{s.name: s.health.id for s in self.sampler.sensors})
         self.publish_status()

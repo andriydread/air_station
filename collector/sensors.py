@@ -149,6 +149,9 @@ class Sensor:
         self.bad_streak += 1
         self.bad_times = [t for t in self.bad_times if now - t < BAD_WINDOW_S] + [now]
         self.health.failed(error)
+        self.log.debug(self.name, "bad", streak=self.bad_streak, in_window=len(self.bad_times),
+                       reinit_at=f"{BAD_STREAK_REINIT} in a row or {BAD_WINDOW_COUNT} in {BAD_WINDOW_S} s",
+                       reason=error)
         if self.bad_streak >= BAD_STREAK_REINIT:
             self.reinit(now, f"{self.bad_streak} bad readings in a row")
             return True
@@ -162,6 +165,8 @@ class Sensor:
         if self.device is None or self.ready_at is None:
             return False
         quiet_since = max(self.last_data_at or 0, self.ready_at)
+        if now - quiet_since >= SILENCE_REINIT / 2:
+            self.log.debug(self.name, "silent", silent_s=int(now - quiet_since), reinit_at=SILENCE_REINIT)
         if now - quiet_since >= SILENCE_REINIT:
             self.health.failed(f"no reading for {int(now - quiet_since)} s")
             self.reinit(now, f"silent for {int(now - quiet_since)} s")

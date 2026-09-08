@@ -80,7 +80,10 @@ def test_the_first_row_is_at_ready_at_with_every_cell(rig):
     assert all(row[m] is not None for m in METRICS)
     (line,) = rig.row_lines()
     assert " INFO collector sample row " in line and "co2=600 co2_temp=23.0" in line
-    assert line.endswith("bad=- raised=-")
+    assert " ms=sht41:" in line and "bad=" not in line and "raised=" not in line  # a clean beat
+    rig.log.close()
+    beat_lines = [l for l in rig.log.path.read_text().splitlines() if " DEBUG collector sample beat " in l]
+    assert beat_lines and "asked=sht41,sps30,scd41 answered=sht41,sps30,scd41 no_data=- raised=-" in beat_lines[-1]
 
 
 def test_a_value_that_cannot_be_air_is_stored_and_counted_bad(rig):
@@ -91,7 +94,9 @@ def test_a_value_that_cannot_be_air_is_stored_and_counted_bad(rig):
     assert record["bad"] == {"co2": "range"} and rig.scd41.bad_streak == 1
     assert rig.scd41.health.healthy is False and "co2 0.0" in rig.scd41.health.last_error
     assert rig.sht41.health.healthy and rig.sps30.health.healthy
-    assert rig.row_lines()[0].endswith("bad=co2:range raised=-")
+    assert rig.row_lines()[0].endswith("bad=co2:range")
+    debug = [l for l in rig.log.path.read_text().splitlines() if " DEBUG collector scd41 bad " in l]
+    assert debug and "streak=1 in_window=1" in debug[0] and "cannot_be_air" in debug[0].replace(" ", "_")
 
 
 def test_six_bad_in_a_row_reset_that_sensor_only(rig, db):
@@ -117,7 +122,7 @@ def test_a_raising_sensor_does_not_stop_the_others(rig, db):
     assert records[0]["raised"] == ["sht41"] and records[0]["errno"]["sht41"] == 121
     errors = [e for e in db.recent_events() if e["type"] == "sensor_error"]
     assert len(errors) == 1 and errors[0]["details"]["errno"] == 121  # the first of the streak only
-    assert rig.row_lines()[-1].endswith("bad=- raised=sht41")
+    assert rig.row_lines()[-1].endswith("raised=sht41")
     assert rig.buses == 0  # two sensors answered: the bus is fine
 
 

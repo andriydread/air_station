@@ -78,7 +78,9 @@ def test_three_minutes_of_life(station):
     assert station.scd.stop_calls == 2  # once at open (defensive), once at shutdown
     lines = station.log.path.read_text().splitlines()
     assert len([l for l in lines if " sample row " in l]) == 13
-    assert not any(" DEBUG " in l and " sample " in l for l in lines)
+    assert len([l for l in lines if " DEBUG collector sample beat " in l]) == 13  # one debug line per beat
+    started = [l for l in lines if " app started " in l][0]
+    assert "ntp_wait_s=" in started and "init_ms=sht41:" in started and "start_s=" in started
 
 
 def test_a_queued_fan_clean_is_answered(station):
