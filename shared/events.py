@@ -192,12 +192,15 @@ class Log:
         self.event("error", "app", "error", message, origin=source, exc=first, **kv)
 
     def start_line(self, config, commit: Optional[str] = None) -> None:
+        """Once per start: commit, python, level and the config that matters (the
+        paths never change and are the checkout's; they stay out of the line)."""
+        settings = {k: v for k, v in config.as_dict().items() if k not in ("paths", "repo_root", "source")}
         self.info(
             "app", "start",
             commit=commit if commit is not None else git_commit(Path(config.repo_root)),
             python=sys.version.split()[0],
             level=self.level,
-            config=config.as_dict(),
+            config=settings,
         )
 
     def close(self) -> None:

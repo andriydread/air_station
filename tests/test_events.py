@@ -154,6 +154,7 @@ def test_start_line_and_stderr_gets_warnings_only(tmp_config):
     log.warning("app", "careful")
     line = _lines(log)[0]
     assert " INFO collector app start commit=abc1234 python=" in line and 'config="{' in line
+    assert "sensors" in line and "repo_root" not in line and "paths" not in line  # settings, not paths
     assert "careful" in stream.getvalue() and "start" not in stream.getvalue()
     log.close()
 
