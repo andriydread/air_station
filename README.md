@@ -194,12 +194,20 @@ On the Pi (they refuse to run anywhere else):
 
 Every program writes `data/logs/<program>.log` as `key=value` lines, one
 file per UTC day, 30 kept (rolling). At `info` a normal day is one line per
-raw row (the collector), one per panel frame (the manager), the weather
-fetches, the nightly job, the start and stop lines, and every error with its
-traceback — about 300 KB per program. A line looks like
+raw row with the read time per sensor (the collector, ~2 MB a day), one per
+panel frame naming only what is missing and why the panel is starting or
+silent (the manager, ~0.4 MB), every weather fetch, every hourly rollup,
+the nightly job, the applied pressure, the commands, the first failed
+network probe of a run, the start and stop lines with what the start found,
+and every error with its traceback; the dashboard writes only its commands
+and errors. `debug` adds one line per beat (which sensor was asked, answered,
+stayed quiet, raised), the reset ladder's count-up to a re-init, the minute
+average's window and what it dropped, the network probes, the vitals row,
+the web requests (the page's 10 s poll summarised per minute). A line looks
+like
 
 ```
-2026-09-06T12:00:10Z INFO collector sample row ts=1788436810 co2=812 co2_temp=25.1 … bad=- raised=-
+2026-09-06T12:00:10Z INFO collector sample row ts=1788436810 co2=812 co2_temp=25.1 … ms=sht41:8.1,sps30:2.3,scd41:4.0
 ```
 
 `make export` builds `~/airstation-<YYYYMMDD-HHMM>.tar.gz` holding a
