@@ -1588,7 +1588,6 @@ installers.push(() => {
     submitCommand('scd41_calibrate', {
       target_ppm: Number(document.getElementById('target-co2').value),
       allow_large_offset: document.getElementById('scd41-calibration-drift').checked,
-      persist: document.getElementById('scd41-calibration-persist').checked,
     }).catch((e) => toast(e.message, 'error'));
   });
 });

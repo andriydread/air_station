@@ -64,9 +64,10 @@ re-opened only when all sensors fail together.
   the first open of a process only; the verdict is `self_test=` on the
   `sensor_init` event.
 - Offset, altitude and ASC are re-applied on every start, not stored in the
-  sensor. The one write to its EEPROM (rated ~2000 writes) is the
-  calibration form's *Persist in sensor* box, which keeps the correction
-  across power loss — a few times a year is nothing. A re-init gives the
+  sensor (no EEPROM wear). A forced calibration is kept by the sensor
+  itself, in its own EEPROM, without any further command (datasheet 3.9.1),
+  so nothing is persisted from our side; the API still accepts a `persist`
+  key (false by default) for old pages. A re-init gives the
   sensor the full 1 s soft-reset time before configuration is written; if a
   software re-init ever fails to unstick it, the datasheet's next step is a
   power cycle.
