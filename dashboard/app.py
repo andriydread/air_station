@@ -18,6 +18,7 @@ from shared.events import git_commit
 from shared.render import ICONS_DIR
 
 APP = "dashboard"
+POLL_PATH = "/api/changes"  # the page's 10 s poll; summarised per minute in the debug log
 TEMPLATES = Path(__file__).resolve().parent / "templates"
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -35,11 +36,24 @@ def create_app(config, db, log) -> Flask:
     def _start_timer():
         g.started = time.perf_counter()
 
+    polls = {"minute": None, "count": 0, "ms": 0.0, "slowest": 0.0}
+
     @app.after_request
     def _log_request(response):
         started = getattr(g, "started", None)
         ms = round((time.perf_counter() - started) * 1000, 1) if started else None
-        if not request.path.startswith("/static/"):
+        if request.path == POLL_PATH and response.status_code == 200:
+            # every open page asks this every 10 s: one debug line per minute, not per hit
+            minute = int(clock.now()) // 60
+            if polls["minute"] is not None and minute != polls["minute"] and polls["count"]:
+                log.debug("web", "polls", minute=polls["minute"] * 60, n=polls["count"],
+                          ms_avg=round(polls["ms"] / polls["count"], 1), ms_max=polls["slowest"])
+                polls.update(count=0, ms=0.0, slowest=0.0)
+            polls["minute"] = minute
+            polls["count"] += 1
+            polls["ms"] += ms or 0.0
+            polls["slowest"] = max(polls["slowest"], ms or 0.0)
+        elif not request.path.startswith("/static/"):
             log.debug("web", "request", method=request.method, path=request.full_path.rstrip("?"),
                       status=response.status_code, ms=ms, ip=request.remote_addr)
         response.headers.setdefault("Cache-Control", "no-store")

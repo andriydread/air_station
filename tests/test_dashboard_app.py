@@ -69,6 +69,22 @@ def test_every_request_gets_a_debug_line_and_no_store(client, dlog):
     assert "method=GET" in line and 'path="/api/nothing?x=1"' in line and "status=404" in line and "ms=" in line
 
 
+def test_the_poll_is_summarised_per_minute_not_logged_per_hit(client, dlog, monkeypatch):
+    from shared import clock as clock_mod
+    t = {"now": 1_788_436_800.0}
+    monkeypatch.setattr(clock_mod, "now", lambda: t["now"])
+    for i in range(6):
+        t["now"] = 1_788_436_800.0 + i * 10
+        assert client.get("/api/changes").status_code == 200
+    t["now"] = 1_788_436_860.0  # the next minute: the summary of the last one goes out
+    client.get("/api/changes")
+    dlog.close()
+    lines = dlog.path.read_text().splitlines()
+    assert not any(" web request " in l and "/api/changes" in l for l in lines)
+    (summary,) = [l for l in lines if " web polls " in l]
+    assert "minute=1788436800 n=6" in summary and "ms_avg=" in summary and "ms_max=" in summary
+
+
 def test_runtime_info(tmp_config, db, dlog):
     app = create_app(tmp_config, db, dlog)
     info = runtime(app)
