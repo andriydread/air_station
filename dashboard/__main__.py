@@ -19,6 +19,13 @@ from shared.db import Database
 from shared.events import Log
 from shared.heartbeat import HEARTBEAT_SECONDS, SystemdNotifier
 
+# A page load fires up to seven API requests at once (Diagnostics: four in
+# parallel + live + changes + the preview); waitress logs a "Task queue depth"
+# warning into the journal for every request that has to wait for a thread —
+# 663 lines in three days with four threads (bench 2026-09-08). Eight threads
+# cover a page load; a real overload still warns.
+WEB_THREADS = 8
+
 
 class HeartbeatThread:
     """WATCHDOG=1 every 10 s from a daemon thread, until ``stop()``."""
@@ -67,7 +74,7 @@ def serve(config, db: Database, log: Log, notifier: Optional[SystemdNotifier] = 
     heartbeat.start()
     server = server or waitress_serve
     try:
-        server(app, host="0.0.0.0", port=config.dashboard.port, threads=4, ident="airstation")
+        server(app, host="0.0.0.0", port=config.dashboard.port, threads=WEB_THREADS, ident="airstation")
     except SystemExit:
         pass
     return 0

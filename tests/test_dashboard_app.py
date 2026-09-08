@@ -102,5 +102,5 @@ def test_serve_builds_the_app_and_logs_started(tmp_config, db, dlog):
         assert app.test_client().get("/").status_code == 200
 
     assert serve(tmp_config, db, dlog, notifier=SystemdNotifier(address=""), server=fake_server) == 0
-    assert seen == {"host": "0.0.0.0", "port": 8080, "threads": 4}
+    assert seen == {"host": "0.0.0.0", "port": 8080, "threads": 8}
     assert db.recent_events()[0]["type"] == "started"
