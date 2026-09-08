@@ -134,6 +134,8 @@ class WifiWatch:
             return
         failures = getattr(self, attr) + 1
         setattr(self, attr, failures)
+        if failures == 1:  # the start of a run of failures; the rest stay on the debug probe line
+            self.log.info("wifi", "probe_failed", which=which, gateway=self.gateway)
         if failures >= DOWN_AFTER and state is not False:
             what = "router" if which == "router" else "internet"
             self.log.event("warning", "wifi", down_type, f"{what} not answering ({failures} probes)",

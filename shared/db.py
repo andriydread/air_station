@@ -214,7 +214,7 @@ class Database:
             good = [row[m] for row in rows if plausible(m, row[m])]
             values[m] = round_metric(m, sum(good) / len(good)) if good else None
             samples[m] = len(good)
-        return {"values": values, "samples": samples}
+        return {"values": values, "samples": samples, "rows": len(rows)}
 
     def raw_bucketed(self, start: int, end: int, bucket_s: int) -> List[Dict[str, Any]]:
         """Per-bucket averages for charts: [{"ts": bucket_start, metric: avg|None, ...}]."""

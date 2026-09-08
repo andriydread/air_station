@@ -28,6 +28,7 @@ class FrameBuilder:
         self.started_at = started_at
         self._weather_stale_logged = False
         self.last: Optional[Dict[str, Any]] = None
+        self.last_state: Dict[str, Any] = {}
 
     def collector_state(self, now: float) -> Dict[str, Any]:
         """silent / warming_up / unhealthy, from the raw rows and the status document."""
@@ -53,8 +54,19 @@ class FrameBuilder:
         rows_silent = latest_raw is None or now - latest_raw > COLLECTOR_SILENT
         sensors = value.get("sensors", {})
         unhealthy = [name for name, s in sensors.items() if (s or {}).get("healthy") is False]
+        silent = (rows_silent or not fresh) and not warming
+        # why the panel says "Starting up" or shows the sensor glyph — for the frame line
+        if warming:
+            because = ("quiet_time" if warmup_left else "first_minute" if first_minute
+                       else "no_status" if status is None else "status_before_start" if not fresh
+                       else "no_rows")
+        elif silent:
+            because = "status_stale" if not fresh else "no_rows" if latest_raw is None else "rows_old"
+        else:
+            because = None
         return {
-            "silent": (rows_silent or not fresh) and not warming,
+            "silent": silent,
+            "because": because,
             "rows_silent": rows_silent,
             "status_fresh": fresh,
             "warming_up": warming,
@@ -72,6 +84,12 @@ class FrameBuilder:
         weather = weather_mod.summarize(weather_doc, now, self.config.weather.block_hours)
         self._weather_stale_event(weather["stale"], weather_doc)
         state = self.collector_state(now)
+        self.last_state = state
+        rows = averages.get("rows", 0)
+        dropped = {m: rows - n for m, n in averages["samples"].items() if rows - n > 0}
+        self.log.debug("display", "minute", window=f"[{int(now) - 60},{int(now)})", rows=rows,
+                       dropped=",".join(f"{m}:{n}" for m, n in dropped.items()) or None,
+                       because=state["because"])
         doc = {
             "updated_at": int(now),
             "warming_up": state["warming_up"],

@@ -22,7 +22,7 @@ from manager.frame import FrameBuilder
 from manager.machine import Machine, Sources
 from manager.maintenance import CollectorWatch, Hourly, Nightly, fail_unclaimed
 from manager.network import ROUTE_PATH, PROBE_EVERY, WifiWatch
-from manager.status import build_status, debug_weather_line, frame_line
+from manager.status import build_status, frame_line, weather_line
 from shared import clock
 from shared.config import Config
 from shared.db import Database
@@ -80,7 +80,9 @@ class Manager:
             self.log.info("app", "stale_commands_failed", count=failed)
         # No RTC: wait for NTP like the collector does (Q136), so the first frame,
         # the weather blocks and the vitals carry the right time the first time.
+        ntp_started = clock.monotonic()
         self.ntp_synced = clock.wait_for_ntp(runner=self.runner)
+        ntp_wait_s = round(clock.monotonic() - ntp_started, 1)
         if not self.ntp_synced:
             self.log.event("warning", "app", "clock_unsynced",
                            "system time not confirmed by NTP; painting anyway")
@@ -91,8 +93,14 @@ class Manager:
             self.weather_doc = stored["value"]  # the first frame uses the stored forecast
             self.weather_state.update(ok=None, fetched_at=self.weather_doc.get("fetched_at"),
                                       pressure_hpa=self.weather_doc.get("pressure_hpa"))
+        # what the first frame will find: the age of the collector's status and of the newest row
+        status = self.db.get_state("collector_status")
+        latest_raw = self.db.latest_raw_at()
         self.log.event("info", "app", "started", "manager started",
-                       stored_weather=self.weather_doc is not None, ntp_synced=self.ntp_synced)
+                       stored_weather=self.weather_doc is not None, ntp_synced=self.ntp_synced,
+                       ntp_wait_s=ntp_wait_s,
+                       status_age_s=int(self.started_at - status["updated_at"]) if status else None,
+                       row_age_s=int(self.started_at - latest_raw) if latest_raw is not None else None)
         self.publish_status()
 
     def stop(self, reason: str) -> None:
@@ -129,7 +137,8 @@ class Manager:
         self.panel.render_ms = round((time.perf_counter() - started) * 1000, 1)
         mode = self.panel.show(image, now)
         self.frame_count += 1
-        frame_line(self.log, doc, mode, self.panel.render_ms, self.panel.busy_ms)
+        frame_line(self.log, doc, mode, self.panel.render_ms, self.panel.busy_ms,
+                   because=self.frames.last_state.get("because"))
         self.watch.tick(now, self.db.latest_raw_at(), quiet=doc["warming_up"])
 
     def fetch_weather(self) -> None:
@@ -140,7 +149,7 @@ class Manager:
         except weather_mod.WeatherError as exc:
             ms = (time.perf_counter() - started) * 1000
             self.weather_state.update(ok=False, error=str(exc), failures=self.weather_state["failures"] + 1)
-            debug_weather_line(self.log, False, ms, error=str(exc))
+            weather_line(self.log, False, ms, error=str(exc))
             if not self._weather_failing:
                 self.log.event("warning", "weather", "weather_error", f"forecast fetch failed: {exc}",
                                error=str(exc))
@@ -154,7 +163,7 @@ class Manager:
         self.weather_state.update(ok=True, error=None, fetched_at=doc["fetched_at"],
                                   pressure_hpa=doc.get("pressure_hpa"), fetches=self.weather_state["fetches"] + 1)
         self._weather_failing = False
-        debug_weather_line(self.log, True, ms, doc)
+        weather_line(self.log, True, ms, doc)
 
     def process_commands(self) -> None:
         self.commands.process(clock.now())

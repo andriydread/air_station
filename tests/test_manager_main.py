@@ -139,6 +139,11 @@ def test_first_frame_immediately_then_every_minute_full_every_five(station):
     assert db.latest_vitals()["cpu_temp"] == 48.2
     types = [e["type"] for e in db.recent_events()]
     assert types[-1] == "started" and types[0] == "shutdown" and "rollup_catchup" in types
+    started = db.latest_event("started", app="manager")["details"]
+    assert "status_age_s" in started and "row_age_s" in started and "ntp_wait_s" in started
+    lines = station.log.path.read_text().splitlines()
+    assert any(" INFO manager storage rollup " in l for l in lines)  # every hour leaves a line
+    assert any(" INFO manager weather fetch " in l and "ok=1" in l for l in lines)
 
 
 def test_weather_failure_retries_in_two_minutes_and_logs_once(station, db):
@@ -180,7 +185,8 @@ def test_silent_collector_gets_restarted_and_shown_after_the_startup_grace(stati
     doc = station.db.get_state("display_data")["value"]
     assert doc["collector_silent"] is True and doc["glyphs"]["sensor"] is True and doc["warming_up"] is False
     lines = [l for l in station.log.path.read_text().splitlines() if " display frame " in l]
-    assert "warming=1 silent=0" in lines[0] and "warming=0 silent=1" in lines[-1]
+    assert "warming=1 silent=0 because=no_status" in lines[0] and "warming=0 silent=1 because=" in lines[-1]
+    assert "because=-" not in lines[-1]  # a silent frame says why
 
 
 def test_sigterm_stops_cleanly_and_sleeps_the_panel(station):

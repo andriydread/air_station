@@ -37,6 +37,9 @@ def test_system_commands_are_deferred_fixed_strings(runner, db, type_, payload, 
     row = db.recent_commands()[0]
     assert row["id"] == cid and row["status"] == "success" and row["result"]["scheduled"] == command
     assert db.recent_events()[0]["type"] == "command_done"
+    runner.log.close()
+    assert any(" INFO collector app command_spawned " in l and f"type={type_}" in l
+               for l in runner.log.path.read_text().splitlines())
 
 
 def test_reboot_and_delete_require_confirmation(runner, db):

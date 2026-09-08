@@ -4,7 +4,7 @@ from manager.display import Panel
 from manager.machine import Machine, Sources
 from manager.maintenance import Hourly, Nightly
 from manager.network import WifiWatch
-from manager.status import build_status, debug_weather_line, frame_line
+from manager.status import build_status, weather_line, frame_line
 from tests.mocks.fake_devices import FakeRunner
 
 
@@ -33,20 +33,22 @@ def test_status_shape_is_frozen(db, log, tmp_config, tmp_path):
     assert set(status["wifi"]) >= {"router_ok", "internet_ok", "lan_ms", "wan_ms", "last_bounce_at"}
 
 
-def test_debug_lines(log):
+def test_frame_and_weather_lines(log):
     doc = {"values": {"co2": 800, "temp": None, "pm25": 3.0}, "samples": {"co2": 6, "temp": 0, "pm25": 6},
            "aqi": 12, "aqi_short": "Good", "co2_category": "Good", "warming_up": False,
            "collector_silent": False, "weather": {"stale": True}, "glyphs": {"wifi": True, "power": False}}
     frame_line(log, doc, "partial", 41.2, 900)
-    debug_weather_line(log, True, 812.4, {"bytes": 4321, "hourly": {"time": [1] * 48}, "pressure_hpa": 1002.0,
+    weather_line(log, True, 812.4, {"bytes": 4321, "hourly": {"time": [1] * 48}, "pressure_hpa": 1002.0,
                                          "timezone": "Europe/Kyiv"})
-    debug_weather_line(log, False, 10000.0, error="WeatherError: timeout")
+    weather_line(log, False, 10000.0, error="WeatherError: timeout")
     log.close()
     lines = log.path.read_text().splitlines()
     frame = next(l for l in lines if " display frame " in l)
     assert " INFO " in frame  # one per minute, at info (the fixture logs as the collector)
-    assert "mode=partial" in frame and "metrics=co2,pm25" in frame and "samples=co2:6,pm25:6" in frame
+    assert "mode=partial" in frame and "samples=temp:0,rest:6" in frame and "missing=temp" in frame
+    assert "because=-" in frame
     assert "glyphs=wifi" in frame and "weather_stale=1" in frame
     ok_line, bad_line = [l for l in lines if " weather fetch " in l]
+    assert " INFO " in ok_line and " INFO " in bad_line  # every fetch leaves a line, good or bad
     assert "ok=1" in ok_line and "hours=48" in ok_line and "bytes=4321" in ok_line
     assert "ok=0" in bad_line and 'error="WeatherError: timeout"' in bad_line

@@ -30,6 +30,7 @@ def _system(runner, type_: str, payload: Dict[str, Any], now: float) -> Dict[str
     command = SYSTEM_COMMANDS[type_]
     argv = ["sh", "-c", f"sleep {DEFER_SECONDS}; exec {command}"]
     runner.spawner(argv, start_new_session=True)
+    runner.log.info("app", "command_spawned", type=type_, command=command, in_s=DEFER_SECONDS)
     return {"scheduled": command, "in_s": DEFER_SECONDS}
 
 

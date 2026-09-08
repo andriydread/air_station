@@ -33,7 +33,7 @@ class Hourly:
         first_run = self.last_hour is None
         result = self.db.rollup_catchup(int(now))
         self.last_hour = current_hour
-        self.log.debug("storage", "rollup", hour=current_hour - 3600, rolled=result["rolled"],
+        self.log.info("storage", "rollup", hour=current_hour - 3600, rolled=result["rolled"],
                        skipped_future=result["skipped_future"], remaining=result["remaining"])
         if first_run or result["rolled"] > 1 or result["skipped_future"] or result["remaining"]:
             self.log.event("info", "storage", "rollup_catchup",

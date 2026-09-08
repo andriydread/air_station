@@ -90,6 +90,9 @@ def test_router_failures_declare_down_then_bounce_at_six(watch, db):
     assert types.count("wifi_down") == 1 and types.count("wifi_bounce") == 1
     assert types.count("internet_down") == 1  # the WAN is unreachable through a dead router too
     assert watch.router_failures == 0 and watch.glyph() is True
+    watch.log.close()
+    failed = [l for l in watch.log.path.read_text().splitlines() if " INFO collector wifi probe_failed " in l]
+    assert len(failed) == 2 and "which=router" in failed[0] and "which=wan" in failed[1]  # once per run
     # the cooldown prevents a second bounce right away
     for i in range(BOUNCE_AFTER):
         watch.tick(now=180 + i * 30)

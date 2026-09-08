@@ -39,26 +39,39 @@ def build_status(*, started_at: float, now: float, log_failures: int, panel, wea
 
 
 def frame_line(log, doc: Dict[str, Any], mode: Optional[str], render_ms: Optional[float],
-               busy_ms: Optional[float]) -> None:
-    """One info line per frame: what the panel shows and how long it took."""
+               busy_ms: Optional[float], because: Optional[str] = None) -> None:
+    """One info line per frame: what the panel shows and how long it took.
+
+    The exceptions, not the rule: ``samples=6`` when every metric has the same
+    count, else the odd ones out and ``rest=``; ``missing=`` names the metrics
+    without a value; ``because=`` says why the panel is on the start-up screen
+    or shows the sensor glyph. A normal minute is one short line.
+    """
     values = doc.get("values") or {}
     samples = doc.get("samples") or {}
-    with_data = [m for m, v in values.items() if v is not None]
+    missing = [m for m, v in values.items() if v is None]
+    counts = sorted(set(samples.values()))
+    if len(counts) <= 1:
+        sample_text = str(counts[0]) if counts else None
+    else:
+        common = max(counts, key=lambda c: list(samples.values()).count(c))
+        odd = ",".join(f"{m}:{n}" for m, n in samples.items() if n != common)
+        sample_text = f"{odd},rest:{common}"
     log.info("display", "frame", mode=mode or "skipped", render_ms=render_ms, busy_ms=busy_ms,
-              metrics=",".join(with_data) or None,
-              samples=",".join(f"{m}:{n}" for m, n in samples.items() if n),
+              samples=sample_text, missing=",".join(missing) or None,
               aqi=doc.get("aqi"), aqi_short=doc.get("aqi_short"), co2=doc.get("co2_category"),
-              warming=doc.get("warming_up"), silent=doc.get("collector_silent"),
+              warming=doc.get("warming_up"), silent=doc.get("collector_silent"), because=because,
               weather_stale=(doc.get("weather") or {}).get("stale"),
               glyphs=",".join(k for k, v in (doc.get("glyphs") or {}).items() if v) or None)
 
 
-def debug_weather_line(log, ok: bool, ms: float, doc: Optional[Dict[str, Any]] = None,
-                       error: Optional[str] = None) -> None:
+def weather_line(log, ok: bool, ms: float, doc: Optional[Dict[str, Any]] = None,
+                 error: Optional[str] = None) -> None:
+    """One info line per fetch, good or bad (the first failure of a run is also an event)."""
     if ok and doc is not None:
         hourly = doc.get("hourly") or {}
-        log.debug("weather", "fetch", ok=True, ms=round(ms), bytes=doc.get("bytes"),
-                  hours=len(hourly.get("time", [])), pressure_hpa=doc.get("pressure_hpa"),
-                  timezone=doc.get("timezone"))
+        log.info("weather", "fetch", ok=True, ms=round(ms), bytes=doc.get("bytes"),
+                 hours=len(hourly.get("time", [])), pressure_hpa=doc.get("pressure_hpa"),
+                 timezone=doc.get("timezone"))
     else:
-        log.debug("weather", "fetch", ok=False, ms=round(ms), error=error)
+        log.info("weather", "fetch", ok=False, ms=round(ms), error=error)
