@@ -53,6 +53,14 @@ def test_first_frame_is_full_then_partial_until_five_minutes(panel):
     assert panel.next_full_at == 300 + FULL_REFRESH_EVERY
 
 
+def test_a_first_frame_just_before_a_five_minute_mark_is_partial_then_the_mark_is_full(panel):
+    modes = [panel.show(FRAME, now=t) for t in (250, 300, 360, 600)]
+    assert modes == ["partial", "full", "partial", "full"]  # one flash at the mark, not two 50 s apart
+    assert panel.next_full_at == 900
+    late = Panel(panel.log, driver_factory=lambda: FakeDriver(), monotonic=lambda: 0.0)
+    assert late.show(FRAME, now=200) == "full"  # 100 s to the mark: the first frame is full as before
+
+
 def test_forced_full(panel):
     panel.show(FRAME, now=0)
     assert panel.show(FRAME, now=60, full=True) == "full"

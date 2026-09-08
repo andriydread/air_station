@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, Optional
 from shared.backoff import ReinitBackoff
 
 FULL_REFRESH_EVERY = 300.0
+FIRST_FULL_MIN_GAP = 60.0  # a first frame this close to the next 5-minute mark is partial (no double flash)
 BUSY_TIMEOUT = 15.0  # the driver's own limit; documented here, set there
 
 
@@ -78,7 +79,14 @@ class Panel:
         if not self.ensure(now):
             return None
         if full is None:
-            full = self.force_full or self.next_full_at is None or now >= self.next_full_at
+            first = self.force_full or self.next_full_at is None
+            next_mark = (math.floor(now / FULL_REFRESH_EVERY) + 1) * FULL_REFRESH_EVERY
+            if first and next_mark - now < FIRST_FULL_MIN_GAP:
+                # the 5-minute mark's full frame is seconds away: one flash, not two
+                full = False
+                self.next_full_at = next_mark
+            else:
+                full = first or now >= self.next_full_at
         mode = self.driver.MODE_FULL if full else self.driver.MODE_PARTIAL
         started = self.monotonic()
         try:

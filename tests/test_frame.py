@@ -150,3 +150,41 @@ def test_never_fetched_weather_is_absent_not_an_event(frame, db):
     doc = frame.build(NOW, None, False, False)
     assert doc["weather"]["stale"] is True and doc["weather"]["fetched_at"] is None
     assert not any(e["type"] == "weather_stale" for e in db.recent_events())
+
+
+def test_after_a_joint_restart_the_dead_collectors_status_is_not_fresh(frame):
+    """A deploy restarts all three: the collector's shutdown status (old ready_at) and rows
+    under 90 s old must not put yesterday's numbers on the panel before "Starting up"."""
+    db = frame.db_
+    _fill(db, NOW)
+    frame.clock["t"] = NOW - 1
+    db.set_state("collector_status", _status(NOW - 1, ready_at=NOW - 3600))  # written on shutdown
+    frame.clock["t"] = NOW
+    frame.started_at = NOW  # the manager starts a second later
+    doc = frame.build(NOW + 5, None, False, False)  # its first frame
+    assert doc["warming_up"] is True and doc["collector_silent"] is False and doc["glyphs"]["sensor"] is False
+    frame.clock["t"] = NOW + 15
+    db.set_state("collector_status", _status(NOW + 15, ready_at=NOW + 60))  # the new collector's "started"
+    doc = frame.build(NOW + 60, None, False, False)
+    assert doc["warming_up"] is True and doc["warmup_left"] == 0  # its first full minute is being averaged
+    _fill(db, NOW + 120)  # the new collector's first full minute of rows
+    frame.clock["t"] = NOW + 100
+    db.set_state("collector_status", _status(NOW + 100, ready_at=NOW + 60))  # its 30 s publish
+    doc = frame.build(NOW + 120, None, False, False)
+    assert doc["warming_up"] is False and doc["collector_silent"] is False  # numbers
+
+
+def test_a_manager_only_restart_says_starting_up_until_the_collectors_next_status(frame):
+    db = frame.db_
+    _fill(db, NOW)
+    frame.clock["t"] = NOW - 20
+    db.set_state("collector_status", _status(NOW - 20, ready_at=NOW - 3600))  # the collector keeps running
+    frame.clock["t"] = NOW
+    frame.started_at = NOW
+    doc = frame.build(NOW + 5, None, False, False)
+    assert doc["warming_up"] is True and doc["collector_silent"] is False
+    frame.clock["t"] = NOW + 10
+    db.set_state("collector_status", _status(NOW + 10, ready_at=NOW - 3600))  # its 30 s publish
+    _fill(db, NOW + 60)
+    doc = frame.build(NOW + 60, None, False, False)
+    assert doc["warming_up"] is False and doc["collector_silent"] is False

@@ -34,14 +34,21 @@ class FrameBuilder:
         latest_raw = self.db.latest_raw_at()
         status = self.db.get_state("collector_status")
         fresh = status is not None and now - status["updated_at"] <= STATUS_STALE
+        # The collector publishes its status once more on shutdown, so after a
+        # joint restart or a reboot the manager's first frames would see a
+        # "fresh" status from the dead process (with an old ready_at) and paint
+        # its last minute before saying "Starting up". During the grace a status
+        # written at or before the manager's own start is not fresh.
+        in_grace = self.started_at is not None and now - self.started_at < STARTUP_GRACE
+        if fresh and in_grace and status["updated_at"] <= self.started_at:
+            fresh = False
         value = (status or {}).get("value", {}) if fresh else {}
         ready_at = value.get("ready_at")
         has_ready = isinstance(ready_at, (int, float))
         warmup_left = int(ready_at - now) if has_ready and ready_at > now else 0
         # the first whole minute after ready_at is not averaged before the next :00
         first_minute = has_ready and now < ready_at + 60
-        starting = (self.started_at is not None and now - self.started_at < STARTUP_GRACE
-                    and (not fresh or latest_raw is None))
+        starting = in_grace and (not fresh or latest_raw is None)
         warming = first_minute or starting
         rows_silent = latest_raw is None or now - latest_raw > COLLECTOR_SILENT
         sensors = value.get("sensors", {})
