@@ -130,18 +130,44 @@ def test_open_sleeps_wakes_resets_and_self_tests_once_per_process(scd41, db):
 
 
 def test_a_failed_self_test_is_an_error_event_and_the_sensor_still_runs(scd41, db):
-    scd41.fake.self_test_error = RuntimeError("Self test failed")
+    scd41.fake.self_test_word = 0x0001  # the sensor's own answer: malfunction
     assert scd41.ensure(1000) is True  # the sensor is used anyway: a verdict, not a refusal
     init = [e for e in db.recent_events() if e["type"] == "sensor_init"][0]
     assert init["details"]["self_test"] == "fail"
+    assert init["details"]["self_test_word"] == 1 and init["details"]["self_test_reason"] == "word"
     errors = [e for e in db.recent_events() if e["type"] == "sensor_error"]
     assert len(errors) == 1 and errors[0]["details"]["self_test"] == "fail" and "malfunction" in errors[0]["message"]
+    assert errors[0]["details"]["self_test_word"] == 1 and "supply" in errors[0]["message"]
+
+
+def test_a_passed_self_test_records_the_zero_word(scd41, db):
+    scd41.ensure(1000)
+    init = [e for e in db.recent_events() if e["type"] == "sensor_init"][0]
+    assert init["details"]["self_test"] == "ok" and init["details"]["self_test_word"] == 0
+    assert init["details"]["self_test_reason"] is None
+
+
+def test_a_self_test_nack_or_bad_crc_is_named_not_called_a_malfunction(scd41, db):
+    scd41.fake.self_test_error = RuntimeError("Could not communicate via I2C, some commands/settings "
+                                              "are not available in periodic measurement mode")
+    scd41.ensure(1000)
+    init = [e for e in db.recent_events() if e["type"] == "sensor_init"][0]
+    assert init["details"]["self_test"] == "fail" and init["details"]["self_test_reason"] == "nack"
+    assert init["details"]["self_test_word"] is None
+    error = [e for e in db.recent_events() if e["type"] == "sensor_error"][0]
+    assert "did not answer" in error["message"] and "malfunction" not in error["message"]
+    scd41.fake.self_test_error = RuntimeError("CRC check failed while reading data")
+    scd41.opens = 0
+    scd41.reinit(2000, "test")
+    init = [e for e in db.recent_events() if e["type"] == "sensor_init"][0]
+    assert init["details"]["self_test_reason"] == "crc"
 
 
 def test_a_driver_without_the_extras_is_reported_not_crashed(scd41, db):
     fake = scd41.fake
-    originals = {name: getattr(type(fake), name) for name in ("self_test", "power_down", "wake_up")}
-    for name in originals:  # an older adafruit_scd4x: the attribute is simply not there
+    originals = {name: getattr(type(fake), name)
+                 for name in ("self_test", "_send_command", "_read_reply", "power_down", "wake_up")}
+    for name in originals:  # a driver that is not adafruit_scd4x: the attributes are simply not there
         setattr(type(fake), name, property(lambda self, n=name: (_ for _ in ()).throw(AttributeError(n))))
     try:
         assert scd41.ensure(1000) is True

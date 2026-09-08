@@ -33,6 +33,8 @@ class FakeScd41Device:
         self.single_shots = 0
         self.self_tests = 0
         self.self_test_error: Optional[Exception] = None  # RuntimeError("Self test failed") like the driver
+        self.self_test_word = 0  # what the sensor answers to 0x3639 (0 = no malfunction)
+        self._buffer = bytearray(18)  # the driver's scratch buffer; the collector reads the word from it
         self.power_downs = 0
         self.wake_ups = 0
 
@@ -65,6 +67,20 @@ class FakeScd41Device:
         self.self_tests += 1  # the real driver sleeps 10 s here
         if self.self_test_error is not None:
             raise self.self_test_error
+
+    # the Adafruit driver's private send / read pair, used by the collector to read the self-test word
+    def _send_command(self, cmd: int, cmd_delay: float = 0) -> None:
+        if cmd == 0x3639:
+            self.self_tests += 1
+            if isinstance(self.self_test_error, RuntimeError) and "communicate" in str(self.self_test_error):
+                raise self.self_test_error
+
+    def _read_reply(self, buff, num: int) -> None:
+        if self.self_test_error is not None:
+            raise self.self_test_error
+        buff[0] = (self.self_test_word >> 8) & 0xFF
+        buff[1] = self.self_test_word & 0xFF
+        buff[2] = 0
 
     def power_down(self):
         self.power_downs += 1

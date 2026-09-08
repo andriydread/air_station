@@ -62,7 +62,10 @@ re-opened only when all sensors fail together.
   beat picks up the newest value when `data_ready` says so — the same shape
   as the SPS30, no waiting in the collector. Its self-test (~10 s) runs on
   the first open of a process only; the verdict is `self_test=` on the
-  `sensor_init` event.
+  `sensor_init` event, with the sensor's own status word (`self_test_word`,
+  0 = no malfunction) and, on a failure, `self_test_reason`: `word` (the
+  sensor says malfunction — or, per Sensirion's testing guide, an unstable
+  or insufficient supply), `nack` (no answer), `crc` (garbled answer).
 - Offset, altitude and ASC are re-applied on every start, not stored in the
   sensor (no EEPROM wear). A forced calibration is kept by the sensor
   itself, in its own EEPROM, without any further command (datasheet 3.9.1),

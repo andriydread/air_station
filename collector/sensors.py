@@ -12,7 +12,7 @@ stored all the same.
 
 import math
 import time
-from typing import Any, Dict, Optional
+from typing import Tuple, Any, Dict, Optional
 
 from shared.backoff import ReinitBackoff
 
@@ -300,7 +300,25 @@ class Sps30(Sensor):
 
 # --- SCD41 ------------------------------------------------------------------------
 
-SCD41_REINIT_SETTLE = 1.0        # datasheet: up to 1000 ms after reinit before commands
+SCD41_REINIT_SETTLE = 1.0        # datasheet 3.10.5 asks 30 ms after reinit; a full second costs nothing
+SCD41_SELF_TEST_CMD = 0x3639     # perform_self_test (datasheet 3.10.3)
+SCD41_SELF_TEST_S = 10.0         # its max command duration
+SELF_TEST_TEXT = {               # the sensor_error message per reason
+    "word": "the sensor reports a malfunction (or an unstable supply — Sensirion testing guide)",
+    "nack": "the sensor did not answer the self-test read",
+    "crc": "the self-test answer was garbled (bad CRC)",
+}
+
+
+def _classify_self_test_error(exc: Exception) -> str:
+    text = str(exc)
+    if "Self test failed" in text:
+        return "word"
+    if "CRC" in text:
+        return "crc"
+    if "communicate" in text or "I2C" in text:
+        return "nack"
+    return text or exc.__class__.__name__
 SCD41_SLEEP_S = 1.0              # power_down → wake_up: the deepest reset software can give it
 PRESSURE_MIN_DELTA_HPA = 1.0
 CAL_MIN_RUNTIME = 180            # seconds the sensor must run before a forced calibration
@@ -337,6 +355,8 @@ class Scd41(Sensor):
         self.recent: list = []  # (ts, ppm) of plausible readings inside CAL_WINDOW
         self.opens = 0
         self.self_test = "unavailable"
+        self.self_test_word: Optional[int] = None
+        self.self_test_reason: Optional[str] = None
 
     def _open(self):
         import adafruit_scd4x  # imported here: only the collector has the library
@@ -356,14 +376,17 @@ class Scd41(Sensor):
             except (TypeError, ValueError):
                 self.health.id = str(serial)
         if self.opens == 0:
-            self.self_test = self._self_test(device)
+            self.self_test, self.self_test_word, self.self_test_reason = self._self_test(device)
             if self.self_test == "fail":
                 self.log.event("error", self.name, "sensor_error",
-                               "scd41 self-test failed: the sensor reports a malfunction",
-                               self_test=self.self_test)
+                               "scd41 self-test failed: " + SELF_TEST_TEXT.get(
+                                   self.self_test_reason, self.self_test_reason or "unknown"),
+                               self_test=self.self_test, self_test_word=self.self_test_word,
+                               self_test_reason=self.self_test_reason)
         self.opens += 1
         self.init_details = {
             **type(self).init_details, "self_test": self.self_test,
+            "self_test_word": self.self_test_word, "self_test_reason": self.self_test_reason,
             "altitude_m": int(self.config.location.altitude_m),
             "temp_offset_c": float(self.config.sensors.scd41_temp_offset_c),
             "asc": bool(self.config.sensors.asc),
@@ -384,16 +407,40 @@ class Scd41(Sensor):
             pass  # the sensor does not ACK wake_up; older drivers surface that NACK
 
     @staticmethod
-    def _self_test(device) -> str:
-        """"ok" | "fail" | "unavailable" — the driver raises RuntimeError on a non-zero word (~10 s)."""
+    def _self_test(device) -> Tuple[str, Optional[int], Optional[str]]:
+        """(verdict, status word, reason): "ok" | "fail" | "unavailable" (~10 s).
+
+        The sensor answers one word: 0 = no malfunction (datasheet 3.10.3).
+        Sensirion's testing guide: any other word means a malfunction *or* an
+        unstable / insufficient supply — so the word is worth keeping. The
+        Adafruit driver's ``self_test()`` hides it behind one RuntimeError that
+        also covers an I2C NACK and a bad CRC; when the driver exposes its
+        send / read pair the word is read here, else ``self_test()`` is called
+        and its message classified. ``reason``: "word" | "nack" | "crc" |
+        the message; None when ok or unavailable.
+        """
+        send, read, buffer = (getattr(device, "_send_command", None), getattr(device, "_read_reply", None),
+                              getattr(device, "_buffer", None))
+        if callable(send) and callable(read) and buffer is not None:
+            try:  # the sensor is idle here (stopped, reset); the datasheet asks idle for the self-test
+                send(SCD41_SELF_TEST_CMD, cmd_delay=SCD41_SELF_TEST_S)
+                read(buffer, 3)
+            except OSError:
+                return "fail", None, "nack"
+            except RuntimeError as exc:
+                return "fail", None, _classify_self_test_error(exc)
+            word = (int(buffer[0]) << 8) | int(buffer[1])
+            return ("ok" if word == 0 else "fail"), word, (None if word == 0 else "word")
         test = getattr(device, "self_test", None)
         if test is None:
-            return "unavailable"
+            return "unavailable", None, None
         try:
             test()
-        except RuntimeError:
-            return "fail"
-        return "ok"
+        except OSError:
+            return "fail", None, "nack"
+        except RuntimeError as exc:
+            return "fail", None, _classify_self_test_error(exc)
+        return "ok", 0, None
 
     def _configure_and_start(self, device) -> None:
         # Settings live in RAM only (no EEPROM wear) and must be written in
