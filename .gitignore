@@ -8,3 +8,4 @@ __pycache__/
 .pytest_cache/
 *.tar.gz
 tests/out/
+docs/datasheets/
