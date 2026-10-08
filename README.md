@@ -1,285 +1,39 @@
 # Air Station
 
-Indoor air-quality station on a Raspberry Pi Zero 2 W: a Sensirion SCD41
-(CO2), SHT41 (temperature, humidity) and SPS30 (particulates), a 3.7" e-paper
-panel on the wall, and a web dashboard for the phone. Three small programs
-share one SQLite file; everything they see is written down.
+An indoor air quality monitor built on a Raspberry Pi Zero 2 W. It measures
+CO2, particulates, temperature and humidity, shows them on an e-paper display
+and serves a small web dashboard on the local network.
 
 ## Hardware
 
-| Part | Bus | Role |
-|---|---|---|
-| Sensirion SCD41 | I2C | CO2 (ppm), photoacoustic; also its own temperature and humidity |
-| Sensirion SHT41 | I2C | Temperature, relative humidity |
-| Sensirion SPS30 | I2C (0x69) | PM1 / PM2.5 / PM10 mass, particle counts 0.5 / 1 / 2.5 µm, typical particle size |
-| WeAct 3.7" e-paper, UC8253C | SPI0.0, GPIO RST=17 DC=25 BUSY=24 | 416×240 1-bit panel, portrait module rotated 90° |
-| LX-2BUPS UPS + 1×18650 | — | Battery backup; no telemetry line, so power is watched through `vcgencmd` |
+- Raspberry Pi Zero 2 W
+- Sensirion SCD41 (CO2), SPS30 (PM1-PM10), SHT41 (temperature, humidity), all on I2C
+- 3.7" e-paper display (UC8253C) on SPI
 
-## The three programs
+## How it works
 
-Each is one single-threaded loop with its own systemd unit (`airstation-<name>`)
-and a 90 s watchdog. They never talk to each other directly, only through the
-tables in `data/airstation.db`.
+Three Python services run under systemd and share one SQLite database:
 
-**collector** owns the I2C bus.
+- **collector** reads the sensors every 10 seconds and stores the raw values
+- **manager** averages each minute, updates the display, fetches the weather
+  forecast from Open-Meteo, and looks after the Pi (Wi-Fi, backups, restarts)
+- **dashboard** is a Flask app with live readings, history charts, system
+  health, CSV export and a few controls (CO2 calibration, fan cleaning)
 
-- Every 10 s on the wall clock it reads the sensors one after another: the
-  SHT41 measures, the SPS30 hands over its newest 1 s value, the SCD41 its
-  newest 5 s value (periodic mode, started once). It writes one raw row with
-  the 15 values **as the sensors gave them** — nothing is filtered; an empty
-  cell means the sensor gave nothing. One log line per row.
-- After any start a sensor is quiet until the first whole minute at least
-  60 s away (`ready_at` on its `sensor_init` event and in the status
-  document): nothing is asked, nothing is stored, nothing is logged.
-- The reset ladder: six bad readings in a row, or six inside three minutes,
-  or a minute without any answer, close and reopen that sensor (a new quiet
-  minute). A bad reading is one that raised or a value that cannot be air —
-  the value is stored all the same. An init that fails is retried with a
-  growing delay (30 s → 5 min). The bus itself is re-opened only when all
-  sensors fail together.
-- It also runs the two sensor commands from the dashboard (forced CO2
-  calibration with safety checks, manual fan clean), the weekly fan clean on
-  Sunday 04:00 local time, sends the live air pressure from the weather into
-  the SCD41 every 30 min, and publishes its status document every 30 s.
-- At start it waits up to 60 s for NTP, then writes anyway; clock jumps are logged.
+Each service has a systemd watchdog, and sensors that start returning bad
+readings are reset automatically.
 
-**manager** owns the SPI bus and the machine. It is the only program with sudo.
-
-- Every minute it averages the six raw rows of the minute that just ended
-  into `display_data`, leaving out any value that cannot be air (a 0 ppm, a
-  negative): AQI from PM2.5 only (EPA 2024 breakpoints, six categories; the
-  panel says "Sensitive" for the long one), CO2 on the UBA scale (Good below
-  1000 ppm, Elevated below 2000, Poor above), the weather columns, the
-  warning glyphs, the starting-up and collector-silent flags. Then it paints
-  the panel: a partial refresh every minute, a full one on every 5-minute
-  mark. Right after a boot the panel says "Starting up" until the
-  collector's quiet minute is over.
-- Weather from Open-Meteo every 30 min (and once at start), cut into rolling
-  3-hour blocks on the local clock; a forecast older than 6 h is painted as "—".
-- Router and internet probes every 30 s; six router failures in a row bounce
-  the Wi-Fi radio (`nmcli radio wifi off/on`, at most once per 10 min).
-- A vitals row every minute (CPU temperature, load, memory, disk, database
-  size, Wi-Fi signal, probe latencies, the throttled bits, uptime, collector lag).
-- Hourly rollups at :00 (catch-up at start), the nightly job at 00:05 local
-  (prune → checkpoint → backup to `data/airstation.db.bak`), commands nobody
-  picked up failed after 10 min, the collector restarted after 3 min of silence.
-- The system commands from the dashboard: restart collector, restart
-  dashboard, reboot, delete history.
-
-**dashboard** is Flask behind waitress on port 8080. Six tabs — Live,
-History, Vitals, Diagnostics, Controls, Data — read the tables and poll
-`/api/changes` every 10 s (every second for 15 s after a button press). Data
-shows any table as it is stored, newest rows first, 100 at a time. An
-"RD" chip marks a value the redesign has no source for yet. The footer shows
-the running commit and the three uptimes.
-
-### What one beat looks like
+## Repo layout
 
 ```
-:00 :10 :20 :30 :40 :50  collector: SHT41 → SPS30 → SCD41 → one raw row, as the sensors said
-:00 of each minute   manager averages the rows of the minute that just ended → display_data → panel
-:00 of each hour     manager rolls the hour up into hourly_measurements
-00:05 local          manager prunes, checkpoints, backs up
-Sunday 04:00 local   collector runs the SPS30 fan clean
+collector/   sensor reading
+manager/     display, weather, maintenance
+dashboard/   web UI and API
+shared/      database, config, logging, scheduler
+drivers/     SPS30 and e-paper drivers
+systemd/     service files
+tests/       tests with fake hardware (no Pi needed)
 ```
 
-## The database
-
-One file, `data/airstation.db`, WAL mode. Any program creates the schema on
-open; there are no migrations. Timestamps are Unix seconds everywhere; local
-time appears only where a person looks (panel clock, browser, the two local
-schedules above).
-
-| Table | One row per | Kept |
-|---|---|---|
-| `raw_measurements` | 10 s beat: `co2 co2_temp co2_humid temp humid pm1 pm25 pm4 pm10 tps nc05 nc1 nc25 nc4 nc10` | 30 days |
-| `hourly_measurements` | hour: `samples` + min / max / avg of every metric | forever |
-| `vitals` | minute of machine health | 30 days |
-| `events` | thing worth remembering: `app level source type message details` | 30 days |
-| `commands` | button press: `from_whom to_whom type status payload result` (pending → running → success / fail) | 30 days |
-| `state` | key: small JSON documents, newest only | — |
-
-The state documents: `display_data` (what the panel shows, rewritten every
-minute — its age is the Live tab's freshness), `collector_status`,
-`manager_status`, `last_weather`, `last_calibration`.
-
-Event types are a fixed vocabulary in `shared/events.py`, grouped by source:
-`scd41 / sht41 / sps30 / i2c` (`sensor_init`, `sensor_reinit`, `sensor_error`,
-`value_dropped`, `warming_up`, `fan_clean`, `calibration_done`, …), `display`,
-`weather`, `wifi`, `power`, `watch`, `storage`, `machine`, `app`, `web`. The
-Diagnostics tab filters on them.
-
-## Configuration — `config.toml`
-
-Read once by all three programs at start; after editing run `make restart`.
-Everything not in this file is a constant next to the code that uses it.
-
-| Key | Meaning |
-|---|---|
-| `location.latitude`, `location.longitude` | Coordinates for the weather forecast, nothing else |
-| `location.altitude_m` | Given to the SCD41 while no weather pressure is known yet |
-| `sensors.scd41_temp_offset_c` | The SCD41's internal temperature offset (factory 4.0); tune it from the bench data |
-| `sensors.sht41_temp_offset_c` | Subtracted from the SHT41 reading to correct the mounting |
-| `sensors.asc` | SCD41 automatic self-calibration; off, see `docs/sensors.md` |
-| `sensors.calibration_target_ppm` | Target for the forced calibration button (fresh air, 420) |
-| `retention_days.raw` | Days of 10-second rows (30); hourly rows are kept forever |
-| `retention_days.vitals`, `retention_days.events`, `retention_days.commands` | Days of machine health, events, button presses (30) |
-| `retention_days.logs` | Daily log files kept per program (30, rolling: day 31 removes day 1) |
-| `weather.block_hours` | Width of the three forecast columns on the panel (3) |
-| `dashboard.port` | The web port (8080) |
-| `paths.database`, `paths.logs` | Where the data lives; relative paths resolve against this file's directory |
-| `logging.level` | `info`: one line per raw row, one per panel frame, the weather, the nightly job, every error with its traceback; `debug` adds web requests and network probes |
-
-## A fresh Pi, start to finish
-
-1. **Raspberry Pi Imager:** Raspberry Pi OS Lite (64-bit). In the settings set
-   the hostname, the user `pi` with a password, your Wi-Fi and locale, and
-   enable SSH. Boot, log in over SSH.
-2. **Enable the buses:** `sudo raspi-config` → Interface Options → enable
-   I2C and SPI. `sudo reboot`. Afterwards `/dev/i2c-1` and `/dev/spidev0.0` exist.
-3. **Get the code:**
-   ```
-   sudo apt-get install -y git
-   git clone <this repository> ~/air_station
-   cd ~/air_station
-   ```
-   Clone as your own user, never with `sudo`: the units run as the user who
-   runs `make init`, and a checkout owned by root breaks the later `git pull`.
-   If that already happened: `sudo chown -R $USER: <the checkout>`.
-4. **Install:** `make init` (no `sudo` in front; it asks for it where needed).
-   It checks the two device files, installs the apt
-   packages, creates `.venv`, installs the requirements (the first install on
-   a fresh card may compile for a while — that is expected), creates
-   `data/logs`, renders the three unit files and the sudoers file with your
-   user and this path, makes the system journal persistent (capped at
-   200 MB, so an export can show the previous boot), enables the hardware
-   watchdog, and enables and starts the four units (the three programs plus
-   the Wi-Fi power-save switch).
-5. `sudo reboot` once, to arm the hardware watchdog.
-
-### The first hour
-
-After the reboot, from the checkout:
-
-- `make status` — all three units `active (running)`; the last raw row a few
-  seconds old; `display_data` and `vitals` under a minute old.
-- The panel shows "Warming up…" for the first minute, then real numbers.
-- The dashboard answers on the phone at `http://<hostname>.local:8080`;
-  Diagnostics shows three healthy sensors and a fresh weather fetch.
-- `make export` writes an archive to your home directory.
-- At the next full hour an `hourly` rollup appears; the morning after, a
-  `nightly` event with the backup size.
-
-Then, once, on a calm day: take the station outside or to an open window for
-ten minutes and press **Calibrate CO2** on the Controls tab (see
-`docs/sensors.md` for why).
-
-## The `make` targets
-
-On the Pi (they refuse to run anywhere else):
-
-| Target | Does |
-|---|---|
-| `make init` | Fresh install, as above |
-| `make deploy` | After `git pull`: requirements, unit files, sudoers; restarts the three programs |
-| `make restart` | Restarts the three programs (after editing `config.toml`) |
-| `make status` | One screen: units, data ages, database and backup, disk, log level, commit, last events |
-| `make logs` | Follows the journal of the three units and the three log files at once |
-| `make export` | Packs everything for analysis into `~/airstation-<stamp>.tar.gz` |
-| `make recovery` | Restores last night's backup (asks; `FORCE=1` skips the question) |
-| `make delete-data` | Deletes database, backup and logs and starts fresh (asks; `FORCE=1`) |
-| `make help` | The list |
-
-## Logging
-
-Every program writes `data/logs/<program>.log` as `key=value` lines, one
-file per UTC day, 30 kept (rolling). At `info` a normal day is one line per
-raw row with the read time per sensor (the collector, ~2 MB a day), one per
-panel frame naming only what is missing and why the panel is starting or
-silent (the manager, ~0.4 MB), every weather fetch, every hourly rollup,
-the nightly job, the applied pressure, the commands, the first failed
-network probe of a run, the start and stop lines with what the start found,
-and every error with its traceback; the dashboard writes only its commands
-and errors. `debug` adds one line per beat (which sensor was asked, answered,
-stayed quiet, raised), the reset ladder's count-up to a re-init, the minute
-average's window and what it dropped, the network probes, the vitals row,
-the web requests (the page's 10 s poll summarised per minute). A line looks
-like
-
-```
-2026-09-06T12:00:10Z INFO collector sample row ts=1788436810 co2=812 co2_temp=25.1 … ms=sht41:8.1,sps30:2.3,scd41:4.0
-```
-
-`make export` builds `~/airstation-<YYYYMMDD-HHMM>.tar.gz` holding a
-consistent copy of the database (`db/airstation.db`), every log file
-(`logs/`), the journal of the three units for the last 30 days and the
-kernel log of this and the previous boot (`journal/`), `vcgencmd`, `df`,
-`free`, `uname` (`system/`), `config.toml` and `commit.txt`. Move it by hand
-(Pi → laptop → wherever the analysis happens) and unpack it with
-`make import FILE=<archive>`, which prints the row counts. Nothing
-about the analysis lands in this repository.
-
-## Where things live
-
-```
-collector/   sensors, filters, sampling, the collector's commands, entry point
-manager/     weather, display, machine, network, frame, maintenance, commands, entry point
-dashboard/   Flask app, API, templates/, static/
-shared/      config, db (schema + every query), events (logger + vocabulary),
-             heartbeat, clock, loop (the scheduler), aqi, render (the panel picture), backoff
-drivers/     SPS30 over I2C with CRC, UC8253C over SPI — hand-written, stable
-tools/       status screen, export, backup, import, demo
-systemd/     the three unit templates, sudoers template, Wi-Fi power-save unit, journald drop-in, watchdog setup
-assets/      panel font, weather icons (moon.png is an empty slot: night blocks use sun.png until you add one)
-docs/        sensors.md — how the sensors are cared for (the Sensirion datasheets stay local, git-ignored under docs/datasheets/)
-tests/       hardware-free suite; tests/mocks/ are the fake sensors, panel, clock
-data/        database, backup, logs (git-ignored)
-```
-
-## When something looks wrong
-
-- `make status` first: a unit not `active`, a raw row older than a minute,
-  `display_data` older than two — each points at one program.
-- Diagnostics tab: sensor health, bad-read streaks, re-init counts, the
-  panel's last full and partial refresh, the last weather fetch, restart
-  counts, the event list with filters.
-- `make logs` for the live stream; the export for anything older.
-- The events you will see most: `sensor_init` after every start (it says
-  when the quiet minute ends); `sensor_error` when a read raised;
-  `sensor_reinit` when the reset ladder fired;
-  `internet_down` / `internet_up` on the home connection; `wifi_bounce` when
-  the router itself vanished; `power_issue` when the Pi reports under-voltage;
-  `collector_silent` / `collector_restarted` when the manager had to step in.
-- A broken database: `make recovery` puts back last night's backup and keeps
-  the broken file next to it.
-
-## Developing off the Pi
-
-The tests need no hardware: `tests/conftest.py` injects fake `board`,
-`busio`, `RPi.GPIO`, `spidev` and the Adafruit drivers.
-
-```
-make dev     # a virtualenv with the test dependencies only
-make test     # the whole suite
-make demo     # collector + manager + dashboard here on fake hardware, 48 h of seeded history, dashboard on :8080
-Ctrl-C  # stop a demo left running in the background
-make import FILE=~/airstation-<stamp>.tar.gz   # unpack a bench archive into from_pi/
-make clean    # remove the venv, caches and from_pi/
-```
-
-Rules for anyone (or any assistant) editing this code:
-
-- Simplicity, reliability, logging — in that order. Richness comes from
-  logging more fields, never from more mechanisms: no worker threads, no
-  environment-variable overrides, constants next to the code they tune.
-- The three programs share the database and nothing else. A new value flows
-  table → `display_data` or a status document → tab; never around them.
-- Event types are the fixed list in `shared/events.py`; the tests reject an
-  unknown one.
-- Drivers in `drivers/` are not rewritten; their tests are the contract.
-- Every change: `make test` green, one commit per task, plain message.
-
-The manager runs four commands as root through `/etc/sudoers.d/airstation`
-without a password: the Wi-Fi radio off and on, restarting the collector and
-the dashboard, and reboot. Nothing else; the collector and the dashboard have
-no sudo at all.
+`make test` runs the tests and `make demo` runs the whole station locally
+with simulated sensors.
