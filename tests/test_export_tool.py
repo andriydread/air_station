@@ -1,6 +1,5 @@
-"""`make export` (tools/export.sh + tools/backup.py) run for real on this server
-against a temp config, then `make agent-import` (tools/import_archive.py) on
-the archive it made."""
+"""tools/export.sh and tools/backup.py run for real against a temp config, then
+tools/import_archive.py on the resulting archive."""
 
 import subprocess
 import tarfile
@@ -63,7 +62,7 @@ def test_export_then_import(tmp_config, db, tmp_path, capsys):
     stamp = archives[0].name[len("airstation-"):-len(".tar.gz")]
     assert len(stamp) == 13 and stamp[8] == "-"
 
-    # --- the other side: make agent-import FILE=…
+    # unpack it again, as `make import` does
     into = tmp_path / "from_pi"
     assert import_archive.main([str(archives[0]), "--into", str(into)]) == 0
     text = capsys.readouterr().out
@@ -86,8 +85,8 @@ def test_export_refuses_without_a_database(tmp_config, tmp_path):
 def test_makefile_export_and_import_targets():
     out = subprocess.run(["make", "-C", str(REPO), "-n", "export"], capture_output=True, text=True).stdout
     assert "tools/export.sh" in out
-    result = subprocess.run(["make", "-C", str(REPO), "agent-import"], capture_output=True, text=True)
+    result = subprocess.run(["make", "-C", str(REPO), "import"], capture_output=True, text=True)
     assert result.returncode != 0 and "FILE=" in result.stdout
-    out = subprocess.run(["make", "-C", str(REPO), "-n", "agent-import", "FILE=x.tar.gz"],
+    out = subprocess.run(["make", "-C", str(REPO), "-n", "import", "FILE=x.tar.gz"],
                          capture_output=True, text=True).stdout
     assert "tools.import_archive x.tar.gz" in out

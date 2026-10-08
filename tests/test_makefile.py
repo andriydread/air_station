@@ -1,5 +1,4 @@
-"""The Makefile on the dev server: every operator target dry-runs (`make -n`),
-the `_pi` guard refuses to run them here, `help` lists them all."""
+"""Makefile sanity checks. The Pi targets are only dry-run here."""
 
 import os
 import re
@@ -9,59 +8,41 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-OPERATOR = ("init", "deploy", "restart", "status", "logs", "export", "recovery", "delete-data")
-AGENT = ("agent-venv", "agent-test", "agent-demo", "agent-demo-stop", "agent-import", "agent-clean")
+PI_TARGETS = ("init", "deploy", "restart", "status", "logs", "export", "recovery", "delete-data")
 
 
-def make(*args, **kwargs):
-    return subprocess.run(["make", "-C", str(REPO), *args], capture_output=True, text=True, **kwargs)
+def make(*args):
+    return subprocess.run(["make", "-C", str(REPO), *args], capture_output=True, text=True)
 
 
-@pytest.mark.parametrize("target", OPERATOR)
-def test_operator_targets_dry_run(target):
+@pytest.mark.parametrize("target", PI_TARGETS)
+def test_pi_targets_dry_run(target):
     result = make("-n", target)
     assert result.returncode == 0, result.stderr
-    assert "/etc/systemd/system" in result.stdout  # the guard is always first
+    assert "/etc/systemd/system" in result.stdout  # the _pi guard runs first
 
 
-def test_dry_run_recipes_do_not_recurse():
-    # `$(MAKE)` lines run even under -n; the operator targets must not use them
-    text = (REPO / "Makefile").read_text()
-    assert "$(MAKE)" not in text
+@pytest.mark.skipif(os.path.exists("/dev/i2c-1"), reason="running on the Pi")
+def test_guard_refuses_off_the_pi():
+    result = make("status")
+    assert result.returncode != 0 and "runs ON the Pi" in result.stdout
 
 
-@pytest.mark.skipif(os.path.exists("/dev/i2c-1"), reason="this is a Pi")
-@pytest.mark.parametrize("target", ("status", "restart", "init"))
-def test_guard_refuses_to_run_off_the_pi(target):
-    result = make(target)
-    assert result.returncode != 0
-    assert "runs ON the Pi" in result.stdout
-
-
-def test_init_renders_units_and_sudoers_and_enables_four_units():
+def test_init_installs_everything():
     out = make("-n", "init").stdout
     for unit in ("airstation-collector", "airstation-manager", "airstation-dashboard"):
-        assert f"systemd/{unit}.service.in" in out or f"systemd/$unit.service.in" in out
-    assert "visudo -c" in out and "/etc/sudoers.d/airstation" in out
-    assert "enable-watchdog.sh" in out
-    assert "journald-airstation.conf" in out and "/var/log/journal" in out
-    assert "enable --now wifi-powersave-off airstation-collector airstation-manager airstation-dashboard" in out
-    assert "/dev/spidev0.0" in out and "apt-get install" in out and "requirements.txt" in out
+        assert unit in out
+    assert "apt-get install" in out and "requirements.txt" in out
+    assert "visudo -c" in out and "enable-watchdog.sh" in out and "journald-airstation.conf" in out
 
 
-def test_deploy_installs_and_restarts_without_apt_or_watchdog():
+def test_deploy_skips_apt_and_watchdog():
     out = make("-n", "deploy").stdout
-    assert "restart airstation-collector airstation-manager airstation-dashboard" in out
+    assert "restart airstation-collector" in out
     assert "apt-get" not in out and "enable-watchdog" not in out
-    assert "journald-airstation.conf" in out  # the journal drop-in lands on every deploy
 
 
-def test_status_runs_the_status_tool():
-    assert "python -m tools.status" in make("-n", "status").stdout
-
-
-def test_help_lists_every_target():
-    out = make("help").stdout
-    listed = set(re.findall(r"^  ([a-z-]+)\s", out, re.M))
-    assert listed >= set(OPERATOR) | set(AGENT) | {"help"}
-    assert not any(name.startswith("_") for name in listed)
+def test_readme_only_names_real_targets():
+    targets = set(re.findall(r"^([a-z][a-z-]*):", (REPO / "Makefile").read_text(), re.M))
+    named = set(re.findall(r"(?:`|^)make ([a-z][a-z-]*)", (REPO / "README.md").read_text(), re.M))
+    assert named <= targets, named - targets

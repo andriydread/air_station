@@ -1,16 +1,16 @@
 #!/bin/sh
-# make export — everything needed to analyse the station off the Pi, in one
-# archive in the home directory: ~/airstation-<YYYYMMDD-HHMM>.tar.gz
+# make export: pack everything needed to look at the station off the Pi into
+# one archive, ~/airstation-<YYYYMMDD-HHMM>.tar.gz
 #
 #   db/airstation.db            consistent copy (SQLite online backup)
-#   logs/                       every app log file (daily, 45 days)
+#   logs/                       all app log files
 #   journal/units.txt           journalctl of the three units, last 30 days
 #   journal/kernel-current.txt  dmesg of this boot (I2C, under-voltage, Wi-Fi)
-#   journal/kernel-previous.txt dmesg of the previous boot (why did it reboot?)
+#   journal/kernel-previous.txt dmesg of the previous boot
 #   system/                     throttled, temp, df, free, uname
 #   config.toml, commit.txt
 #
-# Usage: tools/export.sh [--config path] [--out dir]   (both default: repo / $HOME)
+# Usage: tools/export.sh [--config path] [--out dir]   (defaults: repo config, $HOME)
 set -eu
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -58,4 +58,4 @@ cp "$CONFIG" "$TREE/config.toml"
 mkdir -p "$OUT"
 tar -czf "$OUT/$NAME.tar.gz" -C "$WORK" "$NAME"
 echo "archive: $OUT/$NAME.tar.gz ($(du -h "$OUT/$NAME.tar.gz" | cut -f1))"
-echo "move it to the laptop, then to the server: scp $OUT/$NAME.tar.gz <laptop>: ; make agent-import FILE=$NAME.tar.gz"
+echo "copy it to the dev machine and run: make import FILE=$NAME.tar.gz"

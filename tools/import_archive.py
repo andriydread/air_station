@@ -1,5 +1,5 @@
-"""`make agent-import FILE=<archive>` — unpack a `make export` archive on the
-dev server into `from_pi/<stamp>/` and print what the database holds."""
+"""Unpack a `make export` archive into `from_pi/<stamp>/` and print a summary
+of the database (`make import FILE=<archive>`)."""
 
 import argparse
 import sqlite3

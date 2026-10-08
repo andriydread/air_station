@@ -1,14 +1,12 @@
-"""The whole station on this server with fake hardware: ``make agent-demo``.
+"""Run the whole station locally with fake hardware (``make demo``).
 
-Runs the three real programs — collector (--fake), manager (--fake) and the
-dashboard — as subprocesses against a demo database under ``data/demo/``,
-optionally pre-filled with hours of generated history so charts have
-something to show. Every screenshot then comes from the real code path.
+Starts the collector (--fake), the manager (--fake) and the dashboard as
+subprocesses against a demo database under ``data/demo/``, optionally
+pre-filled with generated history so the charts have something to show.
 
     python tools/demo.py --seed-hours 48 [--port 8080] [--reset]
 
-Ctrl-C (or ``make agent-demo-stop``) stops all three. The pid of this
-runner is in ``data/demo/demo.pid``.
+Runs in the foreground; Ctrl-C stops all three.
 """
 
 import argparse
@@ -26,8 +24,8 @@ PYTHON = sys.executable
 
 def write_demo_config(port: int) -> Path:
     text = (REPO / "config.toml").read_text()
-    # exact lines of the shipped file; paths absolute because config paths
-    # resolve against the directory of the config file that was loaded
+    # Exact lines from the shipped file. Paths are made absolute because they
+    # resolve relative to the directory of the loaded config file.
     replacements = {
         'database = "data/airstation.db"': f'database = "{DEMO / "airstation.db"}"',
         'logs = "data/logs"': f'logs = "{DEMO / "logs"}"',
@@ -78,7 +76,6 @@ def main(argv=None) -> int:
         "manager": [PYTHON, "-m", "manager", "--fake", "--config", str(config_path)],
         "dashboard": [PYTHON, "-m", "dashboard", "--config", str(config_path)],
     }
-    (DEMO / "demo.pid").write_text(str(os.getpid()))
     processes = {}
     for name, argv in commands.items():
         processes[name] = subprocess.Popen(argv, cwd=str(REPO), env=env)
@@ -110,11 +107,6 @@ def main(argv=None) -> int:
                 stop()
     except SystemExit:
         pass
-    finally:
-        try:
-            (DEMO / "demo.pid").unlink()
-        except OSError:
-            pass
     return 0
 
 

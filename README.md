@@ -216,7 +216,7 @@ consistent copy of the database (`db/airstation.db`), every log file
 kernel log of this and the previous boot (`journal/`), `vcgencmd`, `df`,
 `free`, `uname` (`system/`), `config.toml` and `commit.txt`. Move it by hand
 (Pi → laptop → wherever the analysis happens) and unpack it with
-`make agent-import FILE=<archive>`, which prints the row counts. Nothing
+`make import FILE=<archive>`, which prints the row counts. Nothing
 about the analysis lands in this repository.
 
 ## Where things live
@@ -259,12 +259,12 @@ The tests need no hardware: `tests/conftest.py` injects fake `board`,
 `busio`, `RPi.GPIO`, `spidev` and the Adafruit drivers.
 
 ```
-make agent-venv     # a virtualenv with the test dependencies only
-make agent-test     # the whole suite
-make agent-demo     # collector + manager + dashboard here on fake hardware, 48 h of seeded history, dashboard on :8080
-make agent-demo-stop  # stop a demo left running in the background
-make agent-import FILE=~/airstation-<stamp>.tar.gz   # unpack a bench archive into from_pi/
-make agent-clean    # remove the venv, caches and from_pi/
+make dev     # a virtualenv with the test dependencies only
+make test     # the whole suite
+make demo     # collector + manager + dashboard here on fake hardware, 48 h of seeded history, dashboard on :8080
+Ctrl-C  # stop a demo left running in the background
+make import FILE=~/airstation-<stamp>.tar.gz   # unpack a bench archive into from_pi/
+make clean    # remove the venv, caches and from_pi/
 ```
 
 Rules for anyone (or any assistant) editing this code:
@@ -277,7 +277,7 @@ Rules for anyone (or any assistant) editing this code:
 - Event types are the fixed list in `shared/events.py`; the tests reject an
   unknown one.
 - Drivers in `drivers/` are not rewritten; their tests are the contract.
-- Every change: `make agent-test` green, one commit per task, plain message.
+- Every change: `make test` green, one commit per task, plain message.
 
 The manager runs four commands as root through `/etc/sudoers.d/airstation`
 without a password: the Wi-Fi radio off and on, restarting the collector and
