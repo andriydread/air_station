@@ -4,15 +4,11 @@ An indoor air quality monitor built on a Raspberry Pi Zero 2 W. It measures
 CO2, particulates, temperature and humidity, shows them on an e-paper display
 and serves a small web dashboard on the local network.
 
-I built it to see how stale the air in my room really gets, and it turned
-into a nice exercise in getting cheap hardware to run unattended for weeks.
-
 ## Hardware
 
 - Raspberry Pi Zero 2 W
 - Sensirion SCD41 (CO2), SPS30 (PM1-PM10), SHT41 (temperature, humidity), all on I2C
 - 3.7" e-paper display (UC8253C) on SPI
-- Small UPS board, so short power cuts don't reboot the Pi
 
 ## How it works
 
@@ -71,10 +67,3 @@ systemd/     service files
 docs/        sensor notes (calibration, resets)
 tests/       tests with fake hardware (no Pi needed)
 ```
-
-## Development
-
-There are 400+ tests, and none of them need the real hardware: the sensor
-and display libraries are replaced with fakes. `make test` runs them, and
-`make demo` runs the whole station locally with simulated sensors and two
-days of generated history.
