@@ -55,10 +55,10 @@ def test_first_frame_is_full_then_partial_until_five_minutes(panel):
 
 def test_a_first_frame_just_before_a_five_minute_mark_is_partial_then_the_mark_is_full(panel):
     modes = [panel.show(FRAME, now=t) for t in (250, 300, 360, 600)]
-    assert modes == ["partial", "full", "partial", "full"]  # one flash at the mark, not two 50 s apart
+    assert modes == ["partial", "full", "partial", "full"]  # one full refresh at the mark, not two 50 s apart
     assert panel.next_full_at == 900
     late = Panel(panel.log, driver_factory=lambda: FakeDriver(), monotonic=lambda: 0.0)
-    assert late.show(FRAME, now=200) == "full"  # 100 s to the mark: the first frame is full as before
+    assert late.show(FRAME, now=200) == "full"  # 100 s before the mark the first frame is full
 
 
 def test_forced_full(panel):
@@ -108,7 +108,6 @@ def test_sleep_close_and_status_shape(panel):
 
 
 def test_real_driver_busy_timeout_through_the_wrapper(log, db, monkeypatch):
-    """The real UC8253C driver on the fake GPIO with a stuck BUSY pin."""
     import RPi.GPIO as gpio
     import drivers.uc8253c as uc
 

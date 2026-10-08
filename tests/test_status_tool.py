@@ -49,7 +49,7 @@ def test_full_screen_from_a_seeded_database(tmp_config, db, kyiv):
     db.close()
     backup = str(tmp_config.paths.database) + ".bak"
     open(backup, "wb").close()
-    os.utime(backup, (NOW - 8 * 3600, NOW - 8 * 3600))  # Fri 02:00 local → "Fri 02:00"
+    os.utime(backup, (NOW - 8 * 3600, NOW - 8 * 3600))  # Fri 02:00 local
 
     text = status.render(tmp_config, runner=systemd(FakeRunner()), now=NOW, hostname="airstation")
     lines = text.splitlines()

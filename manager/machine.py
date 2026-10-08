@@ -1,10 +1,7 @@
-"""The Pi's own health, once a minute: power bits, temperature, load, memory,
-disk, database size, Wi-Fi signal, uptime, collector lag → one ``vitals`` row.
+"""Pi health, written as one vitals row per minute.
 
-Power: ``vcgencmd get_throttled`` reports what is happening now (bits 0-3)
-and what has happened since boot (bits 16-19). The row stores the raw
-value; the glyph and the pill use only the "now" half. Threshold events
-(``cpu_hot``, ``disk_low``, ``memory_low``) fire once per episode.
+vcgencmd get_throttled reports current problems in bits 0-3 and problems since
+boot in bits 16-19; the power glyph only looks at the current ones.
 """
 
 import os
@@ -33,7 +30,7 @@ FLAG_BITS = {
 
 @dataclass
 class Sources:
-    """Where the numbers come from; tests point these at temp files."""
+    """File paths to read from (tests point these at temp files)."""
     thermal: str = "/sys/class/thermal/thermal_zone0/temp"
     loadavg: str = "/proc/loadavg"
     meminfo: str = "/proc/meminfo"
@@ -44,7 +41,7 @@ class Sources:
 
 
 def parse_throttled(text: str) -> int:
-    """``throttled=0x50005`` → 0x50005."""
+    """Parse "throttled=0x50005" into 0x50005."""
     return int(text.strip().split("=", 1)[-1], 16)
 
 
@@ -109,7 +106,7 @@ def read_uptime(path: str) -> Optional[int]:
 
 
 def read_rssi(path: str, interface: str) -> Optional[int]:
-    """Signal level in dBm from /proc/net/wireless (no tool needed)."""
+    """Signal level in dBm from /proc/net/wireless."""
     text = _read_text(path)
     if not text:
         return None
@@ -124,7 +121,7 @@ def read_rssi(path: str, interface: str) -> Optional[int]:
 
 
 def read_link_mbps(runner: Callable, interface: str) -> Optional[float]:
-    """tx bitrate from ``iw dev wlan0 link``; None when iw is missing or not associated."""
+    """tx bitrate from `iw dev wlan0 link`, or None if iw is missing or not associated."""
     try:
         result = runner(["iw", "dev", interface, "link"], capture_output=True, text=True,
                         timeout=5, check=False)
@@ -200,8 +197,6 @@ class Machine:
         self.log.debug("machine", "vitals", **{k: v for k, v in row.items() if k != "recorded_at"})
         return row
 
-    # --- events ---------------------------------------------------------------------
-
     def _power_events(self, raw: Optional[int]) -> None:
         names = flag_names(raw)
         if self._last_now is None:
@@ -220,6 +215,7 @@ class Machine:
             self._last_now = names
 
     def _threshold_events(self, row: Dict[str, Any]) -> None:
+        # each warning fires once when the condition starts, not every minute
         checks = (
             ("cpu_hot", row["cpu_temp"] is not None and row["cpu_temp"] > CPU_HOT_C,
              f"CPU at {row['cpu_temp']} °C", {"cpu_temp": row["cpu_temp"]}),
@@ -234,8 +230,6 @@ class Machine:
                 source = "storage" if name == "disk_low" else "machine"
                 self.log.event("warning", source, name, message, **details)
             self._episodes[name] = bool(active)
-
-    # --- for the frame and the status document ----------------------------------------------
 
     def glyph(self) -> bool:
         return bool(flag_names(self.raw_throttled))

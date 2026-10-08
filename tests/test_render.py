@@ -56,7 +56,6 @@ def test_long_category_word_shrinks_one_step():
     doc = _doc(aqi=250, aqi_short="Very Unhealthy", co2_category="Elevated")
     image, painted = render(doc, now=NOW)
     assert "Very Unhealthy" in painted and "Elevated" in painted
-    # the word must not run into the CO2 half: nothing painted beyond the middle
     _save(image, "render_very_unhealthy")
 
 
@@ -86,7 +85,7 @@ def test_stale_weather_paints_dashes_in_all_three_columns():
     _save(image, "render_stale_weather")
 
 
-def test_png_files_exist_for_the_operator():
+def test_png_files_exist():
     for name in ("render_normal", "render_dashes", "render_warming"):
         assert (OUT / f"{name}.png").exists()
 

@@ -1,10 +1,9 @@
 """Plausible, drifting sensor values for the demo and for seeding charts.
 
-``World.sample(t)`` returns what the three sensors would say at Unix time
-``t``: a CO2 day curve with ventilation drops, a slow temperature/humidity
-swing, a dust baseline with cooking-like bumps, and — every so often — a
-garbage value so the drop path is exercised. Deterministic for a given
-seed, so screenshots are reproducible.
+``World.sample(t)`` returns what the three sensors would read at Unix time
+``t``: a daily CO2 curve, a slow temperature/humidity swing, a dust baseline
+with periodic bumps, and an occasional garbage value. The output is
+deterministic for a given seed.
 """
 
 import math
@@ -15,7 +14,7 @@ from collector.sampling import SAMPLE_INTERVAL
 from tests.mocks.fake_devices import FakeScd41Device, FakeSht41Device, FakeSps30Device
 
 BEATS_PER_HOUR = 3600 // SAMPLE_INTERVAL
-GARBAGE_EVERY = 19890                        # seconds; a multiple of the 30 s beat (5.5 h)
+GARBAGE_EVERY = 19890                        # seconds (about 5.5 h)
 
 DAY = 86400.0
 
@@ -29,13 +28,13 @@ class World:
 
     def sample(self, t: float) -> Dict[str, Any]:
         day = (t % DAY) / DAY                       # 0 at midnight (UTC), 0.5 at noon
-        occupancy = max(0.0, math.sin((day - 0.25) * 2 * math.pi))  # people around from morning to evening
+        occupancy = max(0.0, math.sin((day - 0.25) * 2 * math.pi))  # people home from morning to evening
         co2 = 450 + 500 * occupancy + 60 * math.sin(t / 900) + self._noise(t, 1, 12)
         temp = 21.5 + 2.0 * math.sin((day - 0.35) * 2 * math.pi) + self._noise(t, 2, 0.08)
         humid = 42 + 6 * math.cos((day - 0.1) * 2 * math.pi) + self._noise(t, 3, 0.6)
         bump = 12 * math.exp(-((t % 7200) / 60 - 20) ** 2 / 30)  # a dust bump every two hours
         pm25 = max(0.3, 3.0 + bump + self._noise(t, 4, 0.4))
-        garbage = int(t) % GARBAGE_EVERY == 0       # one garbage beat every 5.5 hours
+        garbage = int(t) % GARBAGE_EVERY == 0
         return {
             "co2": 0.0 if garbage else round(co2, 1),
             "co2_temp": round(temp + 1.4, 2),
@@ -55,7 +54,7 @@ class World:
         }
 
     def row(self, t: float) -> Dict[str, Any]:
-        """The 15 row metrics (filtered the way the collector would: garbage → None)."""
+        """The 15 row metrics, with the garbage CO2 value turned into None."""
         s = self.sample(t)
         return {
             "co2": None if s["co2"] < 350 else int(round(s["co2"])),
@@ -158,10 +157,10 @@ def install_generated_devices(world: Optional[World] = None):
 
 def seed_history(db, hours: float, now: Optional[float] = None, world: Optional[World] = None,
                  raw_hours: Optional[float] = None) -> Dict[str, int]:
-    """Fill raw rows (one per beat), hourly rollups and vitals (every minute) for the past ``hours``.
+    """Fill raw rows, hourly rollups and per-minute vitals for the past ``hours``.
 
-    ``raw_hours`` limits how far back the raw rows go (default: all of it, capped
-    at 30 days by the caller's patience); older hours get hourly rows only.
+    ``raw_hours`` limits how far back raw rows go (default: all of ``hours``);
+    older hours get hourly rows only.
     """
     import time
 
@@ -182,7 +181,7 @@ def seed_history(db, hours: float, now: Optional[float] = None, world: Optional[
         counts["raw"] += 1
         t += SAMPLE_INTERVAL
     db.write_many(statements)
-    # hourly rows for hours before the raw window come from the generator directly
+    # Hours before the raw window get hourly rows straight from the generator.
     hour = (start // 3600) * 3600
     while hour + 3600 <= raw_start:
         samples = [world.row(hour + i * SAMPLE_INTERVAL) for i in range(BEATS_PER_HOUR)]

@@ -1,8 +1,6 @@
-"""How the collector answers the two buttons meant for it.
+"""Runs the dashboard commands addressed to the collector (calibration, fan clean).
 
-Every 2 s: claim this app's pending commands, run each, write success or
-fail with a result. A handler that raises fails its command and the loop
-carries on; an unknown type fails with "unsupported".
+A handler that raises marks its command failed; unknown types fail as "unsupported".
 """
 
 import time
@@ -61,7 +59,7 @@ class CommandRunner:
         self.handled = 0
 
     def process(self, now: float) -> int:
-        """Claim and run pending commands for the collector; returns how many ran."""
+        """Claim and run pending commands; returns how many ran."""
         commands = self.db.claim_pending(self.APP)
         for command in commands:
             self._run(command, now)

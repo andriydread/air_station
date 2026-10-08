@@ -1,10 +1,8 @@
-"""How the manager answers its four buttons.
+"""Handlers for the commands the dashboard queues for the manager.
 
-Restart collector / restart dashboard / reboot run fixed command strings
-through sudo, deferred two seconds in a detached shell so the command row
-is completed before the action lands. Delete history clears the
-measurement tables. Reboot and delete history require ``confirmed: true``
-in the payload (the dashboard asks for a typed confirmation).
+System commands run through sudo in a detached shell after a 2 s delay, so the
+command row is marked done before the restart or reboot happens. Reboot and
+delete_history need confirmed=true in the payload.
 """
 
 import subprocess

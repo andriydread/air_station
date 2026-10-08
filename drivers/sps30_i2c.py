@@ -110,10 +110,9 @@ class SPS30:
         return words
 
     def wakeup(self) -> None:
-        # In sleep the I2C interface is off: the first 0x1103 is expected to
-        # NAK (it only powers the interface), the second must ACK. Swallowing
-        # BOTH would make a dead/absent sensor "wake" successfully and push
-        # the failure to a later, more confusing step.
+        # In sleep the I2C interface is off, so the first 0x1103 NAKs (it only
+        # powers the interface) and the second must ACK. Swallowing both would
+        # let a missing sensor "wake" and fail later in a more confusing place.
         try:
             self._command(self._CMD_WAKEUP)
         except OSError:

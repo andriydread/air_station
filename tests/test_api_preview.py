@@ -35,7 +35,7 @@ def test_png_and_etag_304(client, db, monkeypatch):
     assert response.headers["Cache-Control"] == "no-cache"
     again = client.get("/api/display-preview.png", headers={"If-None-Match": etag})
     assert again.status_code == 304 and again.headers["ETag"] == etag
-    monkeypatch.setattr(db, "now", lambda: 1_788_436_860)  # a minute later, as in life
+    monkeypatch.setattr(db, "now", lambda: 1_788_436_860)  # a minute later
     db.set_state("display_data", {"updated_at": 1_788_436_860, "values": {"co2": 900}, "weather": {}, "glyphs": {}})
     changed = client.get("/api/display-preview.png", headers={"If-None-Match": etag})
     assert changed.status_code == 200 and changed.headers["ETag"] != etag

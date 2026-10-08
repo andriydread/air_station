@@ -1,5 +1,5 @@
-"""The manager's housekeeping: the hourly rollup, the nightly prune → checkpoint →
-backup, the watch over the collector, and failing commands nobody picked up.
+"""Housekeeping: hourly rollups, the nightly prune/checkpoint/backup, restarting
+a silent collector, and failing commands that nobody picked up.
 """
 
 import subprocess
@@ -10,8 +10,8 @@ from shared import clock
 
 NIGHTLY_HOUR = 0
 NIGHTLY_MINUTE = 5
-COLLECTOR_SILENT = 60.0          # no raw row for this long → event
-COLLECTOR_RESTART_AFTER = 180.0  # … and after this long → restart its unit (decided 2026-09-06)
+COLLECTOR_SILENT = 60.0          # no raw row for this long: log an event
+COLLECTOR_RESTART_AFTER = 180.0  # no raw row for this long: restart the service
 RESTART_COOLDOWN = 600.0
 UNCLAIMED_FAIL_AFTER = 600
 RESTART_COLLECTOR = "sudo systemctl restart airstation-collector"
@@ -19,7 +19,7 @@ DEFER_SECONDS = 2
 
 
 class Hourly:
-    """Roll up the hour just finished at :00 (and every hour missed while the Pi was off)."""
+    """Roll up the last hour at :00, plus any hours missed while the Pi was off."""
 
     def __init__(self, db, log):
         self.db = db
@@ -46,7 +46,7 @@ class Hourly:
 
 def nightly(db, log, config, now: float, heartbeat: Optional[Callable[[], None]] = None,
             monotonic: Callable[[], float] = time.monotonic) -> Dict[str, Any]:
-    """prune → checkpoint → backup, one ``nightly`` event with the numbers."""
+    """Prune old rows, checkpoint the WAL and write the backup."""
     started = monotonic()
     pruned = db.prune(int(now), config.retention_days)
     checkpoint = db.checkpoint()
@@ -81,7 +81,7 @@ class Nightly:
 
 
 class CollectorWatch:
-    """No raw row for 60 s → event; 3 min → restart the collector's unit (10 min cooldown)."""
+    """Warn after 60 s without a raw row; restart the collector after 3 min (at most every 10 min)."""
 
     def __init__(self, log, spawner: Callable = subprocess.Popen):
         self.log = log
@@ -92,7 +92,7 @@ class CollectorWatch:
         self.restarts = 0
 
     def tick(self, now: float, latest_raw_at: Optional[float], quiet: bool = False) -> Dict[str, Any]:
-        """``quiet``: the collector is in its quiet time (the frame says "starting up") — not silence."""
+        """quiet=True means the collector is still warming up, which doesn't count as silence."""
         if quiet:
             self.silent_since = None
             self.event_logged = False

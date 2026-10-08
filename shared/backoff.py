@@ -1,7 +1,6 @@
-"""Retry with growing delay: 30 s, 60 s, 120 s, 240 s, then every 300 s.
+"""Retry backoff: 30 s, 60 s, 120 s, 240 s, then every 300 s.
 
-Used for anything that may be unplugged or wedged — a sensor, the I2C bus,
-the e-paper — so a missing device is retried forever without hammering it.
+Used for devices that may be unplugged or stuck (a sensor, the I2C bus, the e-paper).
 """
 
 BACKOFF_START = 30.0
@@ -20,7 +19,7 @@ class ReinitBackoff:
         return now >= self.next_try
 
     def failed(self, now: float) -> float:
-        """Record a failed attempt; returns the delay before the next one."""
+        """Record a failure and return the delay before the next attempt."""
         self.failures += 1
         self.next_try = now + self.delay
         current = self.delay

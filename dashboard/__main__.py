@@ -1,9 +1,7 @@
-"""The dashboard program: ``python -m dashboard``.
+"""Entry point for ``python -m dashboard``.
 
-waitress serves the Flask app on the configured port; a small timer thread
-sends the systemd heartbeat every 10 s (it proves the process is alive —
-that is the limit of what a watchdog can see); SIGTERM logs a ``shutdown``
-event and exits.
+Serves the Flask app with waitress and sends the systemd heartbeat from a
+small background thread.
 """
 
 import argparse
@@ -19,16 +17,14 @@ from shared.db import Database
 from shared.events import Log
 from shared.heartbeat import HEARTBEAT_SECONDS, SystemdNotifier
 
-# A page load fires up to seven API requests at once (Diagnostics: four in
-# parallel + live + changes + the preview); waitress logs a "Task queue depth"
-# warning into the journal for every request that has to wait for a thread —
-# 663 lines in three days with four threads (bench 2026-09-08). Eight threads
-# cover a page load; a real overload still warns.
+# A page load fires up to seven API requests at once. With four threads waitress
+# kept logging "Task queue depth" warnings; eight cover a page load, and a real
+# overload still warns.
 WEB_THREADS = 8
 
 
 class HeartbeatThread:
-    """WATCHDOG=1 every 10 s from a daemon thread, until ``stop()``."""
+    """Sends WATCHDOG=1 every 10 s from a daemon thread until stop()."""
 
     def __init__(self, notifier: SystemdNotifier, interval: float = HEARTBEAT_SECONDS):
         self.notifier = notifier

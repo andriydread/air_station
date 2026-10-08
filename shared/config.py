@@ -1,8 +1,6 @@
-"""Loads ``config.toml`` — the only settings file, read once at start.
+"""Loads config.toml once at startup.
 
-No environment variables, no defaults hidden in code: every key must be in the
-file, and every value is range-checked so a typo fails at start with the key
-name, not hours later on the Pi.
+Every key is required and range-checked, so a typo fails at start with the key name.
 """
 
 from dataclasses import dataclass, asdict
@@ -136,7 +134,7 @@ class Config:
         )
 
     def as_dict(self) -> Dict[str, Any]:
-        """Plain dict (paths as strings) for the start line and the status tool."""
+        """Plain dict with paths as strings, for logging and the status tool."""
         data = asdict(self)
         data["paths"] = {"database": str(self.paths.database), "logs": str(self.paths.logs)}
         data["repo_root"] = str(self.repo_root)
@@ -150,7 +148,7 @@ def _resolve(repo_root: Path, value: str) -> Path:
 
 
 class _Section:
-    """Typed, range-checked access to the parsed TOML with key names in errors."""
+    """Typed, range-checked access to the parsed TOML."""
 
     def __init__(self, raw: Dict[str, Any]):
         if not isinstance(raw, dict):

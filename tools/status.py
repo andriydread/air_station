@@ -1,4 +1,4 @@
-"""`make status` — one screen about the station, from systemd and the database.
+"""`make status`: one screen about the station, from systemd and the database.
 
     airstation-collector   active (running) since Tue 09:12 · last raw row 4 s ago
     airstation-manager     active (running) since Tue 09:12 · display_data 22 s ago · vitals 22 s ago
@@ -7,8 +7,7 @@
     last events:
       Wed 09:41  warning  manager  wifi        internet_down   wan probe failed (3 in a row)
 
-Read-only: it never creates the database (a missing file is reported, not
-made). Times are the Pi's local zone, ages are relative to now.
+Read-only: a missing database is reported, never created. Times are local.
 """
 
 import argparse
@@ -51,7 +50,7 @@ def unit_state(unit: str, runner: Callable[..., Any]) -> str:
     try:
         result = runner(["systemctl", "show", "-p", "ActiveState,SubState,ActiveEnterTimestamp", unit],
                         capture_output=True, text=True, timeout=5)
-    except Exception as exc:  # no systemd here (the dev server), or it hangs
+    except Exception as exc:  # no systemd (dev machine), or it hangs
         return f"unknown ({exc.__class__.__name__})"
     if result.returncode != 0:
         return f"unknown (systemctl exit {result.returncode})"

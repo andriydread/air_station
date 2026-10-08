@@ -1,4 +1,4 @@
-"""One beat of the collector, with scriptable sensors."""
+"""Collector sampling beats with scriptable sensors."""
 
 import sys
 
@@ -65,7 +65,7 @@ def rig(db, log, tmp_config, monkeypatch):
 def test_nothing_is_asked_written_or_logged_before_ready_at(rig):
     record = rig.beat()
     assert record["present"] == ["sht41", "sps30", "scd41"] and record["asked"] == []
-    assert all(s.ready_at == START + 60 for s in rig.sampler.sensors)  # a start on :00: the next :00
+    assert all(s.ready_at == START + 60 for s in rig.sampler.sensors)  # started on a :00, so ready at the next one
     rig.beats(5)  # up to :50: still quiet
     assert rig.rows() == [] and rig.sampler.sample_count == 0 and rig.row_lines() == []
 
@@ -80,7 +80,7 @@ def test_the_first_row_is_at_ready_at_with_every_cell(rig):
     assert all(row[m] is not None for m in METRICS)
     (line,) = rig.row_lines()
     assert " INFO collector sample row " in line and "co2=600 co2_temp=23.0" in line
-    assert " ms=sht41:" in line and "bad=" not in line and "raised=" not in line  # a clean beat
+    assert " ms=sht41:" in line and "bad=" not in line and "raised=" not in line
     rig.log.close()
     beat_lines = [l for l in rig.log.path.read_text().splitlines() if " DEBUG collector sample beat " in l]
     assert beat_lines and "asked=sht41,sps30,scd41 answered=sht41,sps30,scd41 no_data=- raised=-" in beat_lines[-1]
@@ -105,7 +105,7 @@ def test_six_bad_in_a_row_reset_that_sensor_only(rig, db):
     rig.beats(BAD_STREAK_REINIT)
     assert rig.scd41.reinit_count == 1 and rig.sps30.reinit_count == 0 and rig.sht41.reinit_count == 0
     assert rig.scd.reinit_calls == 2 and rig.scd.start_calls == 2 and rig.scd.self_tests == 1
-    assert [r["co2"] for r in rig.rows()] == [0] * BAD_STREAK_REINIT  # stored, all of them
+    assert [r["co2"] for r in rig.rows()] == [0] * BAD_STREAK_REINIT
     reinit = [e for e in db.recent_events() if e["type"] == "sensor_reinit"]
     assert len(reinit) == 1 and reinit[0]["source"] == "scd41"
     record = rig.beat()  # the SCD41 is quiet again; the others carry on
@@ -121,7 +121,7 @@ def test_a_raising_sensor_does_not_stop_the_others(rig, db):
     assert row["temp"] is None and row["co2"] == 600 and row["pm25"] == 2.5
     assert records[0]["raised"] == ["sht41"] and records[0]["errno"]["sht41"] == 121
     errors = [e for e in db.recent_events() if e["type"] == "sensor_error"]
-    assert len(errors) == 1 and errors[0]["details"]["errno"] == 121  # the first of the streak only
+    assert len(errors) == 1 and errors[0]["details"]["errno"] == 121  # only the first error of the streak
     assert rig.row_lines()[-1].endswith("raised=sht41")
     assert rig.buses == 0  # two sensors answered: the bus is fine
 

@@ -83,8 +83,8 @@ class Station:
                     route_path=self.route_path)
 
     def seed_rows(self, minutes=3, ahead_minutes=6):
-        """Rows for the last ``minutes`` and, pre-written, for the next ``ahead_minutes``
-        (the frame only sees rows up to "now", so they appear to arrive on time)."""
+        """Write rows for the last `minutes` and, in advance, the next `ahead_minutes`.
+        The frame only reads rows up to "now", so the future ones look like they arrive on time."""
         now = int(clock.now())
         for i in range(-ahead_minutes * 6, minutes * 6):
             self.db.insert_raw(now - 10 * i, {"co2": 800 + i, "temp": 22.0, "humid": 40.0,
@@ -93,7 +93,7 @@ class Station:
             name: {"available": True, "healthy": True, "ready_at": None} for name in ("i2c", "scd41", "sht41", "sps30")}})
 
     def refresh_collector_status(self):
-        """What the real collector does every 30 s; without it the manager calls it silent."""
+        """Mimic the collector's 30 s status write so the manager doesn't think it's silent."""
         self.db.set_state("collector_status", {"stamp": int(clock.now()), "ready_at": None, "sensors": {
             name: {"available": True, "healthy": True, "ready_at": None}
             for name in ("i2c", "scd41", "sht41", "sps30")}})
@@ -142,7 +142,7 @@ def test_first_frame_immediately_then_every_minute_full_every_five(station):
     started = db.latest_event("started", app="manager")["details"]
     assert "status_age_s" in started and "row_age_s" in started and "ntp_wait_s" in started
     lines = station.log.path.read_text().splitlines()
-    assert any(" INFO manager storage rollup " in l for l in lines)  # every hour leaves a line
+    assert any(" INFO manager storage rollup " in l for l in lines)
     assert any(" INFO manager weather fetch " in l and "ok=1" in l for l in lines)
 
 
@@ -205,7 +205,7 @@ def test_sigterm_stops_cleanly_and_sleeps_the_panel(station):
 
 
 def test_manager_waits_for_ntp_before_its_first_frame(station):
-    """Q136: no RTC — the manager waits (≤ 60 s) for the clock like the collector does."""
+    # No RTC on the Pi: the manager waits up to 60 s for NTP, like the collector.
     station.seed_rows(minutes=3, ahead_minutes=8)
     answers = iter(["no"] * 3 + ["yes"] * 1000)  # synced after three polls (2 s apart)
     station.runner.results["timedatectl"] = lambda argv: FakeRunner.Completed(stdout=next(answers) + "\n")
@@ -225,4 +225,4 @@ def test_manager_paints_anyway_when_ntp_never_syncs(station):
     assert "clock_unsynced" in types and "started" in types
     started = station.db.latest_event("started", app="manager")
     assert started["details"]["ntp_synced"] is False and started["ts"] >= START + 60
-    assert station.db.get_state("display_data") is not None  # a frame was still painted
+    assert station.db.get_state("display_data") is not None

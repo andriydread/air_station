@@ -1,1 +1,1 @@
-"""The manager: owns the e-paper and the machine; averages, weather, rollups, backups, Wi-Fi."""
+"""Manager app: drives the e-paper panel and looks after the Pi (averages, weather, rollups, backups, Wi-Fi)."""

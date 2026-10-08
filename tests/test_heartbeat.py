@@ -35,7 +35,7 @@ def test_messages_reach_the_socket(tmp_path):
 
 def test_send_failure_is_swallowed(tmp_path):
     notifier = SystemdNotifier(address=str(tmp_path / "nobody-listens.sock"))
-    notifier.heartbeat()  # ECONNREFUSED/ENOENT: no exception, nothing counted
+    notifier.heartbeat()  # ECONNREFUSED/ENOENT is swallowed and not counted
     assert notifier.sent == 0
     notifier.close()
 
@@ -46,11 +46,11 @@ def test_heartbeat_cadence(monkeypatch):
     notifier.heartbeat = lambda: pings.append(1)
     clock = {"t": 100.0}
     beat = Heartbeat(notifier, interval=10, monotonic=lambda: clock["t"])
-    assert beat.tick() is True          # first tick always pings
+    assert beat.tick() is True
     clock["t"] += 4
     assert beat.tick() is False
     clock["t"] += 6
     assert beat.tick() is True
     clock["t"] += 25
-    assert beat.tick() is True          # late is fine, one ping, not three
+    assert beat.tick() is True          # late: one ping, not three
     assert len(pings) == 3

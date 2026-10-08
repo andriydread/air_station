@@ -1,9 +1,7 @@
-"""Open-Meteo forecast → the three rolling 3-hour columns, and the air pressure for the CO2 sensor.
+"""Open-Meteo forecast: three rolling 3-hour blocks for the panel, plus air pressure for the CO2 sensor.
 
-The manager fetches every 30 min and stores the 48-hour hourly arrays under
-``last_weather``. The three blocks are derived from those arrays every
-minute, so the columns shift when a block ends without a new fetch. A
-forecast older than 6 hours is stale and painted as "—".
+The hourly arrays are fetched every 30 min and the blocks are recomputed every
+minute, so they move on even without a new fetch. Forecasts older than 6 hours are stale.
 """
 
 import json
@@ -22,9 +20,8 @@ FORECAST_DAYS = 2
 HOURLY_FIELDS = ("temperature_2m", "precipitation_probability", "weathercode", "surface_pressure", "is_day")
 USER_AGENT = "AirStation/2.0 (RaspberryPi)"
 
-# WMO weather codes are NOT ordered by severity (85 "slight snow showers"
-# outranks 82 "violent rain showers" numerically). Rank them so a block's
-# icon shows its worst weather, with the raw code as tiebreaker.
+# WMO codes aren't ordered by severity (85 "slight snow showers" > 82 "violent
+# rain showers"), so rank them to pick each block's worst weather.
 _WMO_SEVERITY_RANKS = (
     ({0, 1}, 0),                    # clear
     ({2}, 1),                       # partly cloudy
@@ -62,7 +59,7 @@ def build_url(config) -> str:
 
 def fetch(config, opener=urllib.request.urlopen, now: Optional[float] = None,
           timeout: float = WEATHER_TIMEOUT) -> Dict[str, Any]:
-    """Fetch and parse; returns the ``last_weather`` document or raises WeatherError."""
+    """Fetch and parse the forecast. Raises WeatherError on any failure."""
     request = urllib.request.Request(build_url(config), headers={"User-Agent": USER_AGENT})
     try:
         with opener(request, timeout=timeout) as response:
@@ -124,7 +121,7 @@ def is_stale(last_weather: Optional[Dict[str, Any]], now_ts: float) -> bool:
 
 
 def blocks(last_weather: Optional[Dict[str, Any]], now_ts: float, block_hours: int = 3) -> List[Dict[str, Any]]:
-    """Three rolling blocks starting with the one containing ``now`` (local clock)."""
+    """Three blocks starting with the one that contains now (local time)."""
     local = clock.local_now(now_ts)
     start_hour = (local.hour // block_hours) * block_hours
     start = local.replace(hour=start_hour, minute=0, second=0, microsecond=0)
@@ -165,7 +162,7 @@ def blocks(last_weather: Optional[Dict[str, Any]], now_ts: float, block_hours: i
 
 
 def summarize(last_weather: Optional[Dict[str, Any]], now_ts: float, block_hours: int = 3) -> Dict[str, Any]:
-    """The ``weather`` part of ``display_data``."""
+    """The weather section of display_data."""
     stale = is_stale(last_weather, now_ts)
     return {
         "stale": stale,

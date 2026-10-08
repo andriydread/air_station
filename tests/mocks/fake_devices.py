@@ -1,9 +1,7 @@
-"""Scriptable stand-ins for the hardware and the clock.
+"""Scriptable fakes for the sensors, the clock, subprocess and the e-paper.
 
-Each device fake mirrors exactly the attribute/method surface the wrappers
-use, and lets a test script both good and bad behaviour: value sequences,
-exceptions, stuck states, rejected commands. ``FakeClock``, ``FakeRunner``
-and ``FakePanel`` stand in for time, subprocess and the e-paper.
+The device fakes copy the attribute/method surface the wrappers use, so tests
+can script values, exceptions and rejected commands.
 """
 
 from typing import Any, Dict, List, Optional
@@ -32,9 +30,9 @@ class FakeScd41Device:
         self.persist_calls = 0
         self.single_shots = 0
         self.self_tests = 0
-        self.self_test_error: Optional[Exception] = None  # RuntimeError("Self test failed") like the driver
-        self.self_test_word = 0  # what the sensor answers to 0x3639 (0 = no malfunction)
-        self._buffer = bytearray(18)  # the driver's scratch buffer; the collector reads the word from it
+        self.self_test_error: Optional[Exception] = None  # e.g. RuntimeError("Self test failed")
+        self.self_test_word = 0  # reply to 0x3639; 0 means no malfunction
+        self._buffer = bytearray(18)  # driver's scratch buffer, the collector reads the word from it
         self.power_downs = 0
         self.wake_ups = 0
 
@@ -60,15 +58,14 @@ class FakeScd41Device:
         self.start_calls += 1
 
     def measure_single_shot(self):
-        # the real driver sleeps 5 s here; the fake clock makes that free
         self.single_shots += 1
 
     def self_test(self):
-        self.self_tests += 1  # the real driver sleeps 10 s here
+        self.self_tests += 1
         if self.self_test_error is not None:
             raise self.self_test_error
 
-    # the Adafruit driver's private send / read pair, used by the collector to read the self-test word
+    # The driver's private send/read pair; the collector uses it to read the self-test word.
     def _send_command(self, cmd: int, cmd_delay: float = 0) -> None:
         if cmd == 0x3639:
             self.self_tests += 1
@@ -136,8 +133,8 @@ class FakeSht41Device:
 class FakeSps30Device:
     """Stands in for ``drivers.sps30_i2c.SPS30`` as used by the wrapper.
 
-    ``read()`` uses the driver's own key names (nc10 = 1.0 µm, nc25 = 2.5 µm,
-    nc40 = 4 µm, nc100 = 10 µm); the wrapper maps them to the row columns.
+    ``read()`` returns the driver's key names (nc10 = 1.0 um, nc25 = 2.5 um,
+    nc40 = 4 um, nc100 = 10 um); the wrapper maps them to row columns.
     """
 
     def __init__(self):
@@ -151,7 +148,7 @@ class FakeSps30Device:
         self._auto_cleaning_interval = 604800
         self.interval_writes: List[int] = []
         self.firmware_version = (2, 2)
-        # Device Status Register as the driver decodes it; tests flip bits.
+        # Device status register as the driver decodes it.
         self.status = {"raw": 0, "speed_warning": False, "laser_error": False, "fan_error": False}
         self.raise_on_status: Optional[Exception] = None
         self.wakeup_calls = 0
@@ -212,12 +209,10 @@ class FakeSps30Device:
 
 
 class ScriptedI2CDevice:
-    """Plays back queued response frames; records written commands.
+    """Plays back queued response frames and records written commands.
 
-    Failure injection: `raise_on_write` / `raise_on_read` hold exceptions
-    consumed one write/read at a time (list) or raised every time (single
-    exception) — enough to express "NAK the first wakeup, ACK the second"
-    or an I2C error mid-transaction.
+    `raise_on_write` / `raise_on_read` take either a single exception (raised
+    every time) or a list consumed one call at a time, where None means pass.
     """
 
     def __init__(self):
@@ -256,10 +251,10 @@ class ScriptedI2CDevice:
 
 
 class FakeClock:
-    """Wall clock and monotonic clock under test control.
+    """Wall and monotonic clocks under test control.
 
-    Both advance together by default; ``jump_wall`` moves only the wall clock
-    (an NTP correction) so clock-jump detection can be exercised.
+    Both advance together; ``jump_wall`` moves only the wall clock, like an
+    NTP correction.
     """
 
     def __init__(self, start: float = 1_756_900_800.0):
@@ -286,11 +281,11 @@ class FakeClock:
 
 
 class FakeRunner:
-    """Stands in for ``subprocess.run``: records argv, answers from a script.
+    """Fake ``subprocess.run`` that records argv.
 
     ``results`` maps the first argv element (or the whole argv as a tuple) to
-    a ``CompletedProcess``-like object or an exception to raise; unmatched
-    commands succeed with empty output.
+    a result, a callable or an exception. Unmatched commands succeed with
+    empty output.
     """
 
     class Completed:
@@ -317,7 +312,7 @@ class FakeRunner:
 
 
 class PngPanelDriver:
-    """A UC8253C stand-in for ``--fake``: every frame becomes a PNG on disk."""
+    """UC8253C stand-in for ``--fake``: saves every frame as a PNG."""
 
     MODE_FULL = "full"
     MODE_PARTIAL = "partial"
@@ -344,7 +339,7 @@ class PngPanelDriver:
 
 
 class FakePanel:
-    """Stands in for the e-paper: records every frame and its refresh mode."""
+    """Records every frame shown and its refresh mode."""
 
     def __init__(self):
         self.frames: List[Any] = []

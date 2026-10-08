@@ -1,11 +1,10 @@
-"""Import-time stand-ins for the Pi hardware libraries.
+"""Fake Pi hardware modules for running off the Pi.
 
 ``install()`` puts fake ``board``, ``busio``, ``RPi.GPIO``, ``spidev``,
 ``adafruit_bus_device``, ``adafruit_scd4x`` and ``adafruit_sht4x`` modules
-into ``sys.modules`` so the apps import on a machine with none of them. The
-test suite calls it from ``conftest.py``; ``python -m collector --fake`` and
-the demo call it too. The fakes have benign defaults; tests that need to
-script behaviour use ``tests/mocks/fake_devices.py``.
+into ``sys.modules``. Used by the tests, ``python -m collector --fake`` and
+the demo. The defaults are harmless; scriptable fakes live in
+``fake_devices.py``.
 """
 
 import sys
@@ -39,9 +38,8 @@ def install() -> None:
     board.I2C = lambda: FakeI2C()
 
     # --- RPi.GPIO ---------------------------------------------------------
-    # Scriptable: set RPi.GPIO.pin_values[pin] to an int or a zero-arg
-    # callable to script the display's BUSY pin; RPi.GPIO.outputs records
-    # every output() call as (pin, value).
+    # pin_values[pin] can be an int or a zero-arg callable (used for the
+    # display's BUSY pin); outputs records every output() call as (pin, value).
     class FakeGPIO:
         BCM = "BCM"
         IN = "IN"
@@ -112,7 +110,7 @@ def install() -> None:
 
     # --- Adafruit sensor drivers -----------------------------------------
     class FakeSCD4X:
-        """Benign default: always ready, plausible CO2."""
+        """Always ready, plausible CO2."""
 
         def __init__(self, _i2c):
             self.data_ready = True

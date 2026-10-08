@@ -12,7 +12,7 @@ from tests.mocks.fake_devices import FakeClock, FakeScd41Device
 
 @pytest.fixture
 def scd41(log, tmp_config, monkeypatch):
-    """A wrapper whose _open hands out a scriptable fake; the clock under test control."""
+    """Scd41 wrapper backed by a scriptable fake device and a fake clock."""
     fake = FakeScd41Device()
     clock = FakeClock(start=1000.0)
     monkeypatch.setattr(sys.modules["adafruit_scd4x"], "SCD4X", lambda _i2c: fake)
@@ -130,8 +130,8 @@ def test_open_sleeps_wakes_resets_and_self_tests_once_per_process(scd41, db):
 
 
 def test_a_failed_self_test_is_an_error_event_and_the_sensor_still_runs(scd41, db):
-    scd41.fake.self_test_word = 0x0001  # the sensor's own answer: malfunction
-    assert scd41.ensure(1000) is True  # the sensor is used anyway: a verdict, not a refusal
+    scd41.fake.self_test_word = 0x0001  # non-zero word means malfunction
+    assert scd41.ensure(1000) is True  # still used, the result is only reported
     init = [e for e in db.recent_events() if e["type"] == "sensor_init"][0]
     assert init["details"]["self_test"] == "fail"
     assert init["details"]["self_test_word"] == 1 and init["details"]["self_test_reason"] == "word"
@@ -167,7 +167,7 @@ def test_a_driver_without_the_extras_is_reported_not_crashed(scd41, db):
     fake = scd41.fake
     originals = {name: getattr(type(fake), name)
                  for name in ("self_test", "_send_command", "_read_reply", "power_down", "wake_up")}
-    for name in originals:  # a driver that is not adafruit_scd4x: the attributes are simply not there
+    for name in originals:  # pretend the driver lacks these attributes
         setattr(type(fake), name, property(lambda self, n=name: (_ for _ in ()).throw(AttributeError(n))))
     try:
         assert scd41.ensure(1000) is True

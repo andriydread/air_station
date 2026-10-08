@@ -1,4 +1,4 @@
-"""The test doubles themselves behave as the other tests assume."""
+"""Sanity checks for the test doubles."""
 
 import pytest
 

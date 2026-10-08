@@ -83,10 +83,10 @@ def test_a_long_stall_skips_missed_runs_instead_of_bursting(fake_clock, log):
     def slow_once():
         calls.append(clock.now())
         if len(calls) == 1:
-            fake_clock.advance(95)  # the first run took 95 s (a full refresh gone wrong)
+            fake_clock.advance(95)  # the first run took 95 s
 
     _run_for(Loop(log, None, [Task("t", 10, slow_once)]), fake_clock, 120)
-    # 0 s, then the next due after the stall, then every 10 s — never 9 catch-up runs at once
+    # After the stall it resumes every 10 s instead of running 9 catch-up runs at once.
     gaps = [round(b - a) for a, b in zip(calls, calls[1:])]
     assert gaps[0] >= 95 and all(g == 10 for g in gaps[1:])
 
@@ -137,7 +137,7 @@ def test_backward_clock_step_rearms_a_task(fake_clock, log):
     assert len(calls) == 2
     fake_clock.jump_wall(-3600)  # NTP pulled the clock back an hour
     _run_for(loop, fake_clock, 11)
-    assert len(calls) == 4  # it did not wait an hour for the calendar to catch up
+    assert len(calls) == 4  # did not wait an hour for the clock to catch up
 
 
 def test_retry_in_overrides_the_next_interval_once(fake_clock, log):

@@ -1,8 +1,7 @@
-"""The dashboard's routes — the browser reads the tables through these.
+"""JSON routes for the dashboard.
 
-``/api/changes`` is the cheap "what changed?" the browser asks every 10 s;
-everything else is fetched only when its stamp moved. The dashboard never
-computes or cleans data: it shows what the collector and the manager wrote.
+The browser polls the cheap ``/api/changes`` every 10 s and fetches the rest
+only when a timestamp there has moved. Data is shown as stored, never cleaned.
 """
 
 from typing import Any, Dict, Optional
@@ -43,7 +42,7 @@ def changes() -> Any:
 MAX_RANGE_SECONDS = 5 * 365 * 86400
 DEFAULT_RANGE_SECONDS = 24 * 3600
 
-# (span up to, bucket seconds): fine enough to look continuous, coarse enough to be light
+# (max span, bucket seconds): fine enough to look continuous, coarse enough to stay light
 _BUCKETS = ((2 * 3600, 30), (6 * 3600, 60), (24 * 3600, 300), (3 * 86400, 900),
             (7 * 86400, 1800), (31 * 86400, 3600), (93 * 86400, 3 * 3600))
 
@@ -56,7 +55,7 @@ def choose_bucket_seconds(span: int) -> int:
 
 
 def parse_range(args) -> tuple:
-    """?from=<unix>&to=<unix>; default the last 24 h. ValueError → 400."""
+    """Parse ?from=&to= (Unix seconds); defaults to the last 24 h. Raises ValueError (400)."""
     now = int(clock.now())
     try:
         end = int(args.get("to", now))
@@ -110,7 +109,7 @@ def history() -> Any:
 
 
 def _csv_rows(db, config, start: int, end: int):
-    """Yield CSV lines: header, then one line per raw row (or hourly row beyond the window)."""
+    """Yield CSV lines: raw rows, or hourly rows when the range reaches past raw retention."""
     import csv
     import io
 
@@ -141,7 +140,7 @@ def _csv_rows(db, config, start: int, end: int):
             writer.writerow([row["hour"], stamp, "hourly", *values, *extra])
             yield flush()
         return
-    page = 5000 * 30  # seconds of raw rows (5000 beats) per database read
+    page = 5000 * 30  # about 5000 raw rows per database read
     cursor = start
     while cursor < end:
         chunk_end = min(end, cursor + page)
@@ -233,7 +232,7 @@ def restarts() -> Any:
                                        for app in ("collector", "manager", "dashboard")}})
 
 
-# --- the six buttons ------------------------------------------------------------------
+# --- Commands (the Controls buttons) ---
 
 def _bool(payload: Dict[str, Any], key: str, default: bool = False) -> bool:
     value = payload.get(key, default)
@@ -302,7 +301,7 @@ def create_command() -> Any:
 
 @api.get("/display-preview.png")
 def display_preview() -> Any:
-    """Exactly what the e-paper shows, rendered from display_data by the same code."""
+    """Render display_data with the same code the e-paper panel uses."""
     import io
 
     from flask import Response, request
@@ -315,7 +314,7 @@ def display_preview() -> Any:
     etag = f'"{doc["updated_at"]}"'
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers={"ETag": etag})
-    # the preview clock shows the frame's own time, like the panel does
+    # Show the frame's own time on the clock, as the panel does.
     image, _painted = render(doc["value"], now=doc["value"].get("updated_at", doc["updated_at"]))
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -347,7 +346,7 @@ def live() -> Any:
     })
 
 
-# --- the Data tab: the tables as they are ------------------------------------------
+# --- Data tab ---
 
 DATA_PAGE = 100
 

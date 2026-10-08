@@ -1,9 +1,7 @@
 [Unit]
 Description=Disable Wi-Fi power management (brcmfmac hang mitigation)
-# The Pi Zero 2 W's brcmfmac driver is notorious for wedging the whole
-# Wi-Fi stack when power save is on - the classic "can't reach the Pi,
-# must power-cycle" failure. Power draw increase is negligible next to
-# the sensors and display.
+# The Pi Zero 2 W's brcmfmac driver can wedge the Wi-Fi stack with power save
+# on. The extra power draw is negligible.
 After=network.target
 Wants=network.target
 

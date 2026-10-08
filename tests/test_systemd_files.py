@@ -1,5 +1,4 @@
-"""The unit templates and the sudoers template: render like `make init` does
-(sed on @USER@/@REPO@) and check the result is what the plan promises."""
+"""Systemd unit and sudoers templates, rendered the way `make init` does (sed on @USER@/@REPO@)."""
 
 import re
 from pathlib import Path

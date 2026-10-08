@@ -1,7 +1,5 @@
-"""The whole shared layer together, the way the apps will use it:
-config → database → strict logger → scheduler with aligned tasks → rollup →
-a display_data document → the panel picture → the log file.
-"""
+"""The shared layer end to end: config, database, logger, scheduler, rollup,
+display_data, rendering and the log file."""
 
 from datetime import datetime, timezone
 
@@ -80,10 +78,10 @@ def test_five_simulated_minutes(tmp_config, fake_clock):
     assert len(rows) == 30 and all(r["recorded_at"] % 10 == 0 for r in rows)
     assert rows[0]["recorded_at"] == START - 5 + 10  # first aligned beat after start
 
-    # the finished hour (11:00–12:00 UTC) was rolled up once the clock crossed 12:00
+    # the finished hour (11:00-12:00 UTC) was rolled up once the clock crossed 12:00
     hour = int(START) // 3600 * 3600
     hourly_rows = db.hourly_between(hour, hour + 3600)
-    assert len(hourly_rows) == 1 and hourly_rows[0]["samples"] == 11  # 11:58:10 … 11:59:50
+    assert len(hourly_rows) == 1 and hourly_rows[0]["samples"] == 11  # 11:58:10 to 11:59:50
     assert db.count_events("rollup_catchup", 0) == 1
 
     # display_data has the shape the panel and the Live tab expect, and renders

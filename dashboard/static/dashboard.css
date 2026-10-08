@@ -68,7 +68,7 @@ button, input, select { font: inherit; color: inherit; }
   padding: 20px 24px 48px;
 }
 
-/* --- Header ---------------------------------------------------------------- */
+/* --- Header --- */
 
 .topbar {
   display: flex;
@@ -81,8 +81,7 @@ button, input, select { font: inherit; color: inherit; }
 .brand h1 { margin: 0; font-size: 26px; letter-spacing: 0.02em; }
 .brand-sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 
-/* Lives inside .brand, under the "Last sample" line — plain text at the
-   same size, colored only when something is wrong. */
+/* Sits under the "Last sample" line; plain text, coloured only when something is wrong. */
 .status-strip {
   display: flex;
   gap: 10px;
@@ -130,7 +129,7 @@ button.button-danger {
 .icon-button { padding: 9px; line-height: 0; }
 .icon-button svg { display: block; }
 
-/* --- Tabs ------------------------------------------------------------------ */
+/* --- Tabs --- */
 
 .tabs {
   display: flex;
@@ -155,9 +154,8 @@ button.button-danger {
 .tab { display: none; }
 .tab.active { display: block; }
 
-/* --- Panels & cards --------------------------------------------------------
-   One card language for the whole site: same surface, border, radius and
-   shadow everywhere; only padding and typography vary by role. */
+/* --- Panels & cards --- */
+/* All cards share surface, border, radius and shadow; only padding and type vary. */
 
 .panel, .metric-card, .chart-card, .control-card {
   background: var(--paper);
@@ -170,7 +168,7 @@ button.button-danger {
   padding: 18px 20px;
   margin-bottom: 18px;
 }
-/* Inside a grid the grid gap owns the spacing, not the panel margin. */
+/* Inside a grid, the gap does the spacing instead of the panel margin. */
 .live-panels .panel, .diag-grid .panel, .diag-side .panel { margin-bottom: 0; }
 
 .panel-head {
@@ -195,8 +193,7 @@ button.button-danger {
 .metric-card p { margin: 8px 0 2px; font-size: 26px; font-weight: 700; }
 .metric-card small { color: var(--muted); }
 
-/* Live: hero metrics large with a sparkline pinned to the card bottom,
-   PM row compact — hierarchy by size, not by count. */
+/* Live: large hero metrics with a sparkline at the bottom, compact PM row. */
 .hero-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -204,10 +201,10 @@ button.button-danger {
   margin-bottom: 18px;
 }
 .metric-hero { display: flex; flex-direction: column; }
-/* tabular-nums: values must not shimmy sideways as digits change each poll. */
+/* tabular-nums keeps values from shifting sideways as digits change. */
 .metric-hero p { font-size: 34px; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
 .metric-hero p .unit { font-size: 60%; font-weight: 400; color: var(--muted); }
-/* Hero values colored by the backend's air-quality band; Good stays plain. */
+/* Hero values coloured by the air-quality band from the server; Good stays plain. */
 .value-warn { color: var(--warning); }
 .value-bad { color: var(--bad); }
 .sparkline {
@@ -262,12 +259,11 @@ button.button-danger {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px;
-  /* Cards wrap their content instead of stretching to the tallest sibling
-     (the forecast panel used to inherit the preview's height and look empty). */
+  /* Don't stretch cards to the tallest sibling (the forecast looked empty). */
   align-items: start;
 }
 
-/* --- Forecast --------------------------------------------------------------- */
+/* --- Forecast --- */
 
 .forecast-grid {
   display: grid;
@@ -286,11 +282,10 @@ button.button-danger {
 :root[data-theme="dark"] .forecast-icon { filter: invert(1) hue-rotate(180deg); }
 .forecast-stat { margin: 2px 0; font-size: 15px; }
 
-/* --- E-paper preview -------------------------------------------------------- */
+/* --- E-paper preview --- */
 
-/* Framed like the physical object it mirrors: a dark device bezel with the
-   paper floating inside — in dark mode the image dims slightly so it reads
-   as unlit e-ink, not a backlit LCD. */
+/* A dark bezel around the panel image; dark mode dims the image slightly so it
+   looks like unlit e-ink rather than a backlit screen. */
 .preview-frame {
   border: 8px solid #262b2e;
   border-radius: 12px;
@@ -303,7 +298,7 @@ button.button-danger {
 :root[data-theme="dark"] .preview-frame img { filter: brightness(0.88) contrast(1.02); }
 :root[data-theme="dark"] .preview-frame { background: #e8e6df; }
 
-/* --- History --------------------------------------------------------------- */
+/* --- History --- */
 
 .range-switch { display: flex; gap: 6px; flex-wrap: wrap; }
 .range-switch button {
@@ -314,8 +309,7 @@ button.button-danger {
   border-radius: 999px;
 }
 .range-switch button.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 600; }
-/* History: two rows of presets — the raw rows on top, the hourly averages
-   below — each with a small label; the resolution note sits under both. */
+/* History presets: raw ranges on top, hourly ranges below, resolution note under both. */
 .range-rows { display: flex; flex-direction: column; gap: 8px; }
 .range-row { display: flex; align-items: center; gap: 12px; }
 .range-row-label { width: 56px; flex: none; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
@@ -337,13 +331,11 @@ button.button-danger {
 }
 
 .table-scroll { overflow-x: auto; }
-/* Statistics: two tables side by side, each with its own header row; they
-   stack on a phone. */
+/* Statistics: two tables side by side, stacked on a phone. */
 .stats-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; align-items: start; }
 .stats-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .stats-table th, .stats-table td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); }
-/* Narrow right-aligned number columns so min/avg/max sit together instead
-   of spreading across the whole panel; the metric column absorbs the rest. */
+/* Narrow right-aligned number columns keep min/avg/max together. */
 .stats-table th:not(:first-child), .stats-table td:not(:first-child) {
   text-align: right;
   width: 72px;
@@ -352,7 +344,7 @@ button.button-danger {
 }
 .stats-table th { color: var(--muted); font-weight: 600; font-size: 13px; }
 .stats-table tr:last-child td { border-bottom: none; }
-/* min→max range bar (last column) */
+/* min-max range bar (last column) */
 .stats-table th.stats-range-head, .stats-table td.stats-range {
   width: 110px;
   text-align: left;
@@ -391,8 +383,7 @@ button.button-danger {
 .chart-card { padding: 14px 16px; }
 .chart-card h3 { margin: 0 0 8px; font-size: 15px; }
 .chart-frame { position: relative; }
-/* pan-y: a finger dragging a chart still scrolls the page vertically while
-   horizontal movement drives the tooltip. */
+/* pan-y: vertical drags still scroll the page, horizontal ones move the tooltip. */
 .chart-frame svg { width: 100%; height: auto; display: block; touch-action: pan-y; }
 .chart-tooltip {
   position: absolute;
@@ -408,7 +399,7 @@ button.button-danger {
   white-space: nowrap;
 }
 
-/* --- Diagnostics ------------------------------------------------------------ */
+/* --- Diagnostics --- */
 
 .diag-grid {
   display: grid;
@@ -421,9 +412,7 @@ button.button-danger {
 
 .filter-row { display: flex; gap: 8px; flex-wrap: wrap; }
 
-/* Station health / status: hairline rows, the name left, the detail muted
-   in the middle, one fixed-width pill (or value) on the right, so the
-   right edge reads as a column. */
+/* Health rows: name on the left, muted detail, fixed-width pill on the right. */
 .health-list p {
   display: flex;
   align-items: center;
@@ -461,7 +450,7 @@ button.button-danger {
   padding: 8px 10px;
 }
 
-/* --- Custom dropdowns (see upgradeSelect in dashboard.js) ------------------- */
+/* --- Custom dropdowns (see upgradeSelect in dashboard.js) --- */
 
 .dropdown { position: relative; display: inline-block; }
 .dropdown-toggle {
@@ -544,10 +533,9 @@ button.button-danger {
 .command-status-fail { color: var(--bad); }
 .command-status-pending, .command-status-running { color: var(--muted); }
 
-/* --- Controls --------------------------------------------------------------- */
+/* --- Controls --- */
 
-/* Fixed 2x2 grid (operator decision 2026-09-01): SCD41 + SPS30 on top,
-   System + Database below; row mates stretch to equal height. */
+/* Fixed 2x2 grid: SCD41 + SPS30 on top, System + Database below. */
 .controls-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -602,9 +590,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 
 .empty-state { color: var(--muted); padding: 14px 4px; font-size: 14px; }
 
-/* --- Hints ------------------------------------------------------------------
-   Small "?" beside a title; the explanation appears on hover/focus as a
-   CSS-only bubble fed from data-hint (aria-label mirrored in JS). */
+/* --- Hints --- */
+/* A small "?" next to a title; a CSS-only bubble shows data-hint on hover/focus. */
 
 .hint {
   position: relative;
@@ -649,10 +636,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
   transition: opacity 0.12s ease;
 }
 .hint:hover::after, .hint:focus-visible::after, .hint.hint-open::after { opacity: 1; }
-/* Keep the hint hugging the title while badges/notes stay right-aligned. */
+/* Keep the hint next to the title while badges stay right-aligned. */
 .metric-card header .hint, .panel-head .hint { margin-right: auto; }
 
-/* --- Toast ------------------------------------------------------------------ */
+/* --- Toast --- */
 
 .toast {
   position: fixed;
@@ -668,7 +655,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 .toast-info { background: var(--accent); color: var(--paper); }
 .toast-error { background: var(--bad); color: #fff; }
 
-/* --- Responsive ------------------------------------------------------------- */
+/* --- Responsive --- */
 
 @media (max-width: 980px) {
   .live-panels, .diag-grid { grid-template-columns: 1fr; }
@@ -680,16 +667,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 }
 @media (max-width: 560px) {
   .page { padding: 14px 12px 40px; }
-  /* Compact header: the phone's own status bar already shows the time, and
-     every pixel above the data costs a scroll. */
+  /* Compact header: the phone's status bar already shows the time. */
   .topbar { padding: 2px 0 8px; gap: 10px; }
   .brand h1 { font-size: 20px; }
   .brand-sub { display: inline; }
   .status-strip { display: inline-flex; margin-left: 8px; margin-top: 0; }
   .clock { display: none; }
   #theme-toggle { margin-left: auto; }
-  /* Two-up heroes with CO2 and Air quality first — all vitals in one
-     screen, the actionable numbers on top. DOM order (screen readers)
+  /* Two columns with CO2 and air quality first; DOM order (for screen readers)
      stays temp/humid/co2/aqi. */
   .hero-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .hero-grid .metric-hero:nth-child(1) { order: 3; }
@@ -698,17 +683,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
   .hero-grid .metric-hero:nth-child(4) { order: 2; }
   .metric-hero p { font-size: 24px; }
   .sparkline { height: 32px; }
-  /* five tabs on one line: tighter padding, smaller type */
+  /* fit all tabs on one line */
   .tabs { gap: 0; }
   .tab-button { padding: 10px 9px; font-size: 14px; }
   .vitals-now { grid-template-columns: 1fr; }
   .version { flex-direction: column; gap: 2px; }
 }
 
-/* --- Redesign additions ---------------------------------------------------- */
-
-/* "RD": a value the new design has no source for yet — decided one by one
-   after the bench period. The card stays so it is obvious what would go. */
+/* "RD": a value that has no data source yet. */
 .rd-chip {
   display: inline-block;
   font-size: 11px;
@@ -742,7 +724,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 .health-warn { color: var(--warning); }
 .info-list .health-warn { color: var(--warning); }
 
-/* Chart legends: main series bold-ish, secondaries fainter — same as the lines. */
+/* Chart legends: main series bolder, others fainter, matching the lines. */
 .chart-legend { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 8px; }
 .legend-main { font-weight: 600; color: var(--ink); }
 .legend-secondary { opacity: 0.75; }
@@ -774,7 +756,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 /* History: which resolution the charts show. */
 #resolution-note { margin-top: 8px; }
 
-/* Data tab: a plain grid of whatever the table holds; wide tables scroll inside the panel */
+/* Data tab: wide tables scroll inside the panel */
 .data-table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
 .data-table th, .data-table td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .data-table th { color: var(--muted); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--paper); }

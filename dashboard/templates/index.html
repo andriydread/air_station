@@ -4,8 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Air Station</title>
-  <!-- Home-screen shortcut niceties (LAN is plain HTTP, so no full PWA
-       install — deliberately no service worker). -->
+  <!-- Home-screen shortcut only; the LAN is plain HTTP, so no service worker. -->
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <meta name="theme-color" content="#1f5c4a">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
@@ -38,7 +37,7 @@
       <button class="tab-button" data-tab="data" type="button">Data</button>
     </nav>
 
-    <!-- ======================= LIVE ======================= -->
+    <!-- Live -->
     <section id="tab-live" class="tab active">
       <div id="warming-banner" class="banner" hidden>Starting up… the sensors are quiet for the first minute.</div>
       <div class="hero-grid">
@@ -112,7 +111,7 @@
       </div>
     </section>
 
-    <!-- ======================= HISTORY ======================= -->
+    <!-- History -->
     <section id="tab-history" class="tab">
       <section class="panel">
         <div class="panel-head">
@@ -182,7 +181,7 @@
       </div>
     </section>
 
-    <!-- ======================= VITALS ======================= -->
+    <!-- Vitals -->
     <section id="tab-vitals" class="tab">
       <section class="panel">
         <div class="panel-head">
@@ -208,7 +207,7 @@
       </div>
     </section>
 
-    <!-- ======================= DIAGNOSTICS ======================= -->
+    <!-- Diagnostics -->
     <section id="tab-diagnostics" class="tab">
       <div class="diag-grid">
         <section class="panel">
@@ -266,7 +265,7 @@
       </div>
     </section>
 
-    <!-- ======================= CONTROLS ======================= -->
+    <!-- Controls -->
     <section id="tab-controls" class="tab">
       <div class="controls-grid">
         <section class="control-card">
@@ -328,7 +327,7 @@
       </div>
     </section>
 
-    <!-- ======================= DATA ======================= -->
+    <!-- Data -->
     <section id="tab-data" class="tab">
       <section class="panel">
         <div class="panel-head">

@@ -1,4 +1,4 @@
-# Dev server / test dependencies. Hardware libraries are faked in tests/conftest.py.
+# Development and test dependencies. Hardware libraries are faked in tests/conftest.py.
 pytest
 Flask
 waitress

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Enables the BCM SoC hardware watchdog + the systemd runtime watchdog.
+# Enables the BCM SoC hardware watchdog and the systemd runtime watchdog.
 # Run on the Pi by `make init`. Reboot once to activate.
 set -e
 

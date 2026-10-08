@@ -1,11 +1,4 @@
-"""Test bootstrap: make the apps importable on a machine with no Pi hardware.
-
-The collector and the manager import `board`, `busio`, `RPi.GPIO`, `spidev`
-and the Adafruit sensor drivers at module level. None of those exist off-Pi,
-so fake modules are injected into ``sys.modules`` BEFORE any app import
-(``tests/mocks/fake_hardware.py``; the same function serves
-``python -m collector --fake`` and the demo).
-"""
+"""Install fake hardware modules before any app import, so the apps load off the Pi."""
 
 import sys
 from pathlib import Path
@@ -24,7 +17,7 @@ import pytest  # noqa: E402  (after the fakes exist)
 
 @pytest.fixture
 def tmp_config(tmp_path):
-    """The shipped config with database and logs redirected under tmp_path."""
+    """The shipped config with database and logs under tmp_path."""
     import tomllib
 
     from shared.config import DEFAULT_PATH, Config
@@ -48,7 +41,7 @@ def db(tmp_config):
 
 @pytest.fixture
 def log(tmp_config, db):
-    """A strict collector logger writing events into the test database."""
+    """Strict collector logger that writes events into the test database."""
     from shared.events import Log
 
     logger = Log("collector", tmp_config, db=db, strict=True)
@@ -58,7 +51,6 @@ def log(tmp_config, db):
 
 @pytest.fixture
 def fake_clock(monkeypatch):
-    """FakeClock patched into shared.clock (now / monotonic / sleep)."""
     from shared import clock
     from tests.mocks.fake_devices import FakeClock
 
@@ -71,7 +63,6 @@ def fake_clock(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_fake_gpio():
-    """Scripted GPIO state must never leak between tests."""
     import RPi.GPIO as gpio
 
     gpio.pin_values.clear()

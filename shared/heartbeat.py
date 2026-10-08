@@ -1,10 +1,7 @@
-"""sd_notify: READY / WATCHDOG / STOPPING messages to the app's systemd unit.
+"""sd_notify messages (READY, WATCHDOG, STOPPING) for the app's systemd unit.
 
-The unit is ``Type=notify`` with ``WatchdogSec=90``; the loop calls
-``Heartbeat.tick()`` every pass and a ``WATCHDOG=1`` goes out every 10 s. A
-process that stops ticking for 90 s is killed and restarted by systemd —
-that is the cure for a hung-but-alive app. Without ``NOTIFY_SOCKET`` (tests,
-the demo) everything here is a no-op.
+The units use WatchdogSec=90, so systemd restarts an app that hangs. Without
+NOTIFY_SOCKET (tests, the demo) all of this is a no-op.
 """
 
 import os
@@ -41,7 +38,7 @@ class SystemdNotifier:
             self._socket.sendto(message.encode("utf-8"), self._address)
             self.sent += 1
         except OSError:
-            pass  # systemd gone or socket closed: nothing an app can do about it
+            pass  # systemd is gone or the socket is closed; nothing to do
 
     def ready(self) -> None:
         self._send("READY=1")
@@ -59,7 +56,7 @@ class SystemdNotifier:
 
 
 class Heartbeat:
-    """Sends WATCHDOG=1 at most every ``interval`` seconds of monotonic time."""
+    """Sends WATCHDOG=1 at most once per interval (monotonic time)."""
 
     def __init__(self, notifier: SystemdNotifier, interval: float = HEARTBEAT_SECONDS,
                  monotonic: Callable[[], float] = time.monotonic):

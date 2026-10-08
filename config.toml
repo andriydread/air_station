@@ -1,23 +1,23 @@
-# Air Station settings. Read by all three apps at start — after editing: make restart
-# Everything not in this file is a constant next to the code that uses it.
+# Air Station settings, read by all three apps at startup. Run `make restart` after editing.
+# Anything not here is a constant in the code that uses it.
 
 [location]
-latitude = 49.842957        # city coordinates; used for the weather forecast only
+latitude = 49.842957        # used for the weather forecast only
 longitude = 24.031111
 altitude_m = 296            # SCD41 fallback when no weather pressure is known
 
 [sensors]
-scd41_temp_offset_c = 4.0   # the sensor's factory default; tune from bench data
+scd41_temp_offset_c = 4.0   # factory default; tune against the SHT41
 sht41_temp_offset_c = 0.0
 asc = false                 # SCD41 automatic self-calibration
 calibration_target_ppm = 420
 
 [retention_days]
-raw = 30                    # 10-second rows, as the sensors gave them
+raw = 30                    # 10-second raw rows
 vitals = 30
 events = 30
 commands = 30
-logs = 30                   # one log file per app per day; day 31 removes day 1
+logs = 30                   # one log file per app per day
 # hourly rows are kept forever
 
 [weather]
@@ -31,4 +31,4 @@ database = "data/airstation.db"
 logs = "data/logs"
 
 [logging]
-level = "info"              # one line per raw row and per panel frame; "debug" adds request and probe lines
+level = "info"              # "debug" adds request and probe lines

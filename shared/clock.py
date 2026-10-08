@@ -1,6 +1,5 @@
-"""Clock helpers: one place to read the time (so tests can replace it),
-wall-clock alignment, the NTP wait at start, clock-jump detection, and the
-two human schedules that run on the Pi's local time.
+"""Time helpers: a patchable clock, wall-clock alignment, the NTP wait at
+startup, clock-jump detection and local-time schedules.
 """
 
 import math
@@ -14,7 +13,7 @@ CLOCK_JUMP_SECONDS = 5.0
 
 
 def now() -> float:
-    """Wall-clock Unix seconds. Tests patch this function on the module."""
+    """Wall-clock Unix seconds. Tests patch this."""
     return time.time()
 
 
@@ -27,22 +26,20 @@ def sleep(seconds: float) -> None:
 
 
 def next_aligned(interval: float, current: float) -> float:
-    """The next multiple of ``interval`` strictly after ``current``."""
+    """Next multiple of interval strictly after current."""
     return (math.floor(current / interval) + 1) * interval
 
 
 def aligned_stamp(interval: float, current: float) -> int:
-    """The multiple of ``interval`` at or before ``current`` (a beat's timestamp)."""
+    """Multiple of interval at or before current."""
     return int(math.floor(current / interval) * interval)
 
 
 def wait_for_ntp(timeout: float = NTP_WAIT_SECONDS, runner: Callable = subprocess.run,
                  sleeper: Callable[[float], None] = None, poll: float = 2.0) -> bool:
-    """Block until ``timedatectl`` says the clock is synced, or ``timeout`` passes.
+    """Wait until timedatectl reports the clock as synced.
 
-    Returns True when synced, False on timeout or when ``timedatectl`` is not
-    available (a dev machine, a container) — the caller writes anyway and
-    logs ``clock_unsynced``.
+    Returns False on timeout or when timedatectl is missing (dev machine, container).
     """
     sleeper = sleeper or sleep
     deadline = monotonic() + timeout
@@ -64,14 +61,14 @@ def wait_for_ntp(timeout: float = NTP_WAIT_SECONDS, runner: Callable = subproces
 
 
 class ClockWatch:
-    """Notices the wall clock moving against the monotonic clock (an NTP step)."""
+    """Detects the wall clock jumping relative to the monotonic clock (e.g. an NTP step)."""
 
     def __init__(self):
         self._wall = now()
         self._mono = monotonic()
 
     def check(self) -> float:
-        """Drift in seconds since the last check (positive = wall clock jumped forward)."""
+        """Drift in seconds since the last check; positive means the wall clock jumped forward."""
         wall, mono = now(), monotonic()
         drift = (wall - self._wall) - (mono - self._mono)
         self._wall, self._mono = wall, mono
@@ -79,14 +76,14 @@ class ClockWatch:
 
 
 def local_now(ts: Optional[float] = None) -> datetime:
-    """The Pi's local time (zone from the OS), as an aware datetime."""
+    """Local time (zone from the OS) as an aware datetime."""
     return datetime.fromtimestamp(now() if ts is None else ts).astimezone()
 
 
 class LocalSchedule:
-    """Fires once per matching local-time minute, e.g. Sunday 04:00 or every day 00:05.
+    """Fires once in a matching local-time minute, e.g. Sunday 04:00 or daily at 00:05.
 
-    ``weekday`` is Monday=0 … Sunday=6, or None for every day.
+    weekday is Monday=0 ... Sunday=6, or None for every day.
     """
 
     def __init__(self, hour: int, minute: int, weekday: Optional[int] = None):

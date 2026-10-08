@@ -1,15 +1,9 @@
-"""The logger every app uses: key=value log lines, and events rows for the
-things the dashboard should show.
-
-One line per fact, one format everywhere:
+"""Shared logger: key=value log lines, plus rows in the events table for the dashboard.
 
     2026-09-03T12:00:10Z DEBUG collector scd41 sample co2=812 temp=23.41 ok=1
 
-= UTC time, level, app, source (subsystem), a one-word message, then
-``key=value`` pairs (None → ``-``, booleans → 1/0, anything with a space or
-``=`` double-quoted). Files live in ``paths.logs/<app>.log``, one per UTC day,
-``retention_days.logs`` of them kept. A log or database failure never
-propagates to the caller: it is counted in ``failures`` and the app carries on.
+None is written as "-", booleans as 1/0, and values with spaces or "=" are
+quoted. Files rotate daily (UTC). Write failures are counted, never raised.
 """
 
 import json
@@ -29,8 +23,7 @@ _SENSOR_TYPES = (
     "sensor_init", "sensor_reinit", "sensor_error", "fan_clean", "calibration_done", "calibration_refused",
 )
 
-# source -> the event types it may emit. Decided in redesign.md §12; adding a
-# type is a deliberate act here, never an ad-hoc string in a module.
+# Event types each source may emit. New types must be added here.
 EVENT_TYPES: Dict[str, tuple] = {
     "scd41": _SENSOR_TYPES,
     "sht41": _SENSOR_TYPES,
@@ -84,7 +77,7 @@ def format_line(ts: float, level: str, app: str, source: str, message: str,
 
 
 def git_commit(repo_root: Path) -> str:
-    """Short hash of HEAD without running git; '-' when it cannot be read."""
+    """Short hash of HEAD read from .git directly, or '-' if unavailable."""
     try:
         head = (repo_root / ".git" / "HEAD").read_text().strip()
         if head.startswith("ref:"):
@@ -103,7 +96,7 @@ def git_commit(repo_root: Path) -> str:
 
 
 class _CountingHandler(TimedRotatingFileHandler):
-    """A file handler that counts write failures instead of printing them."""
+    """File handler that counts write errors instead of printing them."""
 
     failures = 0
 
@@ -141,11 +134,9 @@ class Log:
         self._logger.setLevel(logging.DEBUG)
         self._logger.handlers = [self._file, self._stream]
 
-    # --- plain lines --------------------------------------------------------------
-
     @property
     def failures(self) -> int:
-        """Log-line write failures + events-row write failures."""
+        """Failed log-file writes plus failed events-table inserts."""
         return self._file.failures + self.db_failures
 
     def _emit(self, level: str, source: str, message: str, kv: Dict[str, Any]) -> None:
@@ -166,8 +157,6 @@ class Log:
     def error(self, source: str, message: str, **kv: Any) -> None:
         self._emit("error", source, message, kv)
 
-    # --- events (line + row) -------------------------------------------------------
-
     def event(self, level: str, source: str, type_: str, message: str, **details: Any) -> None:
         if level not in ("info", "warning", "error"):
             raise ValueError(f"event level must be info/warning/error, got {level!r}")
@@ -185,15 +174,14 @@ class Log:
             self.db_failures += 1
 
     def exception(self, source: str, message: str, **kv: Any) -> None:
-        """Call from an ``except`` block: full traceback in the line, first line in the event."""
+        """Call from an except block. The log line gets the full traceback, the event only the last line."""
         text = traceback.format_exc()
         first = text.strip().splitlines()[-1] if text.strip() and text.strip() != "NoneType: None" else "-"
         self._emit("error", source, message, {**kv, "exc": first, "traceback": text})
         self.event("error", "app", "error", message, origin=source, exc=first, **kv)
 
     def start_line(self, config, commit: Optional[str] = None) -> None:
-        """Once per start: commit, python, level and the config that matters (the
-        paths never change and are the checkout's; they stay out of the line)."""
+        """Log the commit, Python version, level and settings once at startup (paths left out)."""
         settings = {k: v for k, v in config.as_dict().items() if k not in ("paths", "repo_root", "source")}
         self.info(
             "app", "start",

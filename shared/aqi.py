@@ -1,14 +1,12 @@
-"""Air-quality index from PM2.5 (US EPA, May-2024 breakpoints) and the
-category words for the index and for CO2.
+"""AQI from PM2.5 (US EPA, May 2024 breakpoints) plus category names for AQI and CO2.
 
-PM10 no longer takes part: the SPS30 only measures particles up to about
-2.5 µm and calculates PM10 (±25 µg/m³), so it must not drive the headline
-number (redesign.md §4). CO2 uses the German UBA indoor-air scale.
+PM10 is left out because the SPS30 only estimates it (+-25 ug/m3).
+CO2 categories follow the German UBA indoor-air scale.
 """
 
 from typing import Optional, Tuple
 
-# (concentration high, index low, index high) per EPA bracket, PM2.5 µg/m³.
+# (upper concentration, index low, index high) per EPA bracket, PM2.5 in ug/m3.
 _PM25_BRACKETS = (
     (9.0, 0, 50),
     (35.4, 51, 100),
@@ -31,7 +29,7 @@ CO2_GUIDES = (1000, 2000)  # ppm: Good below the first, Elevated below the secon
 
 
 def aqi_from_pm25(pm25: Optional[float]) -> Optional[int]:
-    """EPA index for a PM2.5 mass concentration; None for None or non-finite."""
+    """Return the EPA index, or None for a missing or non-finite value."""
     if pm25 is None:
         return None
     try:
@@ -40,8 +38,8 @@ def aqi_from_pm25(pm25: Optional[float]) -> Optional[int]:
         return None
     if value != value or value in (float("inf"), float("-inf")):
         return None
-    # EPA truncates to one decimal before the lookup; without it a gap value
-    # like 35.45 selects the bracket above and interpolates to 101, not 100.
+    # EPA truncates to one decimal first; otherwise 35.45 would fall into the
+    # next bracket and give 101 instead of 100.
     value = int(max(0.0, value) * 10) / 10.0
     low_conc = 0.0
     for high_conc, low_index, high_index in _PM25_BRACKETS:
@@ -54,7 +52,7 @@ def aqi_from_pm25(pm25: Optional[float]) -> Optional[int]:
 
 
 def aqi_category(aqi: Optional[int]) -> Tuple[Optional[str], Optional[str]]:
-    """(full name, short word for the panel)."""
+    """Return (full name, short name for the panel)."""
     if aqi is None:
         return None, None
     for limit, full, short in _AQI_CATEGORIES:

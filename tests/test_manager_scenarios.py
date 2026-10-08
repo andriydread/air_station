@@ -1,4 +1,4 @@
-"""The manager's failure stories, played through the real code."""
+"""Manager failure scenarios, run through the real code."""
 
 import time as _time
 from datetime import datetime

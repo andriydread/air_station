@@ -123,10 +123,8 @@ class UC8253C_SPI:
             self._write(self._CMD_PANEL_SETTING, [0x1F, 0x0D])
             self._apply_mode(self.current_mode)
         except TimeoutError:
-            # _hardware_reset marked us awake, but the init never finished —
-            # a half-initialized controller must not count as awake, or the
-            # next display_image writes frames into the void. Re-arm the
-            # full reset+init for the next attempt.
+            # _hardware_reset marked us awake but init never finished. Force a
+            # full reset+init next time instead of writing to a half-set-up controller.
             self.is_sleeping = True
             raise
         self.is_sleeping = False
@@ -195,10 +193,9 @@ class UC8253C_SPI:
             self._write(self._CMD_DISPLAY_REFRESH)
             self._wait_until_idle()
         except TimeoutError:
-            # Both RAM banks may already hold the new frame while our
-            # shadow state does not — recovering without a reset would
-            # ghost/invert the next partial refresh. Route the next
-            # operation through _wake's hardware reset.
+            # The RAM banks may already hold the new frame while our shadow
+            # state does not, which would ghost the next partial refresh.
+            # Force a hardware reset on the next operation.
             self.is_sleeping = True
             raise
 
@@ -219,10 +216,8 @@ class UC8253C_SPI:
             self._wait_until_idle()
             self._write(self._CMD_DEEP_SLEEP, 0xA5)
         except TimeoutError:
-            # The panel is now in an unknown power state; claiming "awake"
-            # would let the next display_image write frames to a dead
-            # controller. Marking sleeping forces the next operation through
-            # _wake's hardware reset, from which every state converges.
+            # Unknown power state: mark it sleeping so the next operation goes
+            # through _wake's hardware reset.
             self.is_sleeping = True
             raise
         self.is_sleeping = True

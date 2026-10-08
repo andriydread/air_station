@@ -1,9 +1,7 @@
-"""The one SQLite file all three apps share — schema and table helpers.
+"""Schema and helpers for the SQLite database shared by all three apps.
 
-One ``Database`` per process; WAL mode so readers never block the writer;
-every write inside ``BEGIN IMMEDIATE`` under a process-local lock; every app
-creates the tables if they are missing (no owner, first one wins). No
-migrations: the station is installed fresh on an empty file.
+WAL mode, so readers don't block the writer. Each app creates missing tables
+at start; there are no migrations.
 """
 
 import json
@@ -27,7 +25,7 @@ TABLES: Tuple[str, ...] = (
     "raw_measurements", "hourly_measurements", "vitals", "events", "commands", "state",
 )
 
-# the column that orders each table newest first (the Data tab pages on it)
+# Column used to page each table newest-first in the Data tab.
 TABLE_ORDER: Dict[str, str] = {
     "raw_measurements": "recorded_at", "hourly_measurements": "hour", "vitals": "recorded_at",
     "events": "id", "commands": "id", "state": "updated_at",
@@ -94,7 +92,7 @@ CREATE TABLE IF NOT EXISTS state (
 
 
 class Database:
-    """One connection per process, WAL, 5 s busy timeout, writes serialised."""
+    """One connection per process; writes are serialised by a lock."""
 
     def __init__(self, path: str | Path, now: Callable[[], float] = time.time):
         self.path = Path(path)
@@ -112,7 +110,7 @@ class Database:
             self._connection.executescript(SCHEMA)
         self._state_cache: Dict[str, str] = {}
 
-    # --- plumbing ------------------------------------------------------------
+    # --- connection helpers ---------------------------------------------------
 
     def now(self) -> int:
         return int(self._now())
@@ -126,7 +124,7 @@ class Database:
         return rows[0] if rows else None
 
     def write(self, sql: str, params: Sequence[Any] = ()) -> Tuple[int, Optional[int]]:
-        """One statement in its own IMMEDIATE transaction → (rowcount, lastrowid)."""
+        """Run one statement in its own transaction; returns (rowcount, lastrowid)."""
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -138,7 +136,7 @@ class Database:
             return cursor.rowcount, cursor.lastrowid
 
     def write_many(self, statements: Iterable[Tuple[str, Sequence[Any]]]) -> None:
-        """Several statements in ONE transaction (all or nothing)."""
+        """Run several statements in a single transaction."""
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -150,7 +148,7 @@ class Database:
                 raise
 
     def transaction(self):
-        """``with db.transaction() as conn:`` for read-modify-write sequences."""
+        """Context manager for read-modify-write sequences."""
         return _Transaction(self)
 
     def close(self) -> None:
@@ -158,7 +156,7 @@ class Database:
             self._connection.close()
 
     def size_mb(self) -> float:
-        """Main file + WAL, in MB with one decimal (what the operator sees)."""
+        """Size of the main file plus the WAL, in MB."""
         total = 0
         for suffix in ("", "-wal"):
             candidate = Path(str(self.path) + suffix)
@@ -177,7 +175,7 @@ class Database:
     # --- raw measurements ----------------------------------------------------
 
     def insert_raw(self, recorded_at: int, values: Dict[str, Any]) -> None:
-        """One beat. Missing or None metrics are stored as NULL; same second replaces."""
+        """Missing metrics are stored as NULL; a row with the same timestamp is replaced."""
         columns = ", ".join(("recorded_at", *METRICS))
         marks = ", ".join("?" for _ in range(len(METRICS) + 1))
         params = [int(recorded_at), *(values.get(metric) for metric in METRICS)]
@@ -199,11 +197,9 @@ class Database:
         return [dict(row) for row in rows]
 
     def minute_average(self, now: int, window: int = 60) -> Dict[str, Dict[str, Any]]:
-        """Averages over recorded_at in [now-window, now) — the minute that just ended.
+        """Average each metric over [now - window, now), skipping implausible values.
 
-        Only values that could be air count (``shared.filters.plausible``): the
-        rows hold whatever the sensors said, the panel shows a clean average.
-        ``samples`` is how many values went into each.
+        samples holds the number of values that went into each average.
         """
         from shared.filters import plausible
 
@@ -217,7 +213,7 @@ class Database:
         return {"values": values, "samples": samples, "rows": len(rows)}
 
     def raw_bucketed(self, start: int, end: int, bucket_s: int) -> List[Dict[str, Any]]:
-        """Per-bucket averages for charts: [{"ts": bucket_start, metric: avg|None, ...}]."""
+        """Per-bucket averages for charts."""
         bucket_s = max(1, int(bucket_s))
         selects = ", ".join(f"AVG({m}) AS {m}" for m in METRICS)
         rows = self.query(
@@ -231,7 +227,7 @@ class Database:
         ]
 
     def raw_stats(self, start: int, end: int) -> Dict[str, Dict[str, Any]]:
-        """{metric: {min, max, avg, n}} over start <= recorded_at < end."""
+        """Return {metric: {min, max, avg, n}} for start <= recorded_at < end."""
         selects = ", ".join(
             f"MIN({m}) AS {m}_min, MAX({m}) AS {m}_max, AVG({m}) AS {m}_avg, COUNT({m}) AS {m}_n"
             for m in METRICS
@@ -253,13 +249,12 @@ class Database:
 
     # --- hourly rollups --------------------------------------------------------
 
-    CATCHUP_MAX_HOURS = 24 * 100  # one call never scans more than 100 days
+    CATCHUP_MAX_HOURS = 24 * 100  # cap a single catch-up call at 100 days
 
     def rollup_hour(self, hour_ts: int) -> int:
-        """Fold the raw rows of [hour_ts, hour_ts+3600) into one hourly row.
+        """Aggregate one hour of raw rows into an hourly row.
 
-        Returns the number of raw rows (samples); 0 means nothing was written —
-        an hour with no measurements gets no row.
+        Returns the number of raw rows; 0 means the hour was empty and nothing was written.
         """
         hour_ts = int(hour_ts) // 3600 * 3600
         selects = ", ".join(
@@ -290,13 +285,10 @@ class Database:
         return self.query_one("SELECT MAX(hour) AS h FROM hourly_measurements")["h"]
 
     def rollup_catchup(self, now: int) -> Dict[str, Any]:
-        """Roll up every finished hour not rolled yet, oldest first.
+        """Roll up all finished hours that have no hourly row yet, oldest first.
 
-        Starts after the newest hourly row (or at the oldest raw row on a fresh
-        database), stops before the current hour. Hours later than ``now``
-        (clock skew) are never rolled; their count is reported as
-        ``skipped_future`` so the caller can log it. ``remaining`` > 0 means
-        the range was capped and another call is needed.
+        Hours after now (clock skew) are skipped and counted in skipped_future.
+        remaining > 0 means the range was capped and another call is needed.
         """
         current_hour = int(now) // 3600 * 3600
         result: Dict[str, Any] = {"rolled": 0, "skipped_future": 0, "remaining": 0, "hours": []}
@@ -360,14 +352,13 @@ class Database:
 
     # --- state documents -------------------------------------------------------
 
-    ALWAYS_WRITE_STATE = ("display_data",)  # its updated_at is the Live tab's freshness
+    ALWAYS_WRITE_STATE = ("display_data",)  # the Live tab uses its updated_at for freshness
 
     def set_state(self, key: str, doc: Any) -> bool:
-        """Store a small JSON document under ``key``; returns True when written.
+        """Store a JSON document under key; returns True if it was written.
 
-        Unchanged documents are skipped (thousands of identical status writes
-        a day would only wear the SD card) — except the keys in
-        ``ALWAYS_WRITE_STATE``, whose timestamp must move every time.
+        Unchanged documents are skipped to save SD card writes, except for
+        keys in ALWAYS_WRITE_STATE.
         """
         serialized = to_json(doc)
         if key not in self.ALWAYS_WRITE_STATE and self._state_cache.get(key) == serialized:
@@ -409,9 +400,9 @@ class Database:
         return int(row_id)
 
     def claim_pending(self, to_whom: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Atomically move this app's oldest pending commands to ``running``."""
-        # The queue is almost always empty: a cheap read first avoids a write
-        # transaction every 2 s (real SD-card wear).
+        """Atomically mark this app's oldest pending commands as running."""
+        # The queue is nearly always empty, so check with a cheap read first
+        # instead of opening a write transaction every poll.
         if self.query_one(
             "SELECT 1 FROM commands WHERE to_whom = ? AND status = 'pending' LIMIT 1", (to_whom,)
         ) is None:
@@ -441,7 +432,7 @@ class Database:
         )
 
     def fail_running(self, to_whom: str, reason: str) -> int:
-        """At app start: rows a crash left ``running`` can never finish."""
+        """Fail commands left running by a crash (called at app start)."""
         count, _ = self.write(
             "UPDATE commands SET status = 'fail', result = ?, updated_at = ? "
             "WHERE to_whom = ? AND status = 'running'",
@@ -450,7 +441,7 @@ class Database:
         return count
 
     def fail_unclaimed(self, older_than_s: int, now: Optional[int] = None) -> int:
-        """Commands still ``pending`` after ``older_than_s`` were never picked up."""
+        """Fail commands that have been pending longer than older_than_s."""
         now = self.now() if now is None else int(now)
         count, _ = self.write(
             "UPDATE commands SET status = 'fail', result = ?, updated_at = ? "
@@ -491,7 +482,7 @@ class Database:
     def recent_events(self, limit: int = 100, app: Optional[str] = None,
                       level: Optional[str] = None, source: Optional[str] = None,
                       since_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Newest first; every filter is optional and they combine."""
+        """Newest first; all filters are optional."""
         clauses, params = self._event_filters(app, level, source)
         if since_id is not None:
             clauses.append("id > ?")
@@ -505,7 +496,7 @@ class Database:
     def events_between(self, start: int, end: int, app: Optional[str] = None,
                        level: Optional[str] = None, source: Optional[str] = None,
                        limit: int = 5000) -> List[Dict[str, Any]]:
-        """Oldest first, start <= ts < end (for exports and the text of a range)."""
+        """Events with start <= ts < end, oldest first."""
         clauses, params = self._event_filters(app, level, source)
         clauses = ["ts >= ?", "ts < ?", *clauses]
         rows = self.query(
@@ -557,11 +548,11 @@ class Database:
 
     # --- vitals --------------------------------------------------------------------
 
-    # The documented vcgencmd get_throttled bits: 0-3 "now", 16-19 "since boot".
+    # vcgencmd get_throttled bits: 0-3 are current, 16-19 are "since boot".
     THROTTLED_BITS = (1, 2, 4, 8, 1 << 16, 1 << 17, 1 << 18, 1 << 19)
 
     def insert_vitals(self, row: Dict[str, Any]) -> None:
-        """One minute of machine health; ``recorded_at`` required, the rest optional."""
+        """recorded_at is required; other columns may be missing."""
         columns = ("recorded_at", *VITALS_COLUMNS)
         marks = ", ".join("?" for _ in columns)
         params = [int(row["recorded_at"]), *(row.get(column) for column in VITALS_COLUMNS)]
@@ -579,7 +570,7 @@ class Database:
         return [dict(row) for row in rows]
 
     def vitals_bucketed(self, start: int, end: int, bucket_s: int) -> List[Dict[str, Any]]:
-        """Per-bucket averages; ``throttled`` is the OR of the rows' bits (a set bit survives)."""
+        """Per-bucket averages; throttled is OR-ed across rows so no flag is lost."""
         bucket_s = max(1, int(bucket_s))
         averaged = [c for c in VITALS_COLUMNS if c != "throttled"]
         selects = ", ".join(f"AVG({c}) AS {c}" for c in averaged)
@@ -606,10 +597,7 @@ class Database:
     # --- maintenance ----------------------------------------------------------------
 
     def prune(self, now: int, retention) -> Dict[str, int]:
-        """Delete rows older than their retention (days); hourly rows are never pruned.
-
-        ``retention`` is the config's ``Retention`` (raw, vitals, events, commands).
-        """
+        """Delete rows past their retention period. Hourly rows are kept forever."""
         day = 86400
         return {
             "raw": self.write("DELETE FROM raw_measurements WHERE recorded_at < ?",
@@ -620,16 +608,15 @@ class Database:
         }
 
     def checkpoint(self) -> Dict[str, int]:
-        """Fold the WAL side file into the main file and truncate it."""
+        """Checkpoint the WAL into the main file and truncate it."""
         with self._lock:
             row = self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         return {"busy": int(row[0]), "log_pages": int(row[1]), "checkpointed": int(row[2])}
 
     def backup_to(self, target: str | Path, progress: Optional[Callable[[], None]] = None) -> int:
-        """Consistent online copy of the whole database; returns bytes written.
+        """Online backup of the database; returns the size of the copy in bytes.
 
-        ``progress`` is called between page batches so a caller can keep its
-        watchdog heartbeat flowing during a long copy.
+        progress is called between page batches so the caller can keep feeding the watchdog.
         """
         target = Path(target)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -649,7 +636,7 @@ class Database:
         return target.stat().st_size
 
     def delete_history(self) -> Dict[str, int]:
-        """The dashboard's Delete history: measurements and vitals go, the story stays."""
+        """Delete measurements and vitals (events and commands are kept)."""
         counts = {
             "raw": self.query_one("SELECT COUNT(*) AS n FROM raw_measurements")["n"],
             "hourly": self.query_one("SELECT COUNT(*) AS n FROM hourly_measurements")["n"],
@@ -666,15 +653,14 @@ class Database:
     # --- browsing (the Data tab) ---------------------------------------------------
 
     def table_counts(self) -> Dict[str, int]:
-        """Row count per table, in ``TABLES`` order."""
+        """Row count per table, in TABLES order."""
         return {name: int(self.query_one(f"SELECT COUNT(*) AS n FROM {name}")["n"]) for name in TABLES}
 
     def table_page(self, table: str, limit: int = 100, before: Optional[Any] = None) -> Dict[str, Any]:
-        """One page of a table, newest first, as stored (JSON columns stay text).
+        """One page of raw table rows, newest first.
 
-        ``before``: only rows whose order column is below it (the ``next`` of the
-        previous page). Returns columns, rows, the cursor for the next page (None
-        at the end) and the order column's name.
+        Pass the previous page's "next" value as before to continue; next is
+        None on the last page.
         """
         if table not in TABLE_ORDER:
             raise ValueError(f"unknown table: {table}")
@@ -691,7 +677,7 @@ class Database:
                 "next": rows[-1][order] if more else None}
 
 def round_metric(metric: str, value: Any) -> Any:
-    """CO2 is a whole ppm, particle size keeps 3 decimals, the rest 2."""
+    """CO2 to whole ppm, typical particle size to 3 decimals, everything else to 2."""
     if value is None:
         return None
     if metric == "co2":

@@ -1,6 +1,7 @@
-"""`python -m tools.backup <destination> [--config path]` — a consistent copy of
-the live database (SQLite online backup, read-only on the source), used by
-`make export`. Prints the copy's size."""
+"""Copy the live database with SQLite's online backup API (used by `make export`).
+
+    python -m tools.backup <destination> [--config path]
+"""
 
 import argparse
 import sqlite3

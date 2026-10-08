@@ -15,7 +15,7 @@ START = 1_788_436_800  # 2026-09-03 12:00:00 UTC (the fake clock's start), a :00
 
 
 class Station:
-    """The collector on fakes; the fake clock drives everything."""
+    """The collector on fake hardware, driven by the fake clock."""
 
     def __init__(self, tmp_config, fake_clock, monkeypatch, ntp="yes"):
         self.clock = fake_clock
@@ -59,8 +59,8 @@ def test_three_minutes_of_life(station):
     reason = station.run(3 * 60)
     assert reason == "max_passes"
     rows = db.raw_between(0, 10**10)
-    # started on a :00, so the quiet time runs to the next :00 (+60 s); a row
-    # every 10 s follows, every cell filled from the first one
+    # Started on a :00, so the quiet time runs to the next :00 (+60 s), then
+    # a fully filled row every 10 s.
     assert [r["recorded_at"] - START for r in rows] == list(range(60, 190, 10))  # the last pass lands on :00
     assert all(r["co2"] == 600 and r["pm25"] == 2.5 and r["temp"] == 22.5 for r in rows)
     assert station.scd.start_calls == 1 and station.scd.single_shots == 0  # periodic mode, started once
@@ -78,7 +78,7 @@ def test_three_minutes_of_life(station):
     assert station.scd.stop_calls == 2  # once at open (defensive), once at shutdown
     lines = station.log.path.read_text().splitlines()
     assert len([l for l in lines if " sample row " in l]) == 13
-    assert len([l for l in lines if " DEBUG collector sample beat " in l]) == 13  # one debug line per beat
+    assert len([l for l in lines if " DEBUG collector sample beat " in l]) == 13
     started = [l for l in lines if " app started " in l][0]
     assert "ntp_wait_s=" in started and "init_ms=sht41:" in started and "start_s=" in started
 
@@ -106,7 +106,7 @@ def test_unsynced_clock_is_an_event_not_a_stop(tmp_config, fake_clock, monkeypat
 def test_stale_running_commands_are_failed_at_start(station):
     db = station.db
     cid = db.queue_command("sps30_fan_clean", "dashboard", "collector", {})
-    db.claim_pending("collector")  # a previous life claimed it and died
+    db.claim_pending("collector")  # claimed by a collector that then died
     station.run(5)
     row = {r["id"]: r for r in db.recent_commands()}[cid]
     assert row["status"] == "fail" and row["result"] == {"error": "collector restarted"}

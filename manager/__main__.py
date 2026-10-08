@@ -1,10 +1,6 @@
-"""The manager program: ``python -m manager`` (``--fake`` on a machine without the panel).
+"""Entry point: python -m manager (use --fake without real hardware).
 
-One single-threaded loop: the minute frame (display_data → panel), commands
-every 2 s, status every 30 s, weather every 30 min (retry in 2 min), router
-and internet probes every 30 s, vitals and power every minute, the hourly
-rollup at :00, the nightly job at 00:05 local, orphaned commands every 10
-minutes, and the watch over the collector inside the minute job.
+Everything runs as scheduled tasks on a single-threaded loop; see Manager.tasks().
 """
 
 import argparse
@@ -37,7 +33,7 @@ COMMAND_POLL = 2
 STATUS_EVERY = 30
 MACHINE_EVERY = 60
 UNCLAIMED_EVERY = 600
-FIRST_FRAME_DELAY = 5  # seconds: lets the collector publish its first status after a common boot
+FIRST_FRAME_DELAY = 5  # give the collector a moment to publish its status after boot
 
 
 class Manager:
@@ -71,15 +67,12 @@ class Manager:
         self.weather_task: Optional[Task] = None
         self.frame_count = 0
 
-    # --- lifecycle --------------------------------------------------------------------------
-
     def start(self) -> None:
         self.log.start_line(self.config)
         failed = self.db.fail_running(APP, "manager restarted")
         if failed:
             self.log.info("app", "stale_commands_failed", count=failed)
-        # No RTC: wait for NTP like the collector does (Q136), so the first frame,
-        # the weather blocks and the vitals carry the right time the first time.
+        # The Pi has no RTC, so wait for NTP before the first frame and vitals row.
         ntp_started = clock.monotonic()
         self.ntp_synced = clock.wait_for_ntp(runner=self.runner)
         ntp_wait_s = round(clock.monotonic() - ntp_started, 1)
@@ -87,13 +80,13 @@ class Manager:
             self.log.event("warning", "app", "clock_unsynced",
                            "system time not confirmed by NTP; painting anyway")
         self.started_at = clock.now()
-        self.frames.started_at = self.started_at  # the start-up grace counts from here
+        self.frames.started_at = self.started_at  # startup grace counts from here
         stored = self.db.get_state("last_weather")
         if stored and isinstance(stored.get("value"), dict) and stored["value"].get("hourly"):
-            self.weather_doc = stored["value"]  # the first frame uses the stored forecast
+            self.weather_doc = stored["value"]  # use the saved forecast until the first fetch
             self.weather_state.update(ok=None, fetched_at=self.weather_doc.get("fetched_at"),
                                       pressure_hpa=self.weather_doc.get("pressure_hpa"))
-        # what the first frame will find: the age of the collector's status and of the newest row
+        # log how old the collector's status and newest row are at startup
         status = self.db.get_state("collector_status")
         latest_raw = self.db.latest_raw_at()
         self.log.event("info", "app", "started", "manager started",
@@ -115,7 +108,7 @@ class Manager:
     def tasks(self):
         self.weather_task = Task("weather", weather_mod.WEATHER_EVERY, self.fetch_weather)
         return [
-            self.weather_task,  # before the first frame, so it has a forecast
+            self.weather_task,  # first, so the first frame has a forecast
             Task("minute", MINUTE, self.minute, aligned=True, initial_delay=FIRST_FRAME_DELAY),
             Task("commands", COMMAND_POLL, self.process_commands),
             Task("status", STATUS_EVERY, self.publish_status),
@@ -125,8 +118,6 @@ class Manager:
             Task("nightly", 60, self.nightly_tick, first_run_immediately=False),
             Task("unclaimed", UNCLAIMED_EVERY, self.unclaimed, first_run_immediately=False),
         ]
-
-    # --- the jobs ----------------------------------------------------------------------------
 
     def minute(self) -> None:
         now = clock.now()
@@ -193,7 +184,7 @@ class Manager:
 
 def run(config, db: Database, log: Log, notifier: Optional[SystemdNotifier] = None,
         max_passes: Optional[int] = None, extra_tasks=None, **kwargs) -> str:
-    """Build a Manager and run its loop. ``extra_tasks`` is for tests and the demo."""
+    """Build a Manager and run its loop. extra_tasks is used by tests and the demo."""
     manager = Manager(config, db, log, notifier=notifier, **kwargs)
     manager.start()
     loop = Loop(log, notifier, manager.tasks() + list(extra_tasks or []))
@@ -232,7 +223,7 @@ def main(argv=None) -> int:
         kwargs["runner"] = runner
         kwargs["spawner"] = lambda argv, **_k: log.info("app", "fake_spawn", argv=" ".join(argv))
         import contextlib
-        kwargs["connector"] = lambda _address, timeout: contextlib.nullcontext()  # every probe answers
+        kwargs["connector"] = lambda _address, timeout: contextlib.nullcontext()  # every probe succeeds
     try:
         run(config, db, log, SystemdNotifier(), **kwargs)
     except Exception:

@@ -31,14 +31,14 @@ def test_minute_average_window_nulls_and_what_cannot_be_air(db):
     for i, co2 in enumerate([800, None, 820, 830, 840, 850]):
         db.insert_raw(1000 + 10 * i, _row(co2=co2, temp=20.0 + i))
     db.insert_raw(990, _row(co2=100))    # before now-60: the minute before
-    db.insert_raw(1060, _row(co2=9000))  # exactly now: this minute's first row, not the one that ended
+    db.insert_raw(1060, _row(co2=9000))  # this minute's first row, not part of the one that ended
     result = db.minute_average(now=1060)
     assert result["values"]["co2"] == 828          # (800+820+830+840+850)/5 = 828
     assert result["samples"]["co2"] == 5
     assert result["values"]["temp"] == 22.5 and result["samples"]["temp"] == 6
-    db.insert_raw(1010, _row(co2=0, temp=21.0, pm25=-1.0))  # stored as the sensor said …
+    db.insert_raw(1010, _row(co2=0, temp=21.0, pm25=-1.0))  # stored as read...
     result = db.minute_average(now=1060)
-    assert result["samples"]["co2"] == 5 and result["values"]["co2"] == 828  # … but not air, so left out
+    assert result["samples"]["co2"] == 5 and result["values"]["co2"] == 828  # ...but left out of the average
     assert result["samples"]["pm25"] == 5 and result["samples"]["temp"] == 6
 
 
@@ -52,7 +52,7 @@ def test_bucketed_averages(db):
         db.insert_raw(3600 + 10 * i, _row(co2=600 + i))
     rows = db.raw_bucketed(3600, 3720, 60)
     assert [r["ts"] for r in rows] == [3600, 3660]
-    assert rows[0]["co2"] == round((600 + 605) / 2)  # 602.5 -> 602 (banker's) — accept int
+    assert rows[0]["co2"] == round((600 + 605) / 2)  # 602.5 -> 602 (banker's rounding)
     assert isinstance(rows[0]["co2"], int)
     assert rows[1]["tps"] == 0.5
 

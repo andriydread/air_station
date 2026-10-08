@@ -39,8 +39,7 @@ def frame(tmp_config, tmp_path, log):
 
 
 def _fill(db, now, count=6, **values):
-    """The six 10 s rows of the minute that ends at ``now`` (now-60 … now-10); the
-    ``now`` row has not landed yet."""
+    """Insert the six 10 s rows of the minute ending at ``now`` (now-60 to now-10)."""
     for i in range(1, count + 1):
         db.insert_raw(now - 10 * i, {"co2": 800 + i, "temp": 22.0, "humid": 40.0, "pm25": 4.0, **values})
 
@@ -50,7 +49,7 @@ def test_happy_frame(frame):
     _fill(db, NOW)
     db.set_state("collector_status", _status(NOW))
     doc = frame.build(NOW, _weather_doc(NOW - 600), wifi_glyph=False, power_glyph=False)
-    assert doc["values"]["co2"] == 804 and doc["samples"]["co2"] == 6 and doc["values"]["nc1"] is None  # 801…806
+    assert doc["values"]["co2"] == 804 and doc["samples"]["co2"] == 6 and doc["values"]["nc1"] is None  # 801..806
     assert doc["aqi"] == 22 and doc["aqi_category"] == "Good" and doc["aqi_short"] == "Good"
     assert doc["co2_category"] == "Good"
     assert doc["weather"]["stale"] is False and len(doc["weather"]["blocks"]) == 3
@@ -61,8 +60,8 @@ def test_happy_frame(frame):
 def test_a_value_that_cannot_be_air_is_left_out_of_the_average(frame):
     db = frame.db_
     _fill(db, NOW)
-    db.insert_raw(NOW - 30, {"co2": 0, "temp": 22.0, "humid": 40.0, "pm25": -1.0})  # stored as the sensor said
-    db.insert_raw(NOW, {"co2": 5000})  # this minute's first row: not part of the minute that ended
+    db.insert_raw(NOW - 30, {"co2": 0, "temp": 22.0, "humid": 40.0, "pm25": -1.0})  # stored as read
+    db.insert_raw(NOW, {"co2": 5000})  # first row of the next minute
     db.set_state("collector_status", _status(NOW))
     doc = frame.build(NOW, None, False, False)
     assert doc["samples"]["co2"] == 5 and doc["samples"]["pm25"] == 5 and doc["samples"]["temp"] == 6
@@ -98,21 +97,21 @@ def test_the_quiet_time_from_a_fresh_status(frame):
     db.set_state("collector_status", _status(NOW, ready_at=NOW - 30))  # ready, first minute not averaged yet
     doc = frame.build(NOW, None, False, False)
     assert doc["warming_up"] is True and doc["warmup_left"] == 0 and doc["collector_silent"] is False
-    db.set_state("collector_status", _status(NOW, ready_at=NOW - 60))  # the first full minute is in: numbers
+    db.set_state("collector_status", _status(NOW, ready_at=NOW - 60))  # first full minute is in
     doc = frame.build(NOW, None, False, False)
     assert doc["warming_up"] is False and doc["warmup_left"] == 0
 
 
 def test_the_first_frames_after_a_boot_say_starting_up_not_silent(frame):
     db = frame.db_
-    frame.started_at = NOW - 10  # the manager itself is 10 s old; nothing from the collector yet
+    frame.started_at = NOW - 10  # manager is 10 s old, no collector status yet
     doc = frame.build(NOW, None, False, False)
     assert doc["warming_up"] is True and doc["warmup_left"] == 0 and doc["collector_silent"] is False
     assert doc["glyphs"]["sensor"] is False
-    db.set_state("collector_status", _status(NOW, ready_at=NOW + 50))  # the collector's status arrives
+    db.set_state("collector_status", _status(NOW, ready_at=NOW + 50))
     doc = frame.build(NOW + 5, None, False, False)
     assert doc["warming_up"] is True and doc["warmup_left"] == 45
-    later = NOW - 10 + STARTUP_GRACE + 1  # the grace is over and still nothing: silent
+    later = NOW - 10 + STARTUP_GRACE + 1  # grace over, still nothing
     frame.clock["t"] = later
     db.set_state("collector_status", _status(later, ready_at=None))
     db.delete_state = None
@@ -141,7 +140,7 @@ def test_weather_stale_flag_and_single_event(frame, db):
     stale_events = [e for e in db.recent_events() if e["type"] == "weather_stale"]
     assert len(stale_events) == 1
     frame.build(NOW + 120, _weather_doc(NOW), False, False)   # fresh again
-    frame.build(NOW + 180, old, False, False)                 # stale again → a new event
+    frame.build(NOW + 180, old, False, False)                 # stale again, a new event
     assert len([e for e in db.recent_events() if e["type"] == "weather_stale"]) == 2
 
 
@@ -153,25 +152,25 @@ def test_never_fetched_weather_is_absent_not_an_event(frame, db):
 
 
 def test_after_a_joint_restart_the_dead_collectors_status_is_not_fresh(frame):
-    """A deploy restarts all three: the collector's shutdown status (old ready_at) and rows
-    under 90 s old must not put yesterday's numbers on the panel before "Starting up"."""
+    # After a deploy restarts all three apps, the old collector's shutdown status and
+    # recent rows must not put stale numbers on the panel before "Starting up".
     db = frame.db_
     _fill(db, NOW)
     frame.clock["t"] = NOW - 1
     db.set_state("collector_status", _status(NOW - 1, ready_at=NOW - 3600))  # written on shutdown
     frame.clock["t"] = NOW
-    frame.started_at = NOW  # the manager starts a second later
-    doc = frame.build(NOW + 5, None, False, False)  # its first frame
+    frame.started_at = NOW  # manager starts a second later
+    doc = frame.build(NOW + 5, None, False, False)
     assert doc["warming_up"] is True and doc["collector_silent"] is False and doc["glyphs"]["sensor"] is False
     frame.clock["t"] = NOW + 15
-    db.set_state("collector_status", _status(NOW + 15, ready_at=NOW + 60))  # the new collector's "started"
+    db.set_state("collector_status", _status(NOW + 15, ready_at=NOW + 60))  # new collector started
     doc = frame.build(NOW + 60, None, False, False)
-    assert doc["warming_up"] is True and doc["warmup_left"] == 0  # its first full minute is being averaged
-    _fill(db, NOW + 120)  # the new collector's first full minute of rows
+    assert doc["warming_up"] is True and doc["warmup_left"] == 0  # first full minute still being averaged
+    _fill(db, NOW + 120)
     frame.clock["t"] = NOW + 100
     db.set_state("collector_status", _status(NOW + 100, ready_at=NOW + 60))  # its 30 s publish
     doc = frame.build(NOW + 120, None, False, False)
-    assert doc["warming_up"] is False and doc["collector_silent"] is False  # numbers
+    assert doc["warming_up"] is False and doc["collector_silent"] is False
 
 
 def test_a_manager_only_restart_says_starting_up_until_the_collectors_next_status(frame):

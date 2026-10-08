@@ -1,11 +1,10 @@
-"""The manager's status document (every 30 s), the frame line (one per minute) and the weather line."""
+"""The manager_status document and the per-frame and per-fetch log lines."""
 
 from typing import Any, Dict, Optional
 
 
 def build_status(*, started_at: float, now: float, log_failures: int, panel, weather_state: Dict[str, Any],
                  wifi, machine, db, nightly, hourly, collector_state: Dict[str, Any]) -> Dict[str, Any]:
-    """The ``manager_status`` document, shape fixed in tasks.md → Interfaces."""
     return {
         "started_at": int(started_at),
         "uptime": int(now - started_at),
@@ -40,18 +39,16 @@ def build_status(*, started_at: float, now: float, log_failures: int, panel, wea
 
 def frame_line(log, doc: Dict[str, Any], mode: Optional[str], render_ms: Optional[float],
                busy_ms: Optional[float], because: Optional[str] = None) -> None:
-    """One info line per frame: what the panel shows and how long it took.
+    """Log one info line per frame: what the panel shows and how long it took.
 
-    The exceptions, not the rule: ``samples=6`` when every metric has the same
-    count, else the odd ones out and ``rest=``; ``missing=`` names the metrics
-    without a value; ``because=`` says why the panel is on the start-up screen
-    or shows the sensor glyph. A normal minute is one short line.
+    To keep a normal minute short, samples= is a single number when all metrics
+    agree, otherwise only the odd ones plus rest=.
     """
     values = doc.get("values") or {}
     samples = doc.get("samples") or {}
     missing = [m for m, v in values.items() if v is None]
     if values and len(missing) == len(values):
-        missing = ["all"]  # an empty minute: one word, not fifteen names
+        missing = ["all"]  # shorter than listing every metric
     counts = sorted(set(samples.values()))
     if len(counts) <= 1:
         sample_text = str(counts[0]) if counts else None
@@ -69,7 +66,7 @@ def frame_line(log, doc: Dict[str, Any], mode: Optional[str], render_ms: Optiona
 
 def weather_line(log, ok: bool, ms: float, doc: Optional[Dict[str, Any]] = None,
                  error: Optional[str] = None) -> None:
-    """One info line per fetch, good or bad (the first failure of a run is also an event)."""
+    """Log one info line per weather fetch, successful or not."""
     if ok and doc is not None:
         hourly = doc.get("hourly") or {}
         log.info("weather", "fetch", ok=True, ms=round(ms), bytes=doc.get("bytes"),

@@ -98,7 +98,7 @@ def test_strict_logger_rejects_unknown_types_and_production_warns(tmp_config, db
     lax.event("info", "weather", "rainbow", "x")
     assert lax.unknown_events == 1
     assert any("unknown_event_type" in line for line in _lines(lax))
-    assert db.recent_events()[0]["type"] == "rainbow"  # still recorded — the fact matters more than the name
+    assert db.recent_events()[0]["type"] == "rainbow"  # still recorded
     lax.close()
 
 

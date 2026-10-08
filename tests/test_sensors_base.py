@@ -27,7 +27,7 @@ class Flaky(Sensor):
 
 def test_ready_after_is_the_first_whole_minute_at_least_a_minute_away():
     assert QUIET_SECONDS == 60
-    assert ready_after(1000) == 1080      # 1060 → up to the next :00
+    assert ready_after(1000) == 1080      # 1060, rounded up to the next :00
     assert ready_after(1020) == 1080      # exactly on a mark: that mark
     assert ready_after(1021) == 1140
 

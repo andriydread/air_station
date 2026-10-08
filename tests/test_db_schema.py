@@ -28,7 +28,7 @@ def test_wal_mode_and_busy_timeout(tmp_path):
 
 def test_two_connections_on_one_file_both_work(tmp_path):
     first = Database(tmp_path / "shared.db")
-    second = Database(tmp_path / "shared.db")  # re-runs CREATE IF NOT EXISTS harmlessly
+    second = Database(tmp_path / "shared.db")  # CREATE IF NOT EXISTS runs again harmlessly
     first.write("INSERT INTO state(key, value, updated_at) VALUES (?, ?, ?)", ("k", "1", 1))
     assert second.query_one("SELECT value FROM state WHERE key='k'")["value"] == "1"
     first.close()
@@ -44,7 +44,7 @@ def test_write_rolls_back_on_error(tmp_path):
             ("INSERT INTO state(key, value, updated_at) VALUES (?, ?, ?)", ("k", "3", 3)),  # duplicate
         ])
     assert db.query_one("SELECT COUNT(*) AS n FROM state")["n"] == 1
-    # the connection is usable afterwards
+    # the connection still works after the rollback
     db.write("INSERT INTO state(key, value, updated_at) VALUES (?, ?, ?)", ("j", "2", 2))
     assert db.query_one("SELECT COUNT(*) AS n FROM state")["n"] == 2
     db.close()

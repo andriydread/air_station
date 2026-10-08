@@ -1,11 +1,6 @@
-"""The e-paper wrapper: create the screen, show a picture, choose partial or
-full refresh, recover when it hangs.
-
-Partial refresh every minute, a full one every 5 minutes against ghosting.
-A BUSY-pin timeout (15 s in the driver) closes the driver and re-creates it
-with the shared backoff; the first frame after a recovery is a full one.
-The picture itself comes from ``shared/render.py``; this module only pushes
-it over SPI, inline, on the manager's single thread.
+"""E-paper panel wrapper: partial refresh every minute, full refresh every 5 minutes
+to clear ghosting. On a driver error (e.g. a BUSY timeout) the driver is closed and
+re-created with backoff, and the next frame is a full one.
 """
 
 import math
@@ -15,12 +10,12 @@ from typing import Any, Callable, Dict, Optional
 from shared.backoff import ReinitBackoff
 
 FULL_REFRESH_EVERY = 300.0
-FIRST_FULL_MIN_GAP = 60.0  # a first frame this close to the next 5-minute mark is partial (no double flash)
-BUSY_TIMEOUT = 15.0  # the driver's own limit; documented here, set there
+FIRST_FULL_MIN_GAP = 60.0  # avoid two full flashes in a row near a 5-minute mark
+BUSY_TIMEOUT = 15.0  # informational; the actual timeout lives in the driver
 
 
 def _default_driver():
-    from drivers.uc8253c import UC8253C_SPI  # RPi.GPIO / spidev: only on the Pi (or faked)
+    from drivers.uc8253c import UC8253C_SPI  # needs RPi.GPIO / spidev, so import lazily
     return UC8253C_SPI(rotation=90)
 
 
@@ -71,18 +66,18 @@ class Panel:
             self.reinit_count += 1
             self.log.event("info", "display", "display_reinit", "e-paper re-initialised",
                            count=self.reinit_count)
-        self.force_full = True  # unknown panel contents: start with a clean full frame
+        self.force_full = True  # panel contents are unknown after init
         return True
 
     def show(self, image, now: float, full: Optional[bool] = None) -> Optional[str]:
-        """Push a frame; returns "full" / "partial", or None when the panel is unavailable."""
+        """Push a frame. Returns "full", "partial", or None if the panel is unavailable."""
         if not self.ensure(now):
             return None
         if full is None:
             first = self.force_full or self.next_full_at is None
             next_mark = (math.floor(now / FULL_REFRESH_EVERY) + 1) * FULL_REFRESH_EVERY
             if first and next_mark - now < FIRST_FULL_MIN_GAP:
-                # the 5-minute mark's full frame is seconds away: one flash, not two
+                # a full refresh is due shortly anyway, so skip this one
                 full = False
                 self.next_full_at = next_mark
             else:
@@ -102,7 +97,7 @@ class Panel:
         self.force_full = False
         if full:
             self.last_full_at = int(now)
-            # the next full frame on the next 5-minute mark, not 5 min after this one
+            # keep full refreshes aligned to 5-minute marks
             self.next_full_at = (math.floor(now / FULL_REFRESH_EVERY) + 1) * FULL_REFRESH_EVERY
         else:
             self.last_partial_at = int(now)

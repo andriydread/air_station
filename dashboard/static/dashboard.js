@@ -1,15 +1,10 @@
 'use strict';
 
-// ---------------------------------------------------------------------------
-// Air Station dashboard. The browser is never told anything: every 10 s it
-// asks /api/changes "what changed?" and fetches only the parts whose stamp
-// moved; for 15 s after a button press it asks every second. All times from
-// the server are Unix seconds; they become local time only here.
-// ---------------------------------------------------------------------------
+// Air Station dashboard. Polls /api/changes every 10 s (every 1 s for 15 s
+// after a button press) and refetches only the parts whose timestamp moved.
+// Server times are Unix seconds and are converted to local time here.
 
-// ---------------------------------------------------------------------------
-// Formatting helpers
-// ---------------------------------------------------------------------------
+// --- Formatting helpers ---
 
 const DASH = '—';
 
@@ -79,7 +74,7 @@ function prettyJson(value) {
   return JSON.stringify(value || {}, null, 2);
 }
 
-// Magnus-formula dew point — the honest "how the air feels" number.
+// Dew point from the Magnus formula.
 function dewPoint(tempC, humidityPct) {
   if (tempC == null || humidityPct == null || humidityPct <= 0) return null;
   const gamma = Math.log(humidityPct / 100) + (17.62 * tempC) / (243.12 + tempC);
@@ -95,7 +90,7 @@ function describeDew(dew) {
   return 'oppressive';
 }
 
-// SPS30 "typical particle size" translated to what usually floats at that size.
+// What usually floats at the SPS30's "typical particle size".
 function describeTps(um) {
   if (um == null) return '';
   if (um < 1) return 'ultrafine — fresh smoke, soot';
@@ -115,9 +110,7 @@ const weatherIconMap = {
   95: 'storm.png', 96: 'storm.png', 99: 'storm.png',
 };
 
-// ---------------------------------------------------------------------------
-// Toast: the ONE place errors and confirmations surface
-// ---------------------------------------------------------------------------
+// --- Toast: the single place errors and confirmations are shown ---
 
 let toastTimer = null;
 
@@ -130,9 +123,7 @@ function toast(message, kind = 'info') {
   toastTimer = window.setTimeout(() => { element.hidden = true; }, 6000);
 }
 
-// ---------------------------------------------------------------------------
-// API helpers
-// ---------------------------------------------------------------------------
+// --- API helpers ---
 
 async function fetchJson(url, options) {
   let response;
@@ -160,13 +151,11 @@ async function submitCommand(type, payload = {}) {
   return data;
 }
 
-// ---------------------------------------------------------------------------
-// Tabs
-// ---------------------------------------------------------------------------
+// --- Tabs ---
 
 let activeTab = 'live';
 const TAB_NAMES = ['live', 'history', 'vitals', 'diagnostics', 'controls', 'data'];
-// Each tab registers how to refresh itself; the poll loop calls the active one.
+// Each tab registers a refresh function; the poll loop calls the active one.
 const tabRefreshers = {};
 
 function switchTab(name, updateHash = true) {
@@ -177,8 +166,8 @@ function switchTab(name, updateHash = true) {
   document.querySelectorAll('.tab').forEach((section) => {
     section.classList.toggle('active', section.id === `tab-${name}`);
   });
-  // Deep-linkable tabs (#history): pushState makes the phone's back
-  // gesture walk tabs instead of leaving the page.
+  // Tabs are deep-linkable (#history). pushState lets the phone's back
+  // gesture move between tabs instead of leaving the page.
   if (updateHash && location.hash !== `#${name}`) {
     history.pushState(null, '', `#${name}`);
   }
@@ -191,16 +180,14 @@ window.addEventListener('hashchange', () => {
   if (TAB_NAMES.includes(name) && name !== activeTab) switchTab(name, false);
 });
 
-// ---------------------------------------------------------------------------
-// The poll loop: /api/changes every 10 s (every 1 s for 15 s after a command)
-// ---------------------------------------------------------------------------
+// --- Poll loop ---
 
 let lastChanges = null;
-let lastLive = null;          // the last /api/live answer (display data + both status documents)
-let serverOffset = 0;         // server "now" minus browser now, so ages do not depend on the Pi's clock vs ours
+let lastLive = null;          // last /api/live response
+let serverOffset = 0;         // server time minus browser time, so ages don't depend on the browser's clock
 let burstUntil = 0;
 let pollTimer = null;
-// Hooks other sections register: called when the matching stamp moved.
+// Hooks called when the matching timestamp changes.
 const changeHooks = { events: [], commands: [], vitals: [], raw: [] };
 
 function serverNow() {
@@ -243,9 +230,7 @@ async function poll() {
   schedulePoll(Date.now() < burstUntil ? 1000 : 10000);
 }
 
-// ---------------------------------------------------------------------------
-// Live tab
-// ---------------------------------------------------------------------------
+// --- Live tab ---
 
 const heroUnits = { temp: '°C', humid: '%', co2: 'ppm' };
 
@@ -255,8 +240,8 @@ function heroValueHtml(metric, value) {
   return `${number}<span class="unit"> ${heroUnits[metric]}</span>`;
 }
 
-// Colour by the server-sent words so thresholds can't drift from the backend;
-// the first word of each scale stays uncoloured to keep the calm look.
+// Colour by the words the server sends so thresholds can't drift from the
+// backend. The first word of each scale stays uncoloured.
 const warnWords = new Set(['Moderate', 'Elevated', 'Unhealthy for Sensitive Groups']);
 
 function applyBandClass(elementId, word) {
@@ -272,8 +257,8 @@ function displayDoc() {
 }
 
 function renderUpdatedAge() {
-  // "updated 40s ago" from the manager's own stamp; amber past 90 s, red past
-  // 3 min ("manager silent") — the one freshness signal the Live tab has.
+  // "updated 40s ago" from the manager's own timestamp: amber past 90 s,
+  // red past 3 min (manager silent).
   const element = document.getElementById('updated-age');
   const stamp = lastLive?.display_data?.updated_at;
   if (!stamp) {
@@ -288,7 +273,7 @@ function renderUpdatedAge() {
 }
 
 function renderStatusStrip(problems) {
-  // All healthy -> one muted line; otherwise only the things that are wrong.
+  // All healthy: one muted line. Otherwise list only what is wrong.
   const strip = document.getElementById('status-strip');
   strip.innerHTML = '';
   if (!problems.length) {
@@ -413,7 +398,7 @@ async function refreshLive() {
   if (activeTab === 'live') reloadPreview();
 }
 
-// --- Hero sparklines (last 24h, no axes — trends live in History) ----------
+// --- Hero sparklines (last 24 h, no axes) ---
 
 let sparkRows = null;
 const sparklineMinSpan = { temp: 2, humid: 6, co2: 250, aqi: 25 };
@@ -423,7 +408,7 @@ async function refreshSparklines() {
     const data = await fetchJson('/api/history');
     sparkRows = data.rows || [];
   } catch (_error) {
-    return; // quiet: sparklines are decoration, the loop will retry
+    return; // sparklines are decoration; the loop will retry
   }
   for (const key of ['temp', 'humid', 'co2', 'aqi']) {
     renderSparkline(`spark-${key}`, sparkRows, key);
@@ -470,8 +455,8 @@ async function reloadPreview() {
   const image = document.getElementById('display-preview');
   const note = document.getElementById('preview-note');
   try {
-    // Stable URL on purpose: the server ETags the frame, so an unchanged
-    // preview revalidates as a free 304 instead of a fresh render every poll.
+  // Keep the URL stable: the server sends an ETag, so an unchanged preview
+  // comes back as a cheap 304 instead of a fresh render on every poll.
     const response = await fetch('/api/display-preview.png');
     if (!response.ok) throw new Error(`preview ${response.status}`);
     const blob = await response.blob();
@@ -493,11 +478,9 @@ changeHooks.raw.push(async () => {
   if (activeTab === 'live') await refreshSparklines();
 });
 
-// ---------------------------------------------------------------------------
-// Theme
-// ---------------------------------------------------------------------------
+// --- Theme ---
 
-// The toggle shows the mode a click switches TO: a moon while light, a sun while dark.
+// The toggle shows the mode a click switches to: a moon in light mode, a sun in dark.
 const themeIcons = {
   light: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>',
   dark: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.2" y1="4.2" x2="5.6" y2="5.6"/><line x1="18.4" y1="18.4" x2="19.8" y2="19.8"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.2" y1="19.8" x2="5.6" y2="18.4"/><line x1="18.4" y1="5.6" x2="19.8" y2="4.2"/></svg>',
@@ -521,9 +504,7 @@ function initTheme() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Header clock (mirrors the e-paper's own header)
-// ---------------------------------------------------------------------------
+// --- Header clock (same as the e-paper header) ---
 
 function startClock() {
   const timeEl = document.getElementById('clock-time');
@@ -533,18 +514,16 @@ function startClock() {
     timeEl.textContent = `${two(now.getHours())}:${two(now.getMinutes())}`;
     const weekday = now.toLocaleDateString(undefined, { weekday: 'long' });
     dateEl.textContent = `${weekday} · ${two(now.getDate())}.${two(now.getMonth() + 1)}.${now.getFullYear()}`;
-    renderUpdatedAge(); // the "updated 40s ago" line breathes with the clock
+    renderUpdatedAge(); // keep "updated 40s ago" ticking
   };
   tick();
   window.setInterval(tick, 10000);
 }
 
-// ---------------------------------------------------------------------------
-// Wiring
-// ---------------------------------------------------------------------------
+// --- Wiring ---
 
 function installHints() {
-  // Hints must work by tap too — hover doesn't exist on the primary device.
+  // Hints must also work on tap, since phones have no hover.
   const closeAllHints = () => {
     document.querySelectorAll('.hint.hint-open').forEach((open) => open.classList.remove('hint-open'));
   };
@@ -566,7 +545,7 @@ function installTabs() {
   });
 }
 
-const installers = []; // other sections push their DOMContentLoaded work here
+const installers = []; // DOMContentLoaded work from other sections
 
 window.addEventListener('DOMContentLoaded', async () => {
   initTheme();
@@ -576,7 +555,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   installers.forEach((install) => install());
   const initialTab = location.hash.slice(1);
   if (TAB_NAMES.includes(initialTab) && initialTab !== 'live') switchTab(initialTab, false);
-  // Phones background the tab and browsers throttle timers; coming back must show now.
+  // Phones throttle timers in background tabs, so refresh when the tab comes back.
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) schedulePoll(0);
   });
@@ -588,18 +567,16 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// History tab: charts and statistics over a range (raw inside the retention
-// window, hourly beyond it — the server decides and says which)
-// ---------------------------------------------------------------------------
+// --- History tab ---
+// The server returns raw buckets inside the retention window and hourly rows beyond it.
 
 let range = { mode: 'preset', hours: 24 };
 let lastHistory = null;
-// Monotonic token: a slow 30d response landing after a fast 6h one must not
-// overwrite the charts with data for a range no longer selected.
+// Request token: a slow 30d response arriving after a fast 6h one must not
+// overwrite the charts for a range that is no longer selected.
 let historyRequestToken = 0;
 
-// Two tables side by side: what the air is (left) and what floats in it (right).
+// Two tables side by side: the air itself (left) and what floats in it (right).
 const statsTables = {
   'stats-table-left': [
     ['temp', 'Temperature, °C', 1],
@@ -631,8 +608,8 @@ function dynamicFromZero(values, minSpan) {
 const SECONDARY = { opacity: 0.45, width: 2 };
 const TERTIARY = { opacity: 0.3, width: 2 };
 
-// Each chart: the series it draws (first = main), the value formatter for the
-// tooltip, and how to pick the y axis.
+// Per chart: the series to draw (first one is the main series), the tooltip
+// formatter, and how to pick the y axis.
 const chartConfigs = {
   'chart-temp': {
     series: [{ key: 'temp', color: '#b85c38' }, { key: 'co2_temp', color: '#b85c38', ...SECONDARY }],
@@ -728,7 +705,7 @@ function renderStats(data) {
 }
 
 function statsRangeBar(key, entry) {
-  // A one-row box-plot-lite: min→max as a slim track, a dot at the average.
+  // A one-row mini box plot: a slim min-max track with a dot at the average.
   if (entry.min == null || entry.max == null || entry.avg == null) return '';
   const config = Object.values(chartConfigs).find((c) => c.series[0].key === key);
   const bounds = config ? config.bounds([entry.min, entry.max]) : { min: 0, max: Math.max(entry.max * 1.15, 1) };
@@ -743,15 +720,15 @@ function statsRangeBar(key, entry) {
 }
 
 function renderAllCharts(data) {
-  // The axis spans the range that was asked for, not the data that exists:
-  // a 30-day view of a two-day-old station shows 28 days of honest gap.
+  // The axis spans the requested range, not just the data, so a 30-day view
+  // of a two-day-old station shows the gap.
   const options = { xMin: data.from, xMax: data.to, group: 'history' };
   for (const [svgId, config] of Object.entries(chartConfigs)) {
     renderLineChart(svgId, data.rows || [], config, data.bucket_seconds || 60, options);
   }
 }
 
-// --- SVG line chart (hand-rolled, zero dependencies) -----------------------
+// --- SVG line chart (hand-rolled, no dependencies) ---
 
 const chartState = new Map();
 
@@ -776,7 +753,7 @@ function formatTickLabel(tick, yRange) {
 }
 
 function nightRects(xMin, xMax, toX, padding, height) {
-  // Local 22:00–07:00 shading; only worthwhile on short ranges.
+  // Shade local 22:00-07:00; only worth it on short ranges.
   if (xMax - xMin > 3 * 86400) return '';
   const rects = [];
   const cursor = new Date(xMin * 1000);
@@ -798,7 +775,7 @@ function nightRects(xMin, xMax, toX, padding, height) {
   return rects.join('');
 }
 
-// Optional shaded intervals (Vitals: throttled minutes) drawn like nights but stronger.
+// Optional shaded intervals (e.g. throttled minutes on Vitals), drawn like nights but darker.
 function shadeRects(intervals, toX, padding, height) {
   return (intervals || []).map(([start, end]) =>
     `<rect x="${toX(start)}" y="${padding.top}" width="${Math.max(toX(end) - toX(start), 2)}" height="${height - padding.top - padding.bottom}" fill="#c0392b" opacity="0.12"></rect>`
@@ -844,8 +821,8 @@ function renderLineChart(svgId, rows, config, bucketSeconds, options = {}) {
 
   const seriesSvg = config.series.map((s) => {
     const points = rowsWithTime.filter((row) => row[s.key] != null).map((row) => ({ x: toX(row.ts), y: toY(row[s.key]), row }));
-    // Split into segments across data gaps: an offline stretch must render as
-    // a gap, not a confident straight line bridging fabricated values.
+  // Split into segments at data gaps so an offline stretch shows as a gap
+  // rather than a straight line across missing values.
     const segments = [];
     let current = [];
     points.forEach((point, index) => {
@@ -863,7 +840,7 @@ function renderLineChart(svgId, rows, config, bucketSeconds, options = {}) {
         ? `<circle cx="${segment[0].x}" cy="${segment[0].y}" r="4" fill="${s.color}" opacity="${opacity}"></circle>`
         : `<polyline fill="none" stroke="${s.color}" stroke-width="${widthPx}" opacity="${opacity}" points="${segment.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}"></polyline>`
     ).join('');
-  }).reverse().join('');  // main series drawn last, on top
+  }).reverse().join('');  // draw the main series last, on top
 
   const mainPoints = rowsWithTime.filter((row) => row[mainKey] != null || config.series.some((s) => row[s.key] != null))
     .map((row) => ({ x: toX(row.ts), y: toY(row[mainKey] != null ? row[mainKey] : config.series.map((s) => row[s.key]).find((v) => v != null)), row }));
@@ -913,8 +890,8 @@ function hideAllChartTooltips() {
   chartState.forEach((_state, id) => hideChartTooltip(id));
 }
 
-// Charts of one group render the same rows, so one hover moves every
-// crosshair to the same moment — cause-and-effect reading across metrics.
+// Charts in one group share the same rows, so hovering one moves every
+// crosshair to the same moment.
 function syncCrosshairs(sourceId, ts) {
   const group = chartState.get(sourceId)?.group;
   chartState.forEach((state, id) => {
@@ -963,8 +940,8 @@ function installChartHover(svgId) {
     tooltip.style.top = `${(nearest.y / state.height) * rect.height - 10}px`;
     syncCrosshairs(svgId, nearest.row.ts);
   };
-  // Pointer events instead of mouse events: a tap pins the tooltip (there is
-  // no hover on the primary device — a phone); tap-outside dismisses.
+  // Pointer events rather than mouse events: on a phone a tap pins the
+  // tooltip and a tap outside dismisses it.
   svg.addEventListener('pointermove', (event) => { if (event.pointerType === 'mouse') show(event); });
   svg.addEventListener('pointerdown', show);
   svg.addEventListener('mouseleave', hideAllChartTooltips);
@@ -1005,9 +982,7 @@ installers.push(() => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Vitals tab: the machine's health, one row a minute from the manager
-// ---------------------------------------------------------------------------
+// --- Vitals tab: machine health, one row a minute from the manager ---
 
 let vitalsRange = { hours: 24 };
 let lastVitals = null;
@@ -1058,7 +1033,7 @@ function signalQuality(dbm) {
 }
 
 function throttledIntervals(rows, bucketSeconds) {
-  // Minutes with any power flag set, merged into intervals for shading.
+  // Merge minutes with any power flag set into intervals for shading.
   const intervals = [];
   let current = null;
   for (const row of rows) {
@@ -1143,10 +1118,7 @@ installers.push(() => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Diagnostics tab: events (from all three programs), commands, health,
-// connectivity
-// ---------------------------------------------------------------------------
+// --- Diagnostics tab: events, commands, health, connectivity ---
 
 let commandsCache = [];
 let recentVitalsLatest = null;
@@ -1210,8 +1182,8 @@ function renderEvents(events) {
 }
 
 function commandTiming(command) {
-  // Whether the Pi actually heard the button: completed rows say how fast,
-  // an old pending row says the addressed program isn't picking commands up.
+  // Did the program actually pick up the command? Completed rows show how fast;
+  // an old pending row means the target program isn't reading commands.
   if (command.status === 'pending') {
     const waiting = serverNow() - command.created_at;
     return waiting > 15
@@ -1246,15 +1218,15 @@ function renderCommands(commands) {
 }
 
 function renderRestartCount(restarts) {
-  // >1 start in 24 h is the watchdog-crash-loop tell; a single boot is normal.
+  // More than one start in 24 h usually means a watchdog crash loop.
   const element = document.getElementById('collector-restarts');
   const total = (restarts.collector || 0);
   element.textContent = `collector ${restarts.collector ?? DASH} · manager ${restarts.manager ?? DASH} · dashboard ${restarts.dashboard ?? DASH}`;
   element.className = `health-value${total > 1 || (restarts.manager || 0) > 1 ? ' health-bad' : ''}`;
 }
 
-// Station health: one word per part (the pill) and a short detail. The
-// words: ok · starting · re-init · error · throttled · n/a.
+// Station health: one word per part (the pill) plus a short detail.
+// Words: ok, starting, re-init, error, throttled, n/a.
 const healthRows = [
   ['collector', 'scd41', 'SCD41'],
   ['collector', 'sht41', 'SHT41'],
@@ -1344,14 +1316,13 @@ function renderConnectivity(live) {
   set('network-lan-ms', wifi.lan_ms == null ? DASH : `${fmt(wifi.lan_ms, 0)} ms`);
   set('network-wan-ms', wifi.wan_ms == null ? DASH : `${fmt(wifi.wan_ms, 0)} ms`);
   set('power-since-boot', !power.available ? 'n/a' : (power.since_boot?.length ? power.since_boot.join(', ') : 'none'), power.since_boot?.length > 0);
-  // the manager counts its own bounces; it (re)starts with the machine, so this is "since boot" in practice
+  // The manager counts its own bounces and restarts with the machine, so this is effectively "since boot".
   set('network-bounce', wifi.bounces ? `${wifi.bounces} · last ${formatRelative(wifi.last_bounce_at)}` : 'none since start', wifi.bounces > 0);
 }
 
-// --- Custom dropdowns --------------------------------------------------------
-// Native <select> popups commit on mouse-release on the operator's system,
-// which made the menus unusable. The native select stays in the DOM as the
-// value store — change listeners and .value reads keep working.
+// --- Custom dropdowns ---
+// Native <select> popups commit on mouse-release on some systems, which made the
+// menus unusable. The native select stays in the DOM to hold the value.
 
 function upgradeSelect(select) {
   const wrapper = document.createElement('span');
@@ -1449,15 +1420,13 @@ installers.push(() => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Controls tab: six buttons and the calibration checklist
-// ---------------------------------------------------------------------------
+// --- Controls tab ---
 
-// The collector enforces these (collector/sensors.py CAL_*); mirrored here so
-// the button unlocks exactly when a command would pass.
+// Mirrors the collector's CAL_* limits (collector/sensors.py) so the button
+// unlocks exactly when the command would be accepted.
 const calibrationLimits = { min_runtime: 180, min_samples: 3, max_spread: 30, max_delta: 200 };
 const pendingCommandTypes = new Set();
-let lastFanCleanAt = null; // the newest fan_clean event, fetched when the tab opens
+let lastFanCleanAt = null; // newest fan_clean event, fetched when the tab opens
 
 function renderControls(live) {
   const collector = live?.collector_status?.value || {};
@@ -1568,7 +1537,7 @@ tabRefreshers.controls = async () => {
     ]);
     recentVitalsLatest = vitals.latest || recentVitalsLatest;
     lastFanCleanAt = (cleans.events || []).find((event) => event.type === 'fan_clean')?.ts || null;
-  } catch (_error) { /* the disk and fan-clean lines stay as they were */ }
+  } catch (_error) { /* keep the disk and fan-clean lines as they were */ }
   renderControls(lastLive);
   renderCommandNotes(commandsCache);
 };
@@ -1592,9 +1561,7 @@ installers.push(() => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Data tab: the tables as they are — pick one, newest rows first, load more
-// ---------------------------------------------------------------------------
+// --- Data tab: pick a table, newest rows first, load more ---
 
 const dataView = { table: 'raw_measurements', columns: [], rows: [], next: null };
 
@@ -1645,7 +1612,7 @@ async function refreshDataTables() {
 async function loadDataPage(append = false) {
   const before = append && dataView.next !== null ? `&before=${encodeURIComponent(dataView.next)}` : '';
   const page = await fetchJson(`/api/data/rows?table=${encodeURIComponent(dataView.table)}${before}`);
-  if (page.table !== dataView.table) return; // the selection moved on while this was in flight
+  if (page.table !== dataView.table) return; // selection changed while loading
   dataView.columns = page.columns;
   dataView.orderBy = page.order_by;
   dataView.rows = append ? dataView.rows.concat(page.rows) : page.rows;

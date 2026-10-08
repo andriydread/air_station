@@ -1,4 +1,4 @@
-"""The "cannot be air" rule: a reason, never a changed value."""
+"""Plausibility filter: it returns a reason and never changes the value."""
 
 import pytest
 
@@ -28,7 +28,7 @@ from shared.filters import implausible, plausible
         ("pm10", float("nan"), "nonfinite"),
         ("co2", float("inf"), "nonfinite"),
         ("temp", "warm", "nonfinite"),
-        ("co2", None, None),              # not read: nothing to judge
+        ("co2", None, None),              # not read
     ],
 )
 def test_implausible(metric, value, reason):

@@ -1,18 +1,16 @@
 # Rendered by `make init` / `make deploy` into /etc/systemd/system/airstation-collector.service
-# (@USER@ and @REPO@ are filled in with the operator's user and the checkout path).
+# (@USER@ and @REPO@ become the user and the checkout path).
 [Unit]
 Description=Air station collector (I2C sensors → raw rows)
 After=network-online.target
 Wants=network-online.target
-# No start-rate limit: with Restart=always the app may crash-loop every 5 s
-# forever (a sensor unplugged, the database locked) rather than systemd
-# giving up after five tries. (Unit-section key; in [Service] it is ignored.)
+# No start-rate limit: keep retrying every 5 s instead of giving up after
+# five tries. This key belongs in [Unit]; in [Service] it is ignored.
 StartLimitIntervalSec=0
 
 [Service]
-# Type=notify + WatchdogSec: the app sends READY=1 once started and WATCHDOG=1
-# every 10 s from its single loop (shared/heartbeat.py). A loop wedged for
-# 90 s is killed and restarted by systemd.
+# The app sends READY=1 after startup and WATCHDOG=1 every 10 s from its loop
+# (shared/heartbeat.py); systemd restarts it if the loop is stuck for 90 s.
 Type=notify
 WatchdogSec=90
 ExecStart=@REPO@/.venv/bin/python -m collector
@@ -20,7 +18,6 @@ WorkingDirectory=@REPO@
 User=@USER@
 StandardOutput=journal
 StandardError=journal
-# Crash loops retry every 5 s (see StartLimitIntervalSec in [Unit]).
 Restart=always
 RestartSec=5
 

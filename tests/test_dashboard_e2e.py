@@ -1,8 +1,4 @@
-"""The real dashboard against a database the real collector and manager code filled.
-
-Fake sensors → collector loop → raw rows → manager minute job → display_data →
-the dashboard's endpoints; a button press → mailbox → the manager picks it up.
-"""
+"""The dashboard against a database filled by the real collector and manager code."""
 
 import sys
 import time as _time
@@ -27,7 +23,7 @@ def world(tmp_config, tmp_path, fake_clock, monkeypatch):
     _time.tzset()
     fake_clock._wall = START
     db = Database(tmp_config.paths.database, now=clock.now)
-    # --- collector, with the real code on fakes, for MINUTES of simulated time
+    # collector on fake sensors for MINUTES of simulated time
     scd, sht, sps = FakeScd41Device(), FakeSht41Device(), FakeSps30Device()
     scd.default_co2 = 812.0
     monkeypatch.setattr(sys.modules["adafruit_scd4x"], "SCD4X", lambda _i2c: scd)
@@ -38,17 +34,17 @@ def world(tmp_config, tmp_path, fake_clock, monkeypatch):
     run_collector(tmp_config, db, clog, lambda: object(), None, max_passes=int(MINUTES * 60 / 0.2) + 1,
                   ntp_runner=ntp, sps30_factory=lambda _i2c: sps)
     clog.close()
-    # --- manager, rewound to the same start so it sees the rows as they "arrive"
+    # manager, rewound to the same start so it sees the rows as they arrive
     fake_clock._wall = START
     mstation = ManagerStation(tmp_config, tmp_path, fake_clock)
     mstation.db.close()
     mstation.db = db
     mstation.log.close()
     mstation.log = Log("manager", tmp_config, db=db, strict=True, clock=clock.now)
-    mstation.refresh_collector_status = lambda: None  # the real collector wrote its status
+    mstation.refresh_collector_status = lambda: None  # the collector already wrote its status
     run_manager(tmp_config, db, mstation.log, None, max_passes=int(MINUTES * 60 / 0.2) + 1,
                 extra_tasks=[], **mstation.kwargs())
-    # --- the dashboard on the same database
+    # dashboard on the same database
     dlog = Log("dashboard", tmp_config, db=db, strict=True, clock=clock.now)
     app = create_app(tmp_config, db, dlog)
     yield {"client": app.test_client(), "db": db, "manager": mstation, "collector": (scd, sht, sps)}
@@ -96,7 +92,6 @@ def test_a_button_press_reaches_the_manager(world, fake_clock):
     assert response.status_code == 202
     cid = response.get_json()["id"]
     assert client.get("/api/commands").get_json()["commands"][0]["status"] == "pending"
-    # the manager's next loop picks it up
     mstation.log.close()
     mstation.log = Log("manager", mstation.config, db=db, strict=True, clock=clock.now)
     run_manager(mstation.config, db, mstation.log, None, max_passes=30, extra_tasks=[], **mstation.kwargs())

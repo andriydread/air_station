@@ -1,13 +1,7 @@
-"""One beat: ask each ready sensor, store what it said, keep the books, one line.
+"""The 10 s sampling beat: read each ready sensor and write one raw row.
 
-Every 10 s on the wall clock, in a fixed order: the SHT41 measures (8 ms),
-the SPS30 hands over its newest 1 s value, the SCD41 its newest 5 s value.
-The row carries the mark's timestamp and the values **as the sensors gave
-them** (rounded to the row's precision) — nothing is dropped. The "cannot
-be air" rule (``shared/filters.py``) only counts a reading as bad for the
-sensor's reset ladder. A sensor inside its quiet time is not asked; when no
-sensor was asked (a start) nothing is written and nothing is logged. When
-every sensor asked raised in the same beat the I2C bus itself is re-created.
+Values are stored as the sensors reported them (rounded only). Implausible
+values are kept but count as bad readings for the sensor's reset logic.
 """
 
 import math
@@ -18,9 +12,9 @@ from shared import clock
 from shared.db import METRICS, round_metric
 from shared.filters import implausible
 
-SAMPLE_INTERVAL = 10       # six rows a minute; the manager averages them for the panel
+SAMPLE_INTERVAL = 10       # the manager averages the six rows of each minute
 
-# which metrics belong to which sensor (a bad value counts against its sensor)
+# a bad value counts against the sensor that produced it
 SENSOR_METRICS = {
     "scd41": ("co2", "co2_temp", "co2_humid"),
     "sht41": ("temp", "humid"),
@@ -29,7 +23,7 @@ SENSOR_METRICS = {
 
 
 def _cell(metric: str, value: Any) -> Any:
-    """The stored form: rounded; a non-number cannot be stored, so NULL."""
+    """Rounded value for the row, or None for anything non-numeric."""
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -38,7 +32,7 @@ def _cell(metric: str, value: Any) -> Any:
 
 
 def _per_sensor(values: Dict[str, Any]) -> Optional[str]:
-    """``sht41:8.1,sps30:2.3,scd41:4.0`` — the beat's order; None when nothing was read."""
+    """Format as "sht41:8.1,sps30:2.3,scd41:4.0", or None if empty."""
     return ",".join(f"{name}:{value}" for name, value in values.items()) or None
 
 
@@ -49,7 +43,7 @@ class Sampler:
         self.scd41 = scd41
         self.sht41 = sht41
         self.sps30 = sps30
-        self.sensors = [sht41, sps30, scd41]  # the order of the beat, see the module docstring
+        self.sensors = [sht41, sps30, scd41]  # SHT41 first: it measures on demand (~8 ms)
         self.i2c_factory = i2c_factory
         self.monotonic = monotonic
         self.sample_count = 0
@@ -59,8 +53,6 @@ class Sampler:
 
     def next_due(self, now: float) -> float:
         return clock.next_aligned(SAMPLE_INTERVAL, now)
-
-    # --- one beat -----------------------------------------------------------------------
 
     def beat(self, now: float) -> Dict[str, Any]:
         ts = clock.aligned_stamp(SAMPLE_INTERVAL, now)
@@ -100,9 +92,8 @@ class Sampler:
             row = {metric: _cell(metric, raw.get(metric)) for metric in METRICS}
             record["row"] = row
             self._write(ts, row)
-            # the row as stored, the read time per sensor (a slow answer shows a
-            # bus or supply problem before anything raises), then only what went
-            # wrong — the two fields are absent on a clean beat
+            # Per-sensor read times help spot bus or supply trouble before reads
+            # start failing. bad/raised are only logged when set.
             extra: Dict[str, Any] = {"ms": _per_sensor(record["read_ms"])}
             if record["bad"]:
                 extra["bad"] = ",".join(f"{m}:{r}" for m, r in record["bad"].items())
@@ -120,8 +111,6 @@ class Sampler:
         self.last_record = record
         return record
 
-    # --- helpers ------------------------------------------------------------------------------
-
     def _sensor_error(self, sensor, exc: Exception, now: float) -> None:
         text = f"{exc.__class__.__name__}: {exc}"
         first_of_streak = sensor.bad_streak == 0
@@ -134,7 +123,7 @@ class Sampler:
                              errno=getattr(exc, "errno", None))
 
     def _account(self, now: float, raw: Dict[str, float]) -> Dict[str, str]:
-        """Per sensor that answered: all plausible → ok, else bad. Returns {metric: reason}."""
+        """Mark each answering sensor ok or bad; returns {metric: reason} for implausible values."""
         bad: Dict[str, str] = {}
         for sensor in self.sensors:
             metrics = SENSOR_METRICS[sensor.name]

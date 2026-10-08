@@ -1,9 +1,7 @@
-"""The collector program: ``python -m collector`` (``--fake`` on a machine without sensors).
+"""Entry point: python -m collector (use --fake on a machine without sensors).
 
-Start everything, run the 10 s beat forever on one thread, stop cleanly.
-Tasks: sample (10 s, wall-aligned), commands (2 s), status (30 s), weather
-pressure into the SCD41 (30 min), the Sunday 04:00 fan clean (checked every
-minute). Heartbeats and clock-jump detection come from the shared loop.
+Runs a single-threaded loop: sampling every 10 s, command polling, status,
+SCD41 pressure updates and the weekly SPS30 fan clean.
 """
 
 import argparse
@@ -46,8 +44,6 @@ class Collector:
         self.commands: Optional[CommandRunner] = None
         self.ntp_synced: Optional[bool] = None
 
-    # --- lifecycle -------------------------------------------------------------------
-
     def start(self) -> None:
         self.log.start_line(self.config)
         failed = self.db.fail_running(APP, "collector restarted")
@@ -59,7 +55,7 @@ class Collector:
         if not self.ntp_synced:
             self.log.event("warning", "app", "clock_unsynced",
                            "system time not confirmed by NTP; writing anyway")
-        self.started_at = clock.now()  # uptime counts from a trusted clock, not the boot-time guess
+        self.started_at = clock.now()  # the clock before NTP sync can be off
         bus = self.i2c_factory()
         scd41 = Scd41(bus, self.config, self.log, sleep=clock.sleep)
         sht41 = Sht41(bus, self.config, self.log)
@@ -68,7 +64,7 @@ class Collector:
                                monotonic=clock.monotonic)
         self.commands = CommandRunner(self.db, self.log, self.sampler, self.config, monotonic=clock.monotonic)
         init_ms = {}
-        for sensor in self.sampler.sensors:  # the quiet time starts now, not at the first beat
+        for sensor in self.sampler.sensors:  # open now so the quiet time starts at startup
             init_started = clock.monotonic()
             sensor.ensure(clock.now())
             init_ms[sensor.name] = round((clock.monotonic() - init_started) * 1000)
@@ -99,8 +95,6 @@ class Collector:
             Task("pressure", PRESSURE_EVERY, self.apply_pressure),
             Task("fan_clean", 60, self.scheduled_fan_clean, first_run_immediately=False),
         ]
-
-    # --- the jobs --------------------------------------------------------------------------
 
     def sample(self) -> None:
         self.sampler.beat(clock.now())
@@ -145,7 +139,7 @@ def run(config, db: Database, log: Log, i2c_factory, notifier: Optional[SystemdN
     reason = "error"
     try:
         reason = loop.run(max_passes=max_passes)
-    except BaseException as exc:  # a crash still stops the sensors and logs why
+    except BaseException as exc:  # still stop the sensors and log the reason
         reason = f"fatal: {exc!r}"
         raise
     finally:
@@ -162,7 +156,7 @@ def main(argv=None) -> int:
         from tests.mocks.fake_hardware import install
         install()
         from tests.mocks.generators import install_generated_devices
-        sps30_factory = install_generated_devices()  # drifting, plausible values
+        sps30_factory = install_generated_devices()  # plausible drifting values
     else:
         sps30_factory = None
     config = Config.load(args.config)
@@ -170,7 +164,7 @@ def main(argv=None) -> int:
     log = Log(APP, config, db=db)
 
     def i2c_factory():
-        import board  # the Blinka library, present only on the Pi (or faked)
+        import board  # Blinka, only available on the Pi (or faked)
         return board.I2C()
 
     try:

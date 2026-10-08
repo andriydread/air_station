@@ -1,1 +1,1 @@
-"""The collector: owns the I2C bus and the three sensors, writes one raw row every 30 s."""
+"""Collector app: owns the I2C bus and the three sensors, writes a raw row every 10 s."""

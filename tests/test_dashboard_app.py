@@ -1,4 +1,4 @@
-"""The app factory: page, 404 under /api, 500 → event, request log lines, heartbeat thread."""
+"""The app factory: page, 404 under /api, 500 handling, request logging, heartbeat thread."""
 
 import pytest
 
@@ -76,7 +76,7 @@ def test_the_poll_is_summarised_per_minute_not_logged_per_hit(client, dlog, monk
     for i in range(6):
         t["now"] = 1_788_436_800.0 + i * 10
         assert client.get("/api/changes").status_code == 200
-    t["now"] = 1_788_436_860.0  # the next minute: the summary of the last one goes out
+    t["now"] = 1_788_436_860.0  # next minute, so the previous minute's summary is logged
     client.get("/api/changes")
     dlog.close()
     lines = dlog.path.read_text().splitlines()

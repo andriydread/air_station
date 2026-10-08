@@ -1,10 +1,8 @@
-"""Wi-Fi watch: probe the router and the internet every 30 s; bounce the radio
-only when the router itself stops answering.
+"""Wi-Fi watch: probe the router and the internet every 30 s.
 
-Router down for six probes in a row (three minutes) → ``nmcli radio wifi
-off`` / ``on`` through sudo — the whole recovery. Internet-only failures are
-logged and light the glyph; a bounce would not help and would only drop the
-dashboard, which lives on the LAN.
+The radio is bounced only when the router stops answering. Internet-only
+outages are just logged, since a bounce wouldn't fix them and would cut off
+the dashboard on the LAN.
 """
 
 import socket
@@ -17,22 +15,21 @@ ROUTER_TIMEOUT = 2.0
 ROUTER_PORTS = (53, 80)
 WAN_TARGET = ("1.1.1.1", 53)
 WAN_TIMEOUT = 3.0
-DOWN_AFTER = 2           # failed probes in a row before "down" is declared
-BOUNCE_AFTER = 6         # failed router probes in a row before the radio bounce
-BOUNCE_COOLDOWN = 600.0  # seconds between two bounces
+DOWN_AFTER = 2           # consecutive failures before we call it down
+BOUNCE_AFTER = 6         # consecutive router failures before bouncing the radio
+BOUNCE_COOLDOWN = 600.0
 BOUNCE_PAUSE = 2.0
 BOUNCE_OFF = ["sudo", "nmcli", "radio", "wifi", "off"]
 BOUNCE_ON = ["sudo", "nmcli", "radio", "wifi", "on"]
-# What the stack sees, captured just before the bounce (no sudo needed):
-# NetworkManager's view of the device and the driver's view of the link.
+# Captured right before a bounce for diagnostics (neither needs sudo).
 NM_STATUS = ["nmcli", "-t", "-f", "DEVICE,STATE,CONNECTION", "device", "status"]
 IW_LINK = ["/usr/sbin/iw", "dev", "wlan0", "link"]
-SNAPSHOT_MAX = 120         # characters kept per snapshot in the event
+SNAPSHOT_MAX = 120         # max characters per snapshot in the event
 ROUTE_PATH = "/proc/net/route"
 
 
 def default_gateway(path: str = ROUTE_PATH, interface: Optional[str] = None) -> Optional[str]:
-    """The default route's gateway as dotted text, from /proc/net/route."""
+    """Default gateway as a dotted IPv4 string, read from /proc/net/route."""
     try:
         lines = open(path).read().splitlines()[1:]
     except OSError:
@@ -56,7 +53,7 @@ def default_gateway(path: str = ROUTE_PATH, interface: Optional[str] = None) -> 
 
 def probe(host: str, port: int, timeout: float, connector: Callable = socket.create_connection,
           monotonic: Callable[[], float] = time.monotonic) -> Optional[float]:
-    """Round-trip of a TCP connect in ms, or None when it failed."""
+    """Time a TCP connect in ms; None on failure."""
     started = monotonic()
     try:
         with connector((host, port), timeout=timeout):
@@ -86,10 +83,8 @@ class WifiWatch:
         self.last_wan_ms: Optional[float] = None
         self.last_bounce_at: Optional[int] = None
         self.bounces = 0
-        self.history: List[bool] = []  # last router results, newest last
+        self.history: List[bool] = []  # recent router results, newest last
         self.probes = 0
-
-    # --- one probe round ------------------------------------------------------------------
 
     def tick(self, now: float) -> Dict[str, Any]:
         self.probes += 1
@@ -134,7 +129,7 @@ class WifiWatch:
             return
         failures = getattr(self, attr) + 1
         setattr(self, attr, failures)
-        if failures == 1:  # the start of a run of failures; the rest stay on the debug probe line
+        if failures == 1:  # log only the first failure; the rest show up in the debug line
             self.log.info("wifi", "probe_failed", which=which, gateway=self.gateway)
         if failures >= DOWN_AFTER and state is not False:
             what = "router" if which == "router" else "internet"
@@ -143,7 +138,7 @@ class WifiWatch:
             setattr(self, state_attr, False)
 
     def snapshot(self, argv) -> str:
-        """The wlan0 line (or the first line) of a diagnostic command, one string, never raises."""
+        """Short summary of a diagnostic command's output (wlan0 lines preferred). Never raises."""
         try:
             result = self.runner(argv, capture_output=True, text=True, timeout=10, check=False)
             lines = [line.strip() for line in str(getattr(result, "stdout", "") or "").splitlines() if line.strip()]
@@ -154,10 +149,10 @@ class WifiWatch:
         return text[:SNAPSHOT_MAX]
 
     def bounce(self, now: float) -> bool:
-        """Radio off, two seconds, radio on. True when both commands returned 0.
+        """Turn the radio off and on again. Returns True if both commands succeeded.
 
-        The event carries what NetworkManager and the driver reported just
-        before, so a night of bounces leaves evidence (bench-2026-09-04 §2).
+        The event includes the NetworkManager and iw state from just before the
+        bounce, to help work out why the link dropped.
         """
         nm_state, iw_link = self.snapshot(NM_STATUS), self.snapshot(IW_LINK)
         results = []
@@ -177,8 +172,6 @@ class WifiWatch:
                        "wi-fi radio bounced" if ok else "wi-fi radio bounce failed",
                        results=results, count=self.bounces, nm_state=nm_state, iw_link=iw_link)
         return ok
-
-    # --- for the frame and the status document ------------------------------------------------
 
     def glyph(self) -> bool:
         return len(self.history) >= DOWN_AFTER and not any(self.history[-DOWN_AFTER:])

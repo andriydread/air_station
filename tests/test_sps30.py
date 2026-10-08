@@ -35,7 +35,7 @@ def test_read_maps_driver_keys_to_row_columns(sps30):
     sps30.ensure(0)
     row = sps30.read(40)
     assert row == {"pm1": 1.1, "pm25": 2.5, "pm4": 3.0, "pm10": 4.2, "tps": 0.6,
-                   "nc05": 7.5, "nc1": 8.6, "nc25": 8.8, "nc4": 8.9, "nc10": 8.9}  # pm4/nc4/nc10 stored since 2026-09-05
+                   "nc05": 7.5, "nc1": 8.6, "nc25": 8.8, "nc4": 8.9, "nc10": 8.9}
 
 
 def test_read_none_when_not_ready_and_errors_propagate(sps30):

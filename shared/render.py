@@ -1,14 +1,7 @@
-"""The e-paper picture, drawn from a ``display_data`` document.
+"""Draws the 416x240 1-bit e-paper image from a display_data document.
 
-Used by the manager (the panel) and the dashboard (the preview PNG), so both
-show exactly the same image. 416×240, 1-bit (white=255, black=0). Layout as
-the station has always had it: clock row with problem glyphs, AQI and CO2
-huge with their category words, temperature/humidity, three forecast
-columns. A metric with no value paints "—"; while the collector's sensors
-warm up the whole panel is the start-up screen: "Starting up", "sensors ready in ~N s".
-
-``render()`` returns the image and the list of strings it painted, so tests
-check *what* is on the panel without comparing pixels.
+Shared by the manager (the panel) and the dashboard (preview PNG). render()
+also returns the strings it painted so tests can check content without pixels.
 """
 
 import math
@@ -60,8 +53,8 @@ def _finite(value: Any) -> Optional[float]:
     return float(value) if math.isfinite(value) else None
 
 
-# WMO weather code -> icon file (carried over). Codes 0/1 at night use the
-# moon when assets/icons/moon.png exists; until the operator adds it, the sun.
+# WMO weather code -> icon file. Codes 0/1 at night use moon.png if it
+# exists, otherwise the sun.
 WMO_ICON = {
     0: "sun.png", 1: "sun.png", 2: "partly_cloudy.png", 3: "cloud.png",
     45: "fog.png", 48: "fog.png",
@@ -76,7 +69,7 @@ _icon_cache: Dict[Tuple[str, int], Image.Image] = {}
 
 
 def icon_file(wmo: Any, is_night: bool = False, icons_dir: Path = ICONS_DIR) -> Optional[str]:
-    """Which icon file a block shows, or None when the code is unknown."""
+    """Icon file name for a WMO code, or None if the code is unknown."""
     if isinstance(wmo, bool) or not isinstance(wmo, (int, float)):
         return None
     name = WMO_ICON.get(int(wmo))
@@ -96,7 +89,7 @@ def _load_icon(path: Path, size: int) -> Optional[Image.Image]:
     try:
         icon = Image.open(path).convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
         background = Image.new("RGBA", (size, size), (255, 255, 255, 255))
-        # threshold instead of dithering: fuzzy dots look wrong on e-paper
+        # Threshold rather than dither; dithered dots look bad on e-paper.
         final = Image.alpha_composite(background, icon).convert("L").point(lambda v: 0 if v < 140 else 255).convert("1")
     except OSError:
         return None
@@ -104,7 +97,7 @@ def _load_icon(path: Path, size: int) -> Optional[Image.Image]:
     return final
 
 
-# --- Status glyphs: tiny 1-bit header icons so the panel can say "station broken".
+# Small status icons drawn in the header row.
 
 def _draw_wifi_down(draw, x, y, size):
     cx, cy = x + size / 2, y + size * 0.9
@@ -146,7 +139,7 @@ def _glyphs(p: "_Painter", data: Dict[str, Any], left_start: float) -> List[str]
 
 
 class _Painter:
-    """A drawing surface that remembers every string it paints."""
+    """Drawing surface that records every string it paints."""
 
     def __init__(self, image: Image.Image):
         self.image = image
@@ -180,11 +173,11 @@ def _header(p: _Painter, fonts, width: int, when: datetime) -> float:
     p.left(time_text, font_sm, _EDGE_PAD, 5)
     p.center(when.strftime("%A"), font_sm, 0, width, 5)
     p.right(when.strftime("%d/%m/%Y"), font_sm, width, _EDGE_PAD, 5)
-    return _EDGE_PAD + p.width(time_text, font_sm) + 12  # where glyphs start
+    return _EDGE_PAD + p.width(time_text, font_sm) + 12  # x where the glyphs start
 
 
 def _fit(p: _Painter, text: str, fonts_in_order, max_width: float):
-    """The largest of the given fonts that fits ``text`` in ``max_width``."""
+    """Return the first font in the list that fits text into max_width."""
     for font in fonts_in_order:
         if p.width(text, font) <= max_width:
             return font
@@ -219,7 +212,7 @@ def _numbers(p: _Painter, fonts, width: int, data: Dict[str, Any]) -> None:
 
 
 def _startup(p: _Painter, fonts, width: int, height: int, data: Dict[str, Any]) -> None:
-    """After a boot: only the header and the wait, no numbers, no forecast."""
+    """Startup screen: header and a wait message, no readings or forecast."""
     font_huge, font_lg, _, _, _ = fonts
     left = data.get("warmup_left")
     seconds = int(left) if isinstance(left, (int, float)) and not isinstance(left, bool) and left > 0 else None
@@ -230,7 +223,7 @@ def _startup(p: _Painter, fonts, width: int, height: int, data: Dict[str, Any]) 
 
 def _weather(p: _Painter, fonts, width: int, height: int, data: Dict[str, Any],
              icons_dir: Path = ICONS_DIR) -> None:
-    """Three forecast columns: label, icon, max/min, rain."""
+    """Three forecast columns with label, icon, max/min temperature and rain."""
     _, _, font_md, _, font_xs = fonts
     weather = data.get("weather") or {}
     blocks = list(weather.get("blocks") or [])
@@ -265,7 +258,7 @@ def _weather(p: _Painter, fonts, width: int, height: int, data: Dict[str, Any],
 def render(display_data: Optional[Dict[str, Any]], width: int = WIDTH, height: int = HEIGHT,
            font_path: Optional[str] = None, now: Optional[float] = None,
            icons_dir: Path = ICONS_DIR) -> Tuple[Image.Image, List[str]]:
-    """Draw the panel from a ``display_data`` document (may be empty)."""
+    """Draw the panel from a display_data document (which may be empty)."""
     data = display_data or {}
     fonts = _load_fonts(font_path)
     image = Image.new("1", (width, height), 255)

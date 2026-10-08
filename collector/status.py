@@ -1,17 +1,16 @@
-"""The collector's status document (every 30 s)."""
+"""Builds the collector_status document, published every 30 s."""
 
 from typing import Any, Dict, Optional
 
 
 def build_status(sampler, started_at: float, now: float, log_failures: int,
                  last_calibration: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """The ``collector_status`` document (Interfaces contract; ``ready_at`` since 2026-09-06)."""
     scd41, sht41, sps30 = sampler.scd41, sampler.sht41, sampler.sps30
     ready = [s.ready_at for s in sampler.sensors if s.device is not None and s.ready_at]
     return {
         "started_at": int(started_at),
         "uptime": int(now - started_at),
-        "ready_at": max(ready) if ready else None,  # when every present sensor is past its quiet time
+        "ready_at": max(ready) if ready else None,  # when all present sensors are past their quiet time
         "sample_count": sampler.sample_count,
         "log_failures": int(log_failures),
         "storage_failures": sampler.storage_failures,

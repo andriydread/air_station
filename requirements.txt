@@ -1,4 +1,4 @@
-# Pi dependencies (hardware libraries included). Dev server: requirements-dev.txt
+# Pi dependencies, including the hardware libraries. For development use requirements-dev.txt.
 RPi.GPIO
 spidev
 Pillow

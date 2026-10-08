@@ -1,14 +1,12 @@
-"""What cannot be air.
+"""Plausibility checks for sensor values.
 
-The collector stores every value the sensors give (decided 2026-09-06);
-this rule never touches a row. It is used in two places only: the collector
-counts a reading as *bad* for the reset ladder, and the manager leaves the
-value out of the panel's minute average. Limits follow the datasheets: the
-SCD4x output range tops out at 40 000 ppm (above it is a corrupt transfer,
-the classic 0xFFFF word), CO2 below 10 ppm is a dead sensor, not air (the
-operator's choice, 2026-09-07: a freshly calibrated sensor may read a little
-under outdoor air and that is still a reading), the SHT4x / SCD4x temperature
-and humidity ranges, and particle numbers are never negative.
+Stored rows are never filtered. The collector uses these checks to count bad
+readings for sensor resets, and the manager drops implausible values from the
+minute average. Limits come from the datasheets: the SCD4x tops out at
+40000 ppm (anything above is a corrupt transfer such as 0xFFFF), CO2 under
+10 ppm means a dead sensor (a freshly calibrated one can read a bit below
+outdoor air, so the floor is low), plus the SHT4x/SCD4x temperature and
+humidity ranges. Particle values are never negative.
 """
 
 import math
@@ -25,7 +23,7 @@ REASON_NEGATIVE = "negative"
 
 
 def implausible(metric: str, value: Any) -> Optional[str]:
-    """The reason a value cannot be air, or None. ``None`` for a value not read."""
+    """Return why a value is implausible, or None if it is fine or missing."""
     if value is None:
         return None
     try:
@@ -44,5 +42,5 @@ def implausible(metric: str, value: Any) -> Optional[str]:
 
 
 def plausible(metric: str, value: Any) -> bool:
-    """True for a value that was read and could be air."""
+    """True if the value is present and plausible."""
     return value is not None and implausible(metric, value) is None

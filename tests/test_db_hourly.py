@@ -42,7 +42,6 @@ def test_catchup_rolls_only_hours_with_data_and_stops_before_now(db):
     assert result["rolled"] == 2 and result["hours"] == [BASE, BASE + 3 * H]
     assert result["skipped_future"] == 0 and result["remaining"] == 0
     assert [r["hour"] for r in db.hourly_between(0, BASE + 10 * H)] == [BASE, BASE + 3 * H]
-    # a second call has nothing to do
     assert db.rollup_catchup(now=BASE + 4 * H + 600)["rolled"] == 0
 
 
@@ -56,7 +55,7 @@ def test_catchup_continues_after_the_last_rolled_hour(db):
 
 def test_future_hours_are_skipped_and_counted(db):
     _fill_hour(db, BASE, [600])
-    _fill_hour(db, BASE + 5 * H, [999])  # clock ran ahead: rows five hours in the future
+    _fill_hour(db, BASE + 5 * H, [999])  # rows five hours in the future (clock ran ahead)
     result = db.rollup_catchup(now=BASE + H + 60)
     assert result["rolled"] == 1 and result["skipped_future"] == 1
     assert db.last_rolled_hour() == BASE

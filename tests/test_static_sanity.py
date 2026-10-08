@@ -1,5 +1,5 @@
-"""The static files: valid JavaScript (when node is available), no references to
-endpoints that no longer exist, every element the script touches is in the page."""
+"""Dashboard static files: the JS parses, uses no removed endpoints, and every element id it
+looks up exists in the page."""
 
 import re
 import shutil
@@ -30,6 +30,6 @@ def test_every_element_id_the_script_uses_exists_in_the_page():
     page = TEMPLATE.read_text()
     ids_in_page = set(re.findall(r'id="([a-zA-Z0-9_-]+)"', page))
     used = set(re.findall(r"getElementById\('([a-zA-Z0-9_-]+)'\)", JS.read_text()))
-    # ids built from a template literal (`metric-${metric}`) are checked by their prefix
+    # only literal ids; ids built from template strings (`metric-${metric}`) aren't matched
     missing = {i for i in used if i not in ids_in_page}
     assert not missing, missing

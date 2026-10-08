@@ -1,4 +1,4 @@
-"""commands table: queue → claim → complete, crash and orphan handling."""
+"""commands table: queue, claim, complete, crash and orphan handling."""
 
 from shared.db import Database
 
@@ -24,7 +24,7 @@ def test_claim_only_own_target_and_oldest_first(tmp_path):
     b = db.queue_command("scd41_calibrate", "dashboard", "collector", {"target_ppm": 420})
     c = db.queue_command("sps30_fan_clean", "dashboard", "collector", {})
     assert [x["id"] for x in db.claim_pending("collector")] == [b, c]
-    assert db.claim_pending("collector") == []          # nothing pending any more
+    assert db.claim_pending("collector") == []
     assert [x["id"] for x in db.claim_pending("manager")] == [a]
     assert db.claim_pending("manager")[0:0] == []
     db.close()

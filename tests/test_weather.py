@@ -103,7 +103,7 @@ def test_blocks_start_with_the_current_block_and_shift(tmp_config):
     assert noon[0]["rain"] == 14 and noon[0]["is_night"] is False
     later = blocks(doc, _local_ts("2026-09-03T15:00:00"))
     assert [b["label"] for b in later] == ["15–18", "18–21", "21–00"]
-    assert later[1]["wmo"] == 95  # the thunderstorm at 20:00 wins the 18–21 block
+    assert later[1]["wmo"] == 95  # the 20:00 thunderstorm wins the 18-21 block
 
 
 def test_night_blocks_and_midnight_wrap(tmp_config):

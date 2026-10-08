@@ -44,6 +44,6 @@ def test_dedupe_cache_is_per_connection(tmp_path):
     writer = Database(tmp_path / "s.db")
     other = Database(tmp_path / "s.db")
     writer.set_state("k", {"v": 1})
-    assert other.set_state("k", {"v": 1}) is True  # a fresh process does not know the cache
+    assert other.set_state("k", {"v": 1}) is True
     writer.close()
     other.close()

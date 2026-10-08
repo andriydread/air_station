@@ -1,9 +1,7 @@
-"""The web server's skeleton: the Flask app factory.
+"""Flask app factory for the dashboard.
 
-Side-effect free on import: the app is built only by ``create_app()`` (the
-service entry point is ``python -m dashboard``; tests call the factory).
-Every request gets a debug log line; a 500 becomes a ``server_error`` event.
-The routes themselves live in ``dashboard/api.py``.
+Importing this module has no side effects; ``create_app()`` builds the app.
+The routes live in ``dashboard/api.py``.
 """
 
 import time
@@ -18,7 +16,7 @@ from shared.events import git_commit
 from shared.render import ICONS_DIR
 
 APP = "dashboard"
-POLL_PATH = "/api/changes"  # the page's 10 s poll; summarised per minute in the debug log
+POLL_PATH = "/api/changes"  # polled every 10 s by each open page
 TEMPLATES = Path(__file__).resolve().parent / "templates"
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -29,7 +27,7 @@ def create_app(config, db, log) -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
     app.extensions["airstation"] = {
         "config": config, "db": db, "log": log,
-        "started_at": int(clock.now()), "commit": git_commit(REPO_ROOT),  # the code's repo, not the config's dir
+        "started_at": int(clock.now()), "commit": git_commit(REPO_ROOT),  # repo of the code, not of the config
     }
 
     @app.before_request
@@ -43,7 +41,7 @@ def create_app(config, db, log) -> Flask:
         started = getattr(g, "started", None)
         ms = round((time.perf_counter() - started) * 1000, 1) if started else None
         if request.path == POLL_PATH and response.status_code == 200:
-            # every open page asks this every 10 s: one debug line per minute, not per hit
+            # Summarise the poll as one debug line per minute instead of one per hit.
             minute = int(clock.now()) // 60
             if polls["minute"] is not None and minute != polls["minute"] and polls["count"]:
                 log.debug("web", "polls", minute=polls["minute"] * 60, n=polls["count"],
@@ -89,7 +87,7 @@ def create_app(config, db, log) -> Flask:
         return send_from_directory(str(ICONS_DIR), filename, max_age=86400)
 
     try:
-        from dashboard.api import api  # the routes (T072 onward)
+        from dashboard.api import api
         app.register_blueprint(api)
     except ImportError:
         pass

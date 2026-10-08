@@ -1,10 +1,7 @@
-"""The single-threaded scheduler every app runs on.
+"""Single-threaded scheduler used by every app.
 
-A list of ``Task``s ("every N seconds do X"), run one after another in one
-thread, never in parallel. Between passes: the watchdog heartbeat, the
-clock-jump check, a 0.2 s sleep. A task that raises is logged and keeps its
-schedule; nothing a task does can stop the loop. SIGTERM/SIGINT stop it
-cleanly; ``STOPPING=1`` goes to systemd on the way out.
+Tasks run one after another; an exception in a task is logged and the task
+keeps its schedule. SIGTERM/SIGINT stop the loop cleanly.
 """
 
 import signal
@@ -30,14 +27,14 @@ class Task:
         self.aligned = aligned
         self.first_run_immediately = first_run_immediately
         self.initial_delay = float(initial_delay)
-        self.offset = float(offset)  # aligned tasks fire this long after the wall-clock mark
+        self.offset = float(offset)  # delay after the wall-clock mark for aligned tasks
         self.next_due: Optional[float] = None
         self.runs = 0
         self.failures = 0
         self._retry: Optional[float] = None
 
     def retry_in(self, seconds: float) -> None:
-        """Called from inside the task: run again after ``seconds`` instead of the interval."""
+        """Called from inside the task to run again after `seconds` instead of the interval."""
         self._retry = float(seconds)
 
     def schedule(self, now: float) -> None:
@@ -52,8 +49,8 @@ class Task:
     def due(self, now: float) -> bool:
         if self.next_due is None:
             self.schedule(now)
-        # The wall clock stepped backwards (NTP): a due time far ahead would
-        # freeze the task — re-arm it instead of waiting for the calendar.
+        # If the wall clock stepped backwards, next_due may be far in the
+        # future; re-arm the task rather than waiting for it.
         if self.next_due - now > 2 * self.interval:
             self.next_due = now
         return now >= self.next_due
@@ -66,8 +63,8 @@ class Task:
             self.failures += 1
             log.exception("loop", "task_failed", task=self.name)
         finally:
-            # From the time the task FINISHED: a run that stalled for a
-            # minute must not be followed by a burst of catch-up runs.
+            # Reschedule from the finish time so a stalled run doesn't
+            # cause a burst of catch-up runs.
             self._reschedule(clock.now())
 
     def _reschedule(self, now: float) -> None:
@@ -78,7 +75,7 @@ class Task:
             self.next_due = self._next_mark(now)
             return
         self.next_due += self.interval
-        while self.next_due <= now:  # a long stall: skip the missed runs, do not burst
+        while self.next_due <= now:  # skip missed runs after a long stall
             self.next_due += self.interval
 
 
@@ -106,10 +103,10 @@ class Loop:
             try:
                 signal.signal(sig, _handler)
             except ValueError:
-                pass  # not the main thread (tests, the demo runner)
+                pass  # not the main thread (tests, the demo)
 
     def run_once(self) -> None:
-        """One scheduler pass: due tasks, heartbeat, clock check."""
+        """Run due tasks, send the heartbeat and check for clock jumps."""
         now = clock.now()
         for task in self.tasks:
             if task.due(now):
@@ -123,7 +120,7 @@ class Loop:
         self.passes += 1
 
     def run(self, max_passes: Optional[int] = None) -> str:
-        """Run until stopped (or ``max_passes`` in tests). Returns the stop reason."""
+        """Run until stopped (or max_passes, for tests) and return the stop reason."""
         self._heartbeat = Heartbeat(self.notifier, monotonic=clock.monotonic)
         self._watch = clock.ClockWatch()
         self.running = True

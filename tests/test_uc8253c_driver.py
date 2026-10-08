@@ -81,7 +81,7 @@ def _accelerate_clock(monkeypatch, uc_module):
 
 def test_busy_timeout_forces_reset_before_next_operation(monkeypatch):
     """A BUSY-pin timeout mid-refresh must not leave the driver believing the
-    panel is awake — the next operation goes through a hardware reset."""
+    panel is awake: the next operation goes through a hardware reset."""
     import drivers.uc8253c as uc_module
 
     import RPi.GPIO as gpio

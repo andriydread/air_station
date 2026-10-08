@@ -23,7 +23,7 @@ def test_insert_latest_and_optional_columns(db):
 
 def test_bucketed_averages_keep_a_set_throttled_bit(db):
     db.insert_vitals(_row(600, cpu_temp=40.0, throttled=0))
-    db.insert_vitals(_row(660, cpu_temp=50.0, throttled=0x50005))  # under-voltage now + since boot, throttled since boot
+    db.insert_vitals(_row(660, cpu_temp=50.0, throttled=0x50005))  # under-voltage now and since boot, throttled since boot
     db.insert_vitals(_row(720, cpu_temp=60.0, throttled=0))
     db.insert_vitals(_row(1800, cpu_temp=70.0, throttled=1 << 3))
     rows = db.vitals_bucketed(600, 3600, 900)

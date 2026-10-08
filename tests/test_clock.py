@@ -62,7 +62,7 @@ def test_clock_watch_sees_only_wall_jumps(fake_clock):
     fake_clock.jump_wall(7)
     assert watch.check() == pytest.approx(7.0)
     fake_clock.advance(10)
-    assert watch.check() == pytest.approx(0.0)  # a jump is reported once
+    assert watch.check() == pytest.approx(0.0)  # reported once
 
 
 def test_local_schedule_fires_once_per_matching_minute(monkeypatch):

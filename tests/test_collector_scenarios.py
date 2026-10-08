@@ -29,9 +29,9 @@ def test_a_zero_ppm_sensor_is_stored_reset_and_recovers(station):
     assert len(reinits) == 1 and "6 bad readings in a row" in reinits[0]["message"]
     assert reinits[0]["ts"] == START + READY + 50 and station.scd.reinit_calls == 2
     rows = db.raw_between(0, 10**10)
-    assert [r["co2"] for r in rows[:6]] == [0] * 6                       # stored as the sensor said
+    assert [r["co2"] for r in rows[:6]] == [0] * 6                       # stored as read
     quiet = [r for r in rows if START + READY + 60 <= r["recorded_at"] < START + READY + 120]
-    assert quiet and all(r["co2"] is None and r["temp"] == 22.5 for r in quiet)  # the SCD41's new quiet minute
+    assert quiet and all(r["co2"] is None and r["temp"] == 22.5 for r in quiet)  # quiet minute after the re-init
     assert rows[-1]["co2"] == 600 and rows[-1]["temp"] == 22.5
 
 
@@ -90,9 +90,9 @@ def test_pressure_is_applied_once_per_change(station):
     station.run(5)
     db.set_state("last_weather", {"fetched_at": 3, "pressure_hpa": 1015.0, "hourly": {}})
     station.run(5)
-    # each run() is a fresh process: the pressure is re-sent once at every start
-    # (1013, then 1013 again), and inside a process only when it moved ≥ 1 hPa
-    # (1013.4 is not sent; 1015 is)
+    # Each run() is a fresh process, so the pressure is sent once at every
+    # start; within a process only a change of >= 1 hPa is sent (1013.4 is
+    # skipped, 1015 is sent).
     assert station.scd.ambient_pressures == [1013, 1013, 1015]
 
 
@@ -103,8 +103,8 @@ def test_sunday_four_am_triggers_one_clean_and_blanks_dust(tmp_config, fake_cloc
     monkeypatch.setenv("TZ", "Europe/Kyiv")
     _time.tzset()
     try:
-        # local Sunday 03:57:25: rows from 03:59:00; the minute check lands at
-        # 04:00:25 → clean → the row at 04:00:30 is inside the 15 s blank
+        # Local Sunday 03:57:25: rows start at 03:59:00, the minute check at
+        # 04:00:25 starts the clean, so the 04:00:30 row is inside the 15 s blank.
         sunday = datetime(2026, 9, 6, 3, 57, 25).astimezone().timestamp()
         fake_clock._wall = sunday
         s = Station(tmp_config, fake_clock, monkeypatch)
